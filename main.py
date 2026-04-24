@@ -5,9 +5,13 @@ import sqlite3
 from datetime import datetime, timedelta
 from collections import defaultdict
 
-from aiogram import Bot, Dispatcher, F
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
-from aiogram.filters import Command
+from aiogram import Bot
+from aiogram.client.default import DefaultBotProperties
+
+bot = Bot(
+    BOT_TOKEN,
+    default=DefaultBotProperties(parse_mode="HTML")
+)
 
 # =========================
 # CONFIG
