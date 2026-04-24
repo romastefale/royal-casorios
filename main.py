@@ -19,6 +19,8 @@ from aiogram.types import (
     ReplyKeyboardMarkup,
 )
 
+import random
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("royal-casorios")
 
@@ -123,6 +125,32 @@ private_menu = ReplyKeyboardMarkup(
     resize_keyboard=True,
 )
 
+ROMANTICAS = [
+    "O destino nunca erra quando decide unir dois corações 💫",
+    "Algo no ar diz que isso não é coincidência ❤️",
+    "Quando duas almas se encontram, o universo conspira ✨",
+    "Tem conexão aí que nem o tempo explica ⏳❤️",
+    "Parece que o coração falou mais alto hoje 💘",
+    "Isso aqui tá com cara de história que começa agora 📖❤️",
+    "O acaso só existe até o destino aparecer 💫",
+    "Dois caminhos que finalmente se cruzaram ❤️",
+    "Tem química que não dá pra ignorar 🔥❤️",
+    "O universo deu um empurrãozinho aqui 👀💘",
+]
+
+CASAL_FRASES = [
+    "Parece que isso aqui já tava escrito 😏",
+    "Olha… isso aqui faz sentido 👀",
+    "Não é aleatório não, hein… 💭",
+    "Tá com cara de casal mesmo 🔥",
+    "Isso aqui pode dar problema… ou dar muito certo 😳",
+    "O grupo percebeu algo aqui 👁️",
+    "Tem história começando aqui 📖",
+    "Isso aqui tá diferente… 👀",
+    "Alguém explica isso? 😏",
+    "Isso aqui não foi por acaso 💘",
+]
+
 
 def utc_now() -> datetime:
     return datetime.utcnow()
@@ -160,7 +188,6 @@ def is_group(message: Message) -> bool:
 
 
 def ensure_chat(chat_id: int, title: str | None = None) -> None:
-    """Silently activates and keeps a group registered for automatic casorios."""
     cur.execute(
         """
         INSERT INTO chats (chat_id, title, enabled)
@@ -193,12 +220,12 @@ def keyboard(couple_id: int, likes: int = 0, dislikes: int = 0) -> InlineKeyboar
                 InlineKeyboardButton(
                     text=f"❤️ Apoio {likes}",
                     callback_data=f"ship_like:{couple_id}",
-                    style="primary",
+                    style="danger",
                 ),
                 InlineKeyboardButton(
-                    text=f"💔 Ciúmes {dislikes}",
+                    text=f"🤮 Ciúmes {dislikes}",
                     callback_data=f"ship_dislike:{couple_id}",
-                    style="danger",
+                    style="success",
                 ),
             ]
         ]
@@ -277,7 +304,7 @@ async def send_couple(chat_id: int, source: str = "auto") -> bool:
         if source == "manual":
             await bot.send_message(
                 chat_id,
-                "💍👑 <b>Royal Casórios</b>\n\n😶 Ainda não existe interação suficiente para formar um casal real.\n🔥 Respondam mensagens, conversem e tentem de novo em alguns minutos!",
+                "💍👑 𝐂𝐀𝐒𝐀𝐌𝐄𝐍𝐓𝐎 𝐑𝐄𝐀𝐋 👑\n\n😶 Ainda não existe interação suficiente para formar um casal real.\n🔥 Respondam mensagens, conversem e tentem de novo em alguns minutos!",
             )
         return False
 
@@ -292,12 +319,15 @@ async def send_couple(chat_id: int, source: str = "auto") -> bool:
     couple_id = cur.lastrowid
     db.commit()
 
+    frase_topo = random.choice(ROMANTICAS)
+    frase_casal = random.choice(CASAL_FRASES)
+
     text = (
-        "💍👑 <b>Royal Casórios</b>\n\n"
-        "✨ O destino do grupo acabou de agir...\n"
-        f"{mention(u1, n1)} ❤️ {mention(u2, n2)}\n\n"
-        "🔥 O algoritmo viu movimentação entre vocês.\n"
-        "👀 Agora o grupo decide:"
+        "💍👑 𝐂𝐀𝐒𝐀𝐌𝐄𝐍𝐓𝐎 𝐑𝐄𝐀𝐋 👑\n\n"
+        f"{frase_topo}\n\n"
+        f"{mention(u1, n1)} ❤️ {mention(u2, n2)}\n"
+        f"{frase_casal}\n\n"
+        "<i>🚨 Se alguém presente souber de alguma razão para que este casal não deva se unir no santo matrimônio, fale agora ou cale-se para sempre! 👀💍</i>"
     )
     await bot.send_message(chat_id, text, reply_markup=keyboard(couple_id))
     return True
@@ -313,7 +343,7 @@ async def start(message: Message):
     if message.chat.type != "private":
         return
     await message.answer(
-        "💍👑 <b>Royal Casórios</b>\n\n"
+        "💍👑 𝐂𝐀𝐒𝐀𝐌𝐄𝐍𝐓𝐎 𝐑𝐄𝐀𝐋 👑\n\n"
         "Bem-vindo ao painel dos casórios! 😏\n\n"
         "💘 Aqui você pode ver seu histórico, sair do sistema ou entender como tudo funciona.\n\n"
         "👇 Use os botões abaixo:",
@@ -324,7 +354,7 @@ async def start(message: Message):
 @dp.message(Command("help"))
 async def help_cmd(message: Message):
     await message.answer(
-        "💍👑 <b>Royal Casórios</b>\n\n"
+        "💍👑 𝐂𝐀𝐒𝐀𝐌𝐄𝐍𝐓𝐎 𝐑𝐄𝐀𝐋 👑\n\n"
         "📌 <b>Comandos do grupo</b>\n"
         "/querocasar - 💍 gerar casal agora, apenas admin\n"
         "/divorcios - 🏆 ranking dos casórios\n"
@@ -332,7 +362,7 @@ async def help_cmd(message: Message):
         "/encalhado - 🚫 sair do sistema\n"
         "/desencalhar - 💘 voltar ao sistema\n"
         "/noivado - 💍 ativar ou confirmar o grupo\n\n"
-        "🔥 Nos posts, vote com ❤️ Apoio ou 💔 Ciúmes."
+        "🔥 Nos posts, vote com ❤️ Apoio ou 🤮 Ciúmes."
     )
 
 
@@ -347,7 +377,7 @@ async def noivado(message: Message):
         "💍👑 <b>Noivado confirmado!</b>\n\n"
         f"👤 User ID: <code>{message.from_user.id}</code>\n"
         f"💬 Chat ID: <code>{message.chat.id}</code>\n\n"
-        "✨ O Royal Casórios agora está ativo neste grupo.\n"
+        "✨ O 𝐂𝐀𝐒𝐀𝐌𝐄𝐍𝐓𝐎 𝐑𝐄𝐀𝐋 👑 agora está ativo neste grupo.\n"
         "🔥 Os casórios acontecerão automaticamente 3x ao dia."
     )
 
@@ -373,7 +403,7 @@ async def encalhado(message: Message):
     upsert_user(chat_id, message.from_user.id, display_name(message), message.from_user.username)
     cur.execute("UPDATE users SET opt_out=1 WHERE chat_id=? AND user_id=?", (chat_id, message.from_user.id))
     db.commit()
-    await message.answer("🚫💔 Você entrou no modo encalhado(a). O Royal Casórios não vai mais te colocar em casórios.")
+    await message.answer("🚫💔 Você entrou no modo encalhado(a). O 𝐂𝐀𝐒𝐀𝐌𝐄𝐍𝐓𝐎 𝐑𝐄𝐀𝐋 👑 não vai mais te colocar em casórios.")
 
 
 @dp.message(Command("desencalhar"))
@@ -455,13 +485,13 @@ async def btn_desencalhar(message: Message):
 @dp.message(F.text == "❓ Como funciona")
 async def btn_como_funciona(message: Message):
     await message.answer(
-        "💡👑 <b>Como funciona o Royal Casórios</b>\n\n"
+        "💡👑 <b>Como funciona o 𝐂𝐀𝐒𝐀𝐌𝐄𝐍𝐓𝐎 𝐑𝐄𝐀𝐋 👑</b>\n\n"
         "👀 O bot analisa interações no grupo:\n"
         "• respostas entre membros\n"
         "• proximidade de conversa\n"
         "• atividade recente\n\n"
         "💍 Ele forma casórios automaticamente 3x ao dia.\n"
-        "🔥 O grupo vota com ❤️ Apoio ou 💔 Ciúmes.\n"
+        "🔥 O grupo vota com ❤️ Apoio ou 🤮 Ciúmes.\n"
         "🚫 Você pode sair quando quiser usando /encalhado."
     )
 
