@@ -160,11 +160,12 @@ def is_group(message: Message) -> bool:
 
 
 def ensure_chat(chat_id: int, title: str | None = None) -> None:
+    """Silently activates and keeps a group registered for automatic casorios."""
     cur.execute(
         """
         INSERT INTO chats (chat_id, title, enabled)
         VALUES (?, ?, 1)
-        ON CONFLICT(chat_id) DO UPDATE SET title=excluded.title
+        ON CONFLICT(chat_id) DO UPDATE SET title=excluded.title, enabled=1
         """,
         (chat_id, title),
     )
@@ -273,10 +274,11 @@ def pick_couple(chat_id: int) -> tuple[int, int] | None:
 async def send_couple(chat_id: int, source: str = "auto") -> bool:
     pair = pick_couple(chat_id)
     if not pair:
-        await bot.send_message(
-            chat_id,
-            "💍👑 <b>Royal Casórios</b>\n\n😶 Ainda não existe interação suficiente para formar um casal real.\n🔥 Respondam mensagens, conversem e tentem de novo em alguns minutos!",
-        )
+        if source == "manual":
+            await bot.send_message(
+                chat_id,
+                "💍👑 <b>Royal Casórios</b>\n\n😶 Ainda não existe interação suficiente para formar um casal real.\n🔥 Respondam mensagens, conversem e tentem de novo em alguns minutos!",
+            )
         return False
 
     u1, u2 = pair
@@ -329,23 +331,24 @@ async def help_cmd(message: Message):
         "/meusdivorcios - 📊 seu histórico\n"
         "/encalhado - 🚫 sair do sistema\n"
         "/desencalhar - 💘 voltar ao sistema\n"
-        "/configcasal - ⚙️ configurar o grupo\n\n"
+        "/noivado - 💍 ativar ou confirmar o grupo\n\n"
         "🔥 Nos posts, vote com ❤️ Apoio ou 💔 Ciúmes."
     )
 
 
-@dp.message(Command("configcasal"))
-async def configcasal(message: Message):
+@dp.message(Command("noivado"))
+async def noivado(message: Message):
     if not is_group(message):
-        await message.answer("⚙️ Esse comando deve ser usado dentro do grupo.")
+        await message.answer("💍 Esse comando deve ser usado dentro do grupo.")
         return
     ensure_chat(message.chat.id, message.chat.title)
     db.commit()
     await message.answer(
-        "⚙️💍 <b>Configuração Royal Casórios</b>\n\n"
+        "💍👑 <b>Noivado confirmado!</b>\n\n"
         f"👤 User ID: <code>{message.from_user.id}</code>\n"
         f"💬 Chat ID: <code>{message.chat.id}</code>\n\n"
-        "✅ Grupo salvo para os casórios automáticos."
+        "✨ O Royal Casórios agora está ativo neste grupo.\n"
+        "🔥 Os casórios acontecerão automaticamente 3x ao dia."
     )
 
 
