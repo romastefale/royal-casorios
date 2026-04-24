@@ -584,6 +584,31 @@ async def flush_buffers():
             logger.exception("buffer flush failed")
 
 
+async def cleanup_job():
+    while True:
+        await asyncio.sleep(3600)
+
+        try:
+            cutoff_pairs = (utc_now() - timedelta(days=3)).isoformat()
+            cutoff_activity = (local_now() - timedelta(days=7)).date().isoformat()
+
+            cur.execute(
+                "DELETE FROM pair_scores WHERE last_seen < ?",
+                (cutoff_pairs,)
+            )
+
+            cur.execute(
+                "DELETE FROM daily_activity WHERE day < ?",
+                (cutoff_activity,)
+            )
+
+            db.commit()
+            logger.info("cleanup_job executed")
+
+        except Exception:
+            logger.exception("cleanup_job failed")
+
+
 async def scheduler():
     while True:
         await asyncio.sleep(30)
@@ -607,6 +632,7 @@ async def scheduler():
 async def main():
     logger.info("Royal Casorios starting")
     asyncio.create_task(flush_buffers())
+    asyncio.create_task(cleanup_job())
     asyncio.create_task(scheduler())
     await dp.start_polling(bot)
 
