@@ -549,7 +549,7 @@ async def track(message: Message):
             pair_buffer[(chat_id, u1, u2)] += 1
 
     recent_messages[chat_id].append((uid, now_ts))
-    db.commit()
+    # commit removido para evitar overhead por mensagem; persistência ocorre em flush_buffers()
 
 
 async def flush_buffers():
