@@ -1581,13 +1581,9 @@ async def royal_add_bot(message: Message):
     if not message.from_user:
         return
 
-    # Funciona APENAS em DM. Em grupo, ignora silenciosamente
-    # (nao mostra nada — nem confirmacao, nem erro).
+    # Funciona APENAS em DM. Em grupo, ignora absolutamente —
+    # zero acao do bot (sem responder, sem apagar, sem reagir).
     if is_group(message):
-        try:
-            await message.delete()
-        except Exception:
-            pass
         return
 
     parts = (message.text or "").split()
