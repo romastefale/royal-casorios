@@ -4,7 +4,7 @@ import logging
 import os
 import sqlite3
 from collections import defaultdict, deque
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from aiogram import Bot, Dispatcher, F
@@ -25,8 +25,6 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 logger = logging.getLogger("royal-casorios")
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-if not BOT_TOKEN:
-    raise RuntimeError("BOT_TOKEN environment variable is required")
 
 DB_PATH = os.getenv("DATABASE_PATH", "./data/royal_casorios.sqlite3")
 TZ_NAME = os.getenv("TZ", "America/Sao_Paulo")
@@ -34,8 +32,9 @@ AUTO_HOURS = [int(x.strip()) for x in os.getenv("AUTO_HOURS", "9,15,21").split("
 RECENT_WINDOW_SECONDS = 180
 FLUSH_INTERVAL_SECONDS = 20
 MIN_PAIR_SCORE = 5
+ADMIN_CACHE_TTL_SECONDS = 300
 
-bot = Bot(BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
+bot: Bot | None = None
 dp = Dispatcher()
 
 DB_DIR = os.path.dirname(DB_PATH) or "."
@@ -45,76 +44,123 @@ db = sqlite3.connect(DB_PATH, check_same_thread=False)
 db.row_factory = sqlite3.Row
 cur = db.cursor()
 
-cur.executescript(
-    """
-    PRAGMA journal_mode=WAL;
-    PRAGMA synchronous=NORMAL;
-    PRAGMA busy_timeout=5000;
 
-    CREATE TABLE IF NOT EXISTS users (
-        user_id INTEGER,
-        chat_id INTEGER,
-        display_name TEXT,
-        username TEXT,
-        opt_out INTEGER DEFAULT 0,
-        message_count INTEGER DEFAULT 0,
-        last_seen TEXT,
-        PRIMARY KEY(user_id, chat_id)
-    );
+# ─── Setup de conexão (PRAGMAs por-conexão, aplicar SEMPRE no boot) ──
+# Esses PRAGMAs não persistem no arquivo SQLite — precisam rodar em
+# todo startup, fora das migrations versionadas.
 
-    CREATE TABLE IF NOT EXISTS daily_activity (
-        chat_id INTEGER,
-        user_id INTEGER,
-        day TEXT,
-        message_count INTEGER DEFAULT 0,
-        PRIMARY KEY(chat_id, user_id, day)
-    );
+def setup_connection() -> None:
+    cur.executescript(
+        """
+        PRAGMA journal_mode=WAL;
+        PRAGMA synchronous=NORMAL;
+        PRAGMA busy_timeout=5000;
+        """
+    )
 
-    CREATE TABLE IF NOT EXISTS pair_scores (
-        chat_id INTEGER,
-        user1 INTEGER,
-        user2 INTEGER,
-        score INTEGER DEFAULT 0,
-        last_seen TEXT,
-        PRIMARY KEY(chat_id, user1, user2)
-    );
 
-    CREATE TABLE IF NOT EXISTS couples (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        chat_id INTEGER,
-        user1 INTEGER,
-        user2 INTEGER,
-        source TEXT DEFAULT 'auto',
-        created_at TEXT
-    );
+setup_connection()
 
-    CREATE TABLE IF NOT EXISTS votes (
-        couple_id INTEGER,
-        voter_id INTEGER,
-        type TEXT,
-        created_at TEXT,
-        PRIMARY KEY(couple_id, voter_id)
-    );
 
-    CREATE TABLE IF NOT EXISTS chats (
-        chat_id INTEGER PRIMARY KEY,
-        title TEXT,
-        enabled INTEGER DEFAULT 1,
-        last_auto_post TEXT
-    );
+# ─── Migrations (PRAGMA user_version) ────────────────────────────────
+# Cada migration é idempotente e contém APENAS mudanças persistentes
+# de schema (CREATE TABLE/INDEX, ALTER, etc). PRAGMAs de runtime ficam
+# em setup_connection() acima.
 
-    CREATE INDEX IF NOT EXISTS idx_users_chat_seen ON users(chat_id, last_seen);
-    CREATE INDEX IF NOT EXISTS idx_daily_activity_chat_day ON daily_activity(chat_id, day);
-    CREATE INDEX IF NOT EXISTS idx_pair_scores_chat_score ON pair_scores(chat_id, score DESC);
-    CREATE INDEX IF NOT EXISTS idx_couples_chat_created ON couples(chat_id, created_at);
-    CREATE INDEX IF NOT EXISTS idx_votes_couple ON votes(couple_id);
-    """
-)
-db.commit()
+def migrate_to_v1(cur: sqlite3.Cursor) -> None:
+    """Schema original do shipper (Royal Casórios)."""
+    cur.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS users (
+            user_id INTEGER,
+            chat_id INTEGER,
+            display_name TEXT,
+            username TEXT,
+            opt_out INTEGER DEFAULT 0,
+            message_count INTEGER DEFAULT 0,
+            last_seen TEXT,
+            PRIMARY KEY(user_id, chat_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS daily_activity (
+            chat_id INTEGER,
+            user_id INTEGER,
+            day TEXT,
+            message_count INTEGER DEFAULT 0,
+            PRIMARY KEY(chat_id, user_id, day)
+        );
+
+        CREATE TABLE IF NOT EXISTS pair_scores (
+            chat_id INTEGER,
+            user1 INTEGER,
+            user2 INTEGER,
+            score INTEGER DEFAULT 0,
+            last_seen TEXT,
+            PRIMARY KEY(chat_id, user1, user2)
+        );
+
+        CREATE TABLE IF NOT EXISTS couples (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chat_id INTEGER,
+            user1 INTEGER,
+            user2 INTEGER,
+            source TEXT DEFAULT 'auto',
+            created_at TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS votes (
+            couple_id INTEGER,
+            voter_id INTEGER,
+            type TEXT,
+            created_at TEXT,
+            PRIMARY KEY(couple_id, voter_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS chats (
+            chat_id INTEGER PRIMARY KEY,
+            title TEXT,
+            enabled INTEGER DEFAULT 1,
+            last_auto_post TEXT
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_users_chat_seen ON users(chat_id, last_seen);
+        CREATE INDEX IF NOT EXISTS idx_daily_activity_chat_day ON daily_activity(chat_id, day);
+        CREATE INDEX IF NOT EXISTS idx_pair_scores_chat_score ON pair_scores(chat_id, score DESC);
+        CREATE INDEX IF NOT EXISTS idx_couples_chat_created ON couples(chat_id, created_at);
+        CREATE INDEX IF NOT EXISTS idx_votes_couple ON votes(couple_id);
+        """
+    )
+
+
+MIGRATIONS = [
+    (1, migrate_to_v1),
+]
+
+
+def run_migrations() -> None:
+    current = cur.execute("PRAGMA user_version").fetchone()[0]
+    for version, fn in MIGRATIONS:
+        if current < version:
+            logger.info("Applying migration v%d", version)
+            fn(cur)
+            cur.execute(f"PRAGMA user_version = {version}")
+            db.commit()
+    final = cur.execute("PRAGMA user_version").fetchone()[0]
+    logger.info("Database schema at version %d", final)
+
+
+run_migrations()
+
+
+# ─── Buffers em RAM ──────────────────────────────────────────────────
 
 pair_buffer = defaultdict(int)
 activity_buffer = defaultdict(int)
 recent_messages = defaultdict(lambda: deque(maxlen=120))
+
+# Cache: (chat_id, user_id) -> (is_admin: bool, expires_at: float)
+admin_cache: dict[tuple[int, int], tuple[bool, float]] = {}
+
 
 private_menu = ReplyKeyboardMarkup(
     keyboard=[
@@ -152,8 +198,10 @@ CASAL_FRASES = [
 ]
 
 
+# ─── Helpers de tempo ────────────────────────────────────────────────
+
 def utc_now() -> datetime:
-    return datetime.utcnow()
+    return datetime.now(timezone.utc)
 
 
 def utc_iso() -> str:
@@ -167,6 +215,8 @@ def local_now() -> datetime:
 def today_key() -> str:
     return local_now().date().isoformat()
 
+
+# ─── Helpers de display ──────────────────────────────────────────────
 
 def display_name(message: Message) -> str:
     user = message.from_user
@@ -186,6 +236,8 @@ def normalize_pair(u1: int, u2: int) -> tuple[int, int]:
 def is_group(message: Message) -> bool:
     return message.chat.type in {"group", "supergroup"}
 
+
+# ─── Persistência ────────────────────────────────────────────────────
 
 def ensure_chat(chat_id: int, title: str | None = None) -> None:
     cur.execute(
@@ -220,12 +272,10 @@ def keyboard(couple_id: int, likes: int = 0, dislikes: int = 0) -> InlineKeyboar
                 InlineKeyboardButton(
                     text=f"❤️ Apoio {likes}",
                     callback_data=f"ship_like:{couple_id}",
-                    style="danger",
                 ),
                 InlineKeyboardButton(
                     text=f"🤮 Ciúmes {dislikes}",
                     callback_data=f"ship_dislike:{couple_id}",
-                    style="success",
                 ),
             ]
         ]
@@ -299,6 +349,7 @@ def pick_couple(chat_id: int) -> tuple[int, int] | None:
 
 
 async def send_couple(chat_id: int, source: str = "auto") -> bool:
+    assert bot is not None
     pair = pick_couple(chat_id)
     if not pair:
         if source == "manual":
@@ -334,9 +385,26 @@ async def send_couple(chat_id: int, source: str = "auto") -> bool:
 
 
 async def is_admin(message: Message) -> bool:
-    member = await bot.get_chat_member(message.chat.id, message.from_user.id)
-    return member.status in {"administrator", "creator"}
+    """Verifica admin com cache (TTL ADMIN_CACHE_TTL_SECONDS) para evitar rate limit."""
+    assert bot is not None
+    if not message.from_user:
+        return False
+    key = (message.chat.id, message.from_user.id)
+    now = utc_now().timestamp()
+    cached = admin_cache.get(key)
+    if cached and cached[1] > now:
+        return cached[0]
+    try:
+        member = await bot.get_chat_member(message.chat.id, message.from_user.id)
+        result = member.status in {"administrator", "creator"}
+    except Exception:
+        logger.exception("get_chat_member failed for %s", key)
+        return False
+    admin_cache[key] = (result, now + ADMIN_CACHE_TTL_SECONDS)
+    return result
 
+
+# ─── Handlers ────────────────────────────────────────────────────────
 
 @dp.message(Command("start"))
 async def start(message: Message):
@@ -552,6 +620,8 @@ async def track(message: Message):
     # commit removido para evitar overhead por mensagem; persistência ocorre em flush_buffers()
 
 
+# ─── Tasks assíncronas ───────────────────────────────────────────────
+
 async def flush_buffers():
     while True:
         await asyncio.sleep(FLUSH_INTERVAL_SECONDS)
@@ -587,24 +657,21 @@ async def flush_buffers():
 async def cleanup_job():
     while True:
         await asyncio.sleep(3600)
-
         try:
             cutoff_pairs = (utc_now() - timedelta(days=3)).isoformat()
             cutoff_activity = (local_now() - timedelta(days=7)).date().isoformat()
 
-            cur.execute(
-                "DELETE FROM pair_scores WHERE last_seen < ?",
-                (cutoff_pairs,)
-            )
+            cur.execute("DELETE FROM pair_scores WHERE last_seen < ?", (cutoff_pairs,))
+            cur.execute("DELETE FROM daily_activity WHERE day < ?", (cutoff_activity,))
 
-            cur.execute(
-                "DELETE FROM daily_activity WHERE day < ?",
-                (cutoff_activity,)
-            )
+            # Limpa cache de admin expirado
+            now = utc_now().timestamp()
+            expired = [k for k, (_, exp) in admin_cache.items() if exp <= now]
+            for k in expired:
+                admin_cache.pop(k, None)
 
             db.commit()
-            logger.info("cleanup_job executed")
-
+            logger.info("cleanup_job executed (admin_cache_purged=%d)", len(expired))
         except Exception:
             logger.exception("cleanup_job failed")
 
@@ -629,11 +696,32 @@ async def scheduler():
             logger.exception("scheduler failed")
 
 
+async def healthcheck():
+    while True:
+        await asyncio.sleep(300)
+        try:
+            logger.info(
+                "healthcheck activity_buf=%d pair_buf=%d admin_cache=%d",
+                len(activity_buffer),
+                len(pair_buffer),
+                len(admin_cache),
+            )
+        except Exception:
+            logger.exception("healthcheck failed")
+
+
+# ─── Entry point ─────────────────────────────────────────────────────
+
 async def main():
+    global bot
+    if not BOT_TOKEN:
+        raise RuntimeError("BOT_TOKEN environment variable is required")
+    bot = Bot(BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
     logger.info("Royal Casorios starting")
     asyncio.create_task(flush_buffers())
     asyncio.create_task(cleanup_job())
     asyncio.create_task(scheduler())
+    asyncio.create_task(healthcheck())
     await dp.start_polling(bot)
 
 
