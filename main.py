@@ -1629,7 +1629,7 @@ def _addbot_intro_text(username: str, mask: int) -> str:
     )
 
 
-@dp.message(Command("royaladdbot"))
+@dp.message(Command("radd"))
 async def royal_add_bot(message: Message):
     if not message.from_user:
         return
@@ -1640,10 +1640,10 @@ async def royal_add_bot(message: Message):
     parts = (message.text or "").split()
     if len(parts) < 2:
         await message.answer(
-            "Uso: <code>/royaladdbot @usernamedobot</code>\n\n"
+            "Uso: <code>/radd @usernamedobot</code>\n\n"
             "Depois disso eu abro um menu pra voce marcar as permissoes "
             "com botoes e gerar o link.\n\n"
-            "Exemplo: <code>/royaladdbot @MeuBot</code>"
+            "Exemplo: <code>/radd @MeuBot</code>"
         )
         return
 
