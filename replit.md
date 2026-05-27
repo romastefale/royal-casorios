@@ -10,4 +10,4 @@ Telegram bot construído com aiogram (Python 3.12). Roda como worker (sem fronte
 ## User preferences
 - Sempre usar as versões mais atualizadas das APIs:
   - **Telegram Bot API: 10**
-  - **aiogram: última versão estável** (atualmente 3.26.0+)
+  - **aiogram: última versão estável** (atualmente 3.28.2, lançada em 10/05/2026)
