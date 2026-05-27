@@ -1567,79 +1567,165 @@ async def help_cmd(message: Message):
 # Telegram nao permite bot adicionar bot via API — humano admin precisa
 # tocar e selecionar o grupo. Esse comando so monta o link contextualizado.
 
-_VALID_ADMIN_PERMS = {
-    "change_info", "delete_messages", "restrict_members", "invite_users",
-    "pin_messages", "promote_members", "manage_video_chats",
-    "manage_topics", "post_stories", "edit_stories", "delete_stories",
-    "anonymous",
-}
-_DEFAULT_ADMIN_PERMS = "delete_messages+pin_messages+invite_users+restrict_members"
+# Ordem fixa = ordem dos bits no bitmask. NUNCA reordenar (quebra callbacks).
+_PERM_ORDER = (
+    ("delete_messages",   "🗑 Apagar msgs"),
+    ("pin_messages",      "📌 Fixar"),
+    ("invite_users",      "🔗 Convidar"),
+    ("restrict_members",  "🔇 Silenciar/banir"),
+    ("change_info",       "✏️ Editar info"),
+    ("promote_members",   "👑 Promover admins"),
+    ("manage_video_chats","📞 Chamadas de voz"),
+    ("manage_topics",     "🧵 Topicos (forum)"),
+    ("post_stories",      "📸 Postar stories"),
+    ("edit_stories",      "✂️ Editar stories"),
+    ("delete_stories",    "🗑📸 Apagar stories"),
+    ("anonymous",         "🕶 Admin anonimo"),
+)
+_DEFAULT_BITMASK = 0b0000_0000_1111  # 4 primeiros
+
+
+def _perms_keyboard(username: str, mask: int) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    row: list[InlineKeyboardButton] = []
+    for i, (_, label) in enumerate(_PERM_ORDER):
+        checked = "✅" if (mask >> i) & 1 else "⬜"
+        row.append(InlineKeyboardButton(
+            text=f"{checked} {label}",
+            callback_data=f"addbot:t:{username}:{mask}:{i}",
+        ))
+        if len(row) == 2:
+            rows.append(row); row = []
+    if row:
+        rows.append(row)
+    rows.append([
+        InlineKeyboardButton(text="❌ Limpar tudo",
+                             callback_data=f"addbot:c:{username}:0:0"),
+        InlineKeyboardButton(text="✅ Marcar tudo",
+                             callback_data=f"addbot:c:{username}:{(1<<len(_PERM_ORDER))-1}:0"),
+    ])
+    rows.append([InlineKeyboardButton(
+        text="🚀 Gerar link de adicao",
+        callback_data=f"addbot:g:{username}:{mask}:0",
+    )])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _mask_to_perms(mask: int) -> list[str]:
+    return [key for i, (key, _) in enumerate(_PERM_ORDER) if (mask >> i) & 1]
+
+
+def _addbot_intro_text(username: str, mask: int) -> str:
+    selected = _mask_to_perms(mask)
+    if selected:
+        pretty = ", ".join(selected)
+        status = f"Sera adicionado como <b>admin</b> com:\n<code>{html.escape(pretty)}</code>"
+    else:
+        status = "Sera adicionado como <b>membro comum</b> (sem permissoes)."
+    return (
+        f"➕ <b>Adicionar @{html.escape(username)}</b>\n\n"
+        f"Marque as permissoes desejadas e toque em <b>Gerar link</b>.\n\n"
+        f"{status}"
+    )
 
 
 @dp.message(Command("royaladdbot"))
 async def royal_add_bot(message: Message):
     if not message.from_user:
         return
-
-    # Funciona APENAS em DM. Em grupo, ignora absolutamente —
-    # zero acao do bot (sem responder, sem apagar, sem reagir).
+    # Funciona APENAS em DM — silencio total em grupo.
     if is_group(message):
         return
 
     parts = (message.text or "").split()
     if len(parts) < 2:
         await message.answer(
-            "Uso: <code>/royaladdbot @usernamedobot [perm1+perm2+...]</code>\n\n"
-            "<b>Permissoes validas</b> (separe com +):\n"
-            "<code>change_info, delete_messages, restrict_members, invite_users, "
-            "pin_messages, promote_members, manage_video_chats, manage_topics, "
-            "post_stories, edit_stories, delete_stories, anonymous</code>\n\n"
-            "Sem permissoes → entra como membro comum.\n"
-            "Exemplo: <code>/royaladdbot @MeuBot delete_messages+pin_messages</code>\n\n"
-            "<i>Apos rodar, tocar no botao abre o seletor de grupos do Telegram. "
-            "Escolha o grupo destino e confirme.</i>"
+            "Uso: <code>/royaladdbot @usernamedobot</code>\n\n"
+            "Depois disso eu abro um menu pra voce marcar as permissoes "
+            "com botoes e gerar o link.\n\n"
+            "Exemplo: <code>/royaladdbot @MeuBot</code>"
         )
         return
 
     username = parts[1].lstrip("@").strip()
-    if not username or not all(c.isalnum() or c == "_" for c in username):
-        await message.answer("Username invalido. Use formato @MeuBot.")
+    if not username or not all(c.isalnum() or c == "_" for c in username) or len(username) > 32:
+        await message.answer("Username invalido. Use formato <code>@MeuBot</code>.")
         return
 
-    # permissoes (opcional)
-    if len(parts) >= 3:
-        raw = parts[2]
-        requested = {p.strip() for p in raw.split("+") if p.strip()}
-        invalid = requested - _VALID_ADMIN_PERMS
-        if invalid:
-            await message.answer(
-                f"Permissoes invalidas: <code>{html.escape(', '.join(sorted(invalid)))}</code>"
-            )
+    await message.answer(
+        _addbot_intro_text(username, _DEFAULT_BITMASK),
+        reply_markup=_perms_keyboard(username, _DEFAULT_BITMASK),
+    )
+
+
+@dp.callback_query(F.data.startswith("addbot:"))
+async def addbot_cb(cb: CallbackQuery):
+    if not cb.data or not cb.message:
+        return
+    try:
+        _, action, username, mask_str, idx_str = cb.data.split(":", 4)
+        mask = int(mask_str)
+        idx = int(idx_str)
+    except (ValueError, AttributeError):
+        await cb.answer()
+        return
+    if not username or len(username) > 32:
+        await cb.answer()
+        return
+
+    if action == "t":  # toggle
+        if not 0 <= idx < len(_PERM_ORDER):
+            await cb.answer()
             return
-        perms_str = "+".join(sorted(requested))
-    else:
-        perms_str = _DEFAULT_ADMIN_PERMS
+        new_mask = mask ^ (1 << idx)
+        try:
+            await cb.message.edit_text(
+                _addbot_intro_text(username, new_mask),
+                reply_markup=_perms_keyboard(username, new_mask),
+            )
+        except TelegramBadRequest:
+            pass
+        await cb.answer()
+        return
 
-    if perms_str:
-        url = f"https://t.me/{username}?startgroup=true&admin={perms_str}"
-        perms_pretty = perms_str.replace("+", ", ")
-        body = (
-            f"➕ Toque pra adicionar <b>@{html.escape(username)}</b> "
-            f"como <b>admin</b> com:\n<code>{html.escape(perms_pretty)}</code>\n\n"
-            f"<i>Abre o seletor de grupos — escolha o grupo destino.</i>"
-        )
-    else:
-        url = f"https://t.me/{username}?startgroup=true"
-        body = (
-            f"➕ Toque pra adicionar <b>@{html.escape(username)}</b> "
-            f"como membro comum.\n\n"
-            f"<i>Abre o seletor de grupos — escolha o grupo destino.</i>"
-        )
+    if action == "c":  # clear/all (mask vem novo no proprio callback)
+        try:
+            await cb.message.edit_text(
+                _addbot_intro_text(username, mask),
+                reply_markup=_perms_keyboard(username, mask),
+            )
+        except TelegramBadRequest:
+            pass
+        await cb.answer()
+        return
 
-    kb = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text=f"➕ Adicionar @{username}", url=url)
-    ]])
-    await message.answer(body, reply_markup=kb)
+    if action == "g":  # generate
+        perms = _mask_to_perms(mask)
+        if perms:
+            url = f"https://t.me/{username}?startgroup=true&admin={'+'.join(perms)}"
+            pretty = ", ".join(perms)
+            body = (
+                f"✅ Link pronto pra <b>@{html.escape(username)}</b> como <b>admin</b>:\n"
+                f"<code>{html.escape(pretty)}</code>\n\n"
+                f"Toque abaixo, escolha o grupo destino e confirme."
+            )
+        else:
+            url = f"https://t.me/{username}?startgroup=true"
+            body = (
+                f"✅ Link pronto pra <b>@{html.escape(username)}</b> como <b>membro comum</b>.\n\n"
+                f"Toque abaixo, escolha o grupo destino e confirme."
+            )
+        kb = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text=f"➕ Adicionar @{username}", url=url)
+        ]])
+        try:
+            await cb.message.edit_text(body, reply_markup=kb)
+        except TelegramBadRequest:
+            await cb.message.answer(body, reply_markup=kb)
+        await cb.answer("Link gerado")
+        return
+
+    await cb.answer()
 
 
 # === /royalperfil ===
