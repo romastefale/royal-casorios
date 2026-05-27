@@ -1578,36 +1578,36 @@ _DEFAULT_ADMIN_PERMS = "delete_messages+pin_messages+invite_users+restrict_membe
 
 @dp.message(Command("royaladdbot"))
 async def royal_add_bot(message: Message):
-    if not message.from_user or not is_group(message):
-        await message.reply("Use este comando dentro do grupo onde quer adicionar o bot.")
+    if not message.from_user:
         return
 
-    # so admin do grupo pode usar
-    try:
-        member = await bot.get_chat_member(message.chat.id, message.from_user.id)
-    except TelegramBadRequest:
-        await message.reply("Nao consegui verificar suas permissoes.")
-        return
-    if member.status not in ("creator", "administrator"):
-        await message.reply("👑 Apenas admins do grupo podem usar isso.")
+    # Funciona APENAS em DM. Em grupo, ignora silenciosamente
+    # (nao mostra nada — nem confirmacao, nem erro).
+    if is_group(message):
+        try:
+            await message.delete()
+        except Exception:
+            pass
         return
 
     parts = (message.text or "").split()
     if len(parts) < 2:
-        await message.reply(
+        await message.answer(
             "Uso: <code>/royaladdbot @usernamedobot [perm1+perm2+...]</code>\n\n"
             "<b>Permissoes validas</b> (separe com +):\n"
             "<code>change_info, delete_messages, restrict_members, invite_users, "
             "pin_messages, promote_members, manage_video_chats, manage_topics, "
             "post_stories, edit_stories, delete_stories, anonymous</code>\n\n"
             "Sem permissoes → entra como membro comum.\n"
-            "Exemplo: <code>/royaladdbot @MeuBot delete_messages+pin_messages</code>"
+            "Exemplo: <code>/royaladdbot @MeuBot delete_messages+pin_messages</code>\n\n"
+            "<i>Apos rodar, tocar no botao abre o seletor de grupos do Telegram. "
+            "Escolha o grupo destino e confirme.</i>"
         )
         return
 
     username = parts[1].lstrip("@").strip()
     if not username or not all(c.isalnum() or c == "_" for c in username):
-        await message.reply("Username invalido. Use formato @MeuBot.")
+        await message.answer("Username invalido. Use formato @MeuBot.")
         return
 
     # permissoes (opcional)
@@ -1616,7 +1616,7 @@ async def royal_add_bot(message: Message):
         requested = {p.strip() for p in raw.split("+") if p.strip()}
         invalid = requested - _VALID_ADMIN_PERMS
         if invalid:
-            await message.reply(
+            await message.answer(
                 f"Permissoes invalidas: <code>{html.escape(', '.join(sorted(invalid)))}</code>"
             )
             return
@@ -1628,22 +1628,22 @@ async def royal_add_bot(message: Message):
         url = f"https://t.me/{username}?startgroup=true&admin={perms_str}"
         perms_pretty = perms_str.replace("+", ", ")
         body = (
-            f"➕ Toque pra adicionar <b>@{html.escape(username)}</b> neste grupo "
+            f"➕ Toque pra adicionar <b>@{html.escape(username)}</b> "
             f"como <b>admin</b> com:\n<code>{html.escape(perms_pretty)}</code>\n\n"
-            f"<i>O Telegram vai abrir o seletor — escolha este mesmo grupo.</i>"
+            f"<i>Abre o seletor de grupos — escolha o grupo destino.</i>"
         )
     else:
         url = f"https://t.me/{username}?startgroup=true"
         body = (
             f"➕ Toque pra adicionar <b>@{html.escape(username)}</b> "
-            f"neste grupo como membro comum.\n\n"
-            f"<i>O Telegram vai abrir o seletor — escolha este mesmo grupo.</i>"
+            f"como membro comum.\n\n"
+            f"<i>Abre o seletor de grupos — escolha o grupo destino.</i>"
         )
 
     kb = InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text=f"➕ Adicionar @{username}", url=url)
     ]])
-    await message.reply(body, reply_markup=kb)
+    await message.answer(body, reply_markup=kb)
 
 
 # === /royalperfil ===
