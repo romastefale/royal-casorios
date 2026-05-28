@@ -1475,6 +1475,11 @@ def normalize_word(s: str) -> str:
     return "".join(c for c in s if not unicodedata.combining(c) and c.isalnum())
 
 
+def format_br(n) -> str:
+    """Formata inteiro com separador de milhar estilo BR (1234567 -> 1.234.567)."""
+    return f"{int(n):,}".replace(",", ".")
+
+
 # =====================================================================
 # UX HELPERS — message effects (Bot API 7.7+, DM-only) + chat actions
 # =====================================================================
@@ -2259,7 +2264,7 @@ async def send_couple(chat_id: int, source: str = "auto") -> bool:
         card = await asyncio.to_thread(
             render_casorio_card, partners[0], partners[1],
             current_season_label(), source,
-            datetime.now(TZ).strftime("%d/%m/%Y %H:%M"))
+            datetime.now(ZoneInfo(TZ_NAME)).strftime("%d/%m/%Y %H:%M"))
         if card:
             # Caption tem limite de 1024 chars — text atual cabe folgado.
             await bot.send_photo(
@@ -3762,7 +3767,7 @@ async def handle_palavra_attempt(message: Message, ch: dict) -> bool:
             **effect_kw(message.chat.type, EFFECT_PARTY),
         )
     except Exception as e:
-        log.warning(f"palavra winner feedback falhou: {e}")
+        logger.warning(f"palavra winner feedback falhou: {e}")
     return True
 
 

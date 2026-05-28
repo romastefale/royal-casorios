@@ -133,8 +133,8 @@
 ## 🚀 PARTE 2 — 20 MELHORIAS (features, monetização, qualidade)
 
 > **STATUS REAL (2026-05, auditado no código):**
-> ✅ **FEITO (9):** M01, M02 (florins, não Stars), M03, M04, M05, M06, M09, M11, M19.
-> ⏳ **PENDENTE (10):** M07 (web app), M08 (stories), M10 (guildas), M12 (boss raid), M14 (Prometheus), M15 (admin dashboard), M16 (A/B), M17 (testes), M18 (CI), M20 (i18n).
+> ✅ **FEITO (11):** M01, M02 (florins, não Stars), M03, M04, M05, M06, M09, M11, M17 (testes), M18 (CI), M19.
+> ⏳ **PENDENTE (8):** M07 (web app), M08 (stories), M10 (guildas), M12 (boss raid), M14 (Prometheus), M15 (admin dashboard), M16 (A/B), M20 (i18n).
 > 🚫 **VETADO (1):** M13 (Sentry).
 > → Monetização (Sprint 3) e Engajamento (Sprint 4) **concluídos**. Resta o Sprint 5 (diferencial competitivo) + infra (CI/testes/métricas).
 
@@ -218,13 +218,20 @@
 - **Por quê:** decidir entre 2 textos de boas-vindas, 2 cadências de palavra, etc., baseado em dados.
 - **Como:** `ab_variant(uid, experiment) -> 'A' | 'B'` (hash determinístico). Tabela `ab_events`.
 
-**M17 · Test suite (pytest + pytest-asyncio)** 🟠🟡
-- **Por quê:** 5.6k linhas sem teste = roleta russa em refactor.
-- **Como:** começa por units críticas: XP calc, palavra match, royal_id collision, migrations.
+**M17 · ✅ FEITO — Test suite (pytest)** 🟠🟡
+- **Por quê:** 8k linhas sem teste = roleta russa em refactor.
+- **Solução (implementada):** `tests/` com `conftest.py` (aponta `DATABASE_PATH` pra tmp antes do import → migrations rodam em DB vazio descartável), `test_pure.py` (20 asserts: `format_br`, `normalize_word`, `normalize_pair`, `level_progress`, eventos sazonais, season code, week marker, identity hash) e `test_db_smoke.py` (migrations até v13 + tabelas críticas + integrity_check). `requirements-dev.txt` separado do runtime.
+- **Aceite:** `pytest -q` → 20 passed. ✅ **Pegou 3 bugs reais** (ver abaixo).
 
-**M18 · CI no GitHub Actions** 🟢🟢
-- **Por quê:** roda lint+test antes do push pro Railway. Bloqueia deploys quebrados.
-- **Como:** `.github/workflows/ci.yml` com ruff + pytest.
+**M18 · ✅ FEITO — CI no GitHub Actions** 🟢🟢
+- **Por quê:** roda lint+test antes do deploy pro Railway. Bloqueia deploys quebrados.
+- **Solução (implementada):** `.github/workflows/ci.yml` (push em `royalRPG`/`main` + PRs): instala deps + `ruff check --select E9,F63,F7,F82` (só regras de bug crítico — undefined names/syntax, sem ruído de estilo) + `pytest -q`.
+- **Aceite:** workflow verde no GitHub. ✅
+
+> 🐛 **Bugs reais pegos pelo ruff crítico nesta entrega (corrigidos):**
+> 1. `format_br` — NameError em 6 call sites (saldo, card do boss, corpo do `/royalpresentear`). Não existia função module-level; só um `_br` aninhado. → criada `format_br()` em `main.py`.
+> 2. `datetime.now(TZ)` (main.py ~2267, card de casório) — `TZ` indefinido. → `ZoneInfo(TZ_NAME)`.
+> 3. `log.warning` (main.py ~3770, feedback de palavra) — `log` indefinido. → `logger.warning`.
 
 ### 🎨 UX / ACESSIBILIDADE
 

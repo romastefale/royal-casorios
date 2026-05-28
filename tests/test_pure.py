@@ -1,0 +1,123 @@
+"""Testes de funcoes puras criticas do bot.
+
+Cobre regressao dos bugs corrigidos (format_br indefinido) + invariantes de
+XP/level, normalizacao de palavra, eventos sazonais e hash do identity card.
+"""
+from datetime import date, datetime, timedelta
+
+import main
+
+
+# ---------------------------------------------------------------- format_br
+# (regressao: format_br era NameError em 6 call sites — saldo/boss/presente)
+def test_format_br_thousands():
+    assert main.format_br(1234567) == "1.234.567"
+    assert main.format_br(1000) == "1.000"
+    assert main.format_br(999) == "999"
+    assert main.format_br(0) == "0"
+
+
+def test_format_br_aceita_float_e_str():
+    assert main.format_br(1500.0) == "1.500"
+    assert main.format_br("2500") == "2.500"
+
+
+# ------------------------------------------------------------- normalize_word
+def test_normalize_word_remove_acento_e_caso():
+    assert main.normalize_word("Ação") == "acao"
+    assert main.normalize_word("  Café  ") == "cafe"
+    assert main.normalize_word("São-Paulo!") == "saopaulo"
+
+
+def test_normalize_word_vazio():
+    assert main.normalize_word("") == ""
+    assert main.normalize_word(None) == ""
+
+
+# ------------------------------------------------------------- normalize_pair
+def test_normalize_pair_ordena():
+    assert main.normalize_pair(5, 3) == (3, 5)
+    assert main.normalize_pair(3, 5) == (3, 5)
+    assert main.normalize_pair(7, 7) == (7, 7)
+
+
+# -------------------------------------------------------------- level_progress
+def test_level_progress_comeca_no_1():
+    lvl, in_level, needed, _ = main.level_progress(0)
+    assert lvl == 1
+    assert in_level == 0
+    assert needed >= 1
+
+
+def test_level_progress_monotonico():
+    last = 0
+    for xp in [0, 500, 5000, 50000, 500000]:
+        lvl, *_ = main.level_progress(xp)
+        assert lvl >= last
+        last = lvl
+
+
+def test_level_progress_threshold_nivel_2():
+    t2 = main._LEVEL_TABLE[2]
+    assert main.level_progress(t2)[0] == 2
+    assert main.level_progress(t2 - 1)[0] == 1
+
+
+# ----------------------------------------------------------- seasonal events
+def test_evento_natal_dobra_xp():
+    ev = main.active_seasonal_event(date(2026, 12, 25))
+    assert ev is not None and ev["id"] == "natal" and ev["xp_mult"] == 2.0
+
+
+def test_evento_reveillon_cruza_ano():
+    assert main.active_seasonal_event(date(2026, 12, 31))["id"] == "reveillon"
+    assert main.active_seasonal_event(date(2026, 1, 1))["id"] == "reveillon"
+
+
+def test_evento_namorados():
+    ev = main.active_seasonal_event(date(2026, 6, 12))
+    assert ev["id"] == "dia_namorados" and ev["xp_mult"] == 1.5
+
+
+def test_fim_de_semana_fallback():
+    d = date(2026, 3, 1)  # marco nao tem evento especial
+    while d.weekday() != 5:  # acha um sabado
+        d += timedelta(days=1)
+    ev = main.active_seasonal_event(d)
+    assert ev is not None and ev["id"] == "fds" and ev["xp_mult"] == 1.5
+
+
+def test_dia_util_sem_evento():
+    d = date(2026, 3, 1)
+    while d.weekday() != 2:  # acha uma quarta
+        d += timedelta(days=1)
+    assert main.active_seasonal_event(d) is None
+
+
+# ----------------------------------------------------------- season code
+def test_season_code_verao_cruza_ano():
+    assert main.current_season_code(date(2025, 12, 25)) == "verao-2026"
+    assert main.current_season_code(date(2026, 1, 10)) == "verao-2026"
+    assert main.current_season_code(date(2026, 4, 1)) == "outono-2026"
+    assert main.current_season_code(date(2026, 7, 1)) == "inverno-2026"
+    assert main.current_season_code(date(2026, 10, 1)) == "primavera-2026"
+
+
+# ----------------------------------------------------------- week marker
+def test_week_marker_formato():
+    m = main.current_week_marker(datetime(2026, 1, 5, 12, 0))
+    assert m.startswith("2026-W")
+    assert len(m.split("W")[1]) == 2
+
+
+# ----------------------------------------------------------- identity hash
+def test_identity_hash_estavel():
+    a = main._identity_card_hash("Rei", "toxic", "user", "ROY#1")
+    b = main._identity_card_hash("Rei", "toxic", "user", "ROY#1")
+    assert a == b and len(a) == 16
+
+
+def test_identity_hash_muda_com_avatar():
+    a = main._identity_card_hash("Rei", "toxic")
+    b = main._identity_card_hash("Rei", "amber")
+    assert a != b

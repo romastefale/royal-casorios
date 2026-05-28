@@ -1,0 +1,3 @@
+# Dependencias SO de desenvolvimento/CI (nao vao pro runtime do Railway).
+pytest>=8.0
+ruff>=0.6

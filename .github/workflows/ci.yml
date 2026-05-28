@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [royalRPG, main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+
+      - name: Ruff (regras de bug critico — undefined names, syntax)
+        run: ruff check --select E9,F63,F7,F82 .
+
+      - name: Pytest
+        env:
+          TZ: America/Sao_Paulo
+        run: python -m pytest -q

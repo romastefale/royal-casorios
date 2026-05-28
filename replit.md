@@ -20,8 +20,31 @@ A branch `main` LOCAL nunca é alterada no remoto — sempre fazemos `main:royal
 - `main.py` — código principal do bot
 - `royal_render.py` — gerador de cards 1080×1080 (Pillow puro, sem Chromium)
 - `royal_words.py` — palavras e charadas pro mini-game
-- `requirements.txt` — dependências (`aiogram`, `Pillow`)
+- `requirements.txt` — dependências de runtime (`aiogram`, `Pillow`, `aiohttp`)
+- `requirements-dev.txt` — deps SÓ de dev/CI (`pytest`, `ruff`); não vão pro Railway
+- `tests/` — suíte pytest (M17): `conftest.py` (DB tmp), `test_pure.py`, `test_db_smoke.py`
+- `.github/workflows/ci.yml` — CI (M18): ruff crítico + pytest em push/PR
 - Requer secret `BOT_TOKEN`
+
+## 🧪 Testes & CI (M17/M18)
+
+- **Rodar local:** `pip install -r requirements-dev.txt && python -m pytest -q` (20 testes).
+- **`conftest.py`** aponta `DATABASE_PATH` pra arquivo temporário ANTES do import de
+  `main` → migrations rodam em DB vazio descartável (nunca toca o DB real).
+- **`test_pure.py`** cobre funções puras: `format_br`, `normalize_word`,
+  `normalize_pair`, `level_progress`, eventos sazonais, season code, week marker,
+  identity hash.
+- **`test_db_smoke.py`** valida migrations até v13 + tabelas críticas + integrity_check.
+- **CI** (`.github/workflows/ci.yml`) roda em push pra `royalRPG`/`main` + PRs:
+  `ruff check --select E9,F63,F7,F82` (só bugs reais: undefined names/syntax, sem ruído
+  de estilo) + `pytest -q`.
+- ⚠️ O ruff crítico já pegou 3 NameErrors reais em produção (`format_br`, `TZ`, `log`)
+  que crashavam saldo/card-de-boss/presente/casório/feedback-de-palavra — todos
+  corrigidos. **Manter o gate no CI.**
+
+> 📌 Auditado nesta entrega: `/start`, `/royalajuda`, `/royaltutorial` e
+> `register_bot_commands()` **não precisaram mudar** (correções foram bug-fix interno
+> + infra de teste, sem comando novo nem mudança de UX visível).
 
 ## 💾 Persistência de dados — CRÍTICO (Railway)
 
