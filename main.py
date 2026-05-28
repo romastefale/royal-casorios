@@ -724,6 +724,89 @@ async def type_then_send(chat_id: int, text: str, delay: float = 1.2,
     return await bot.send_message(chat_id, text, **kwargs)
 
 
+async def reveal_text(chat_id: int, full_text: str,
+                      *, chunk_delay: float = 0.7,
+                      seed_text: str = ">> ...",
+                      parse_mode: str | None = "HTML",
+                      **kwargs):
+    """Anima a "digitacao" de uma mensagem editando-a em chunks.
+
+    Quebra `full_text` por linha (se >=2) ou em 3 metades. Respeita
+    rate-limit do Telegram (1 edit/seg em grupo, ~3/seg em DM) usando
+    `chunk_delay`. Em caso de TelegramRetryAfter, espera e segue.
+    Retorna o Message final (com todas as edicoes aplicadas) ou None.
+    NAO usar pra ack curto — eh deliberadamente lento (cinematografico).
+    """
+    if bot is None:
+        return None
+    try:
+        msg = await bot.send_message(chat_id, seed_text,
+                                     parse_mode=parse_mode, **kwargs)
+    except Exception:
+        return None
+    lines = [l for l in full_text.split("\n") if l.strip()]
+    chunks: list[str] = []
+    if len(lines) >= 2:
+        acc = ""
+        for l in lines:
+            acc = (acc + "\n" + l) if acc else l
+            chunks.append(acc)
+    else:
+        n = max(1, len(full_text) // 3)
+        for k in (n, 2 * n, len(full_text)):
+            chunks.append(full_text[:k])
+    for chunk in chunks:
+        await asyncio.sleep(chunk_delay)
+        try:
+            await bot.edit_message_text(
+                chat_id=chat_id, message_id=msg.message_id,
+                text=chunk, parse_mode=parse_mode,
+            )
+        except TelegramRetryAfter as e:
+            try:
+                await asyncio.sleep(getattr(e, "retry_after", 2))
+            except Exception:
+                pass
+        except Exception:
+            pass
+    return msg
+
+
+def hp_bar(current: int | float, maximum: int | float, width: int = 12) -> str:
+    """Barra visual estilo `█████░░░░░ NN%` pra HP, XP, etc.
+    Saturada em [0,100]%. Usar dentro de <pre>...</pre> pro alinhamento."""
+    try:
+        cur_v = float(current or 0)
+        max_v = float(maximum or 1)
+    except (TypeError, ValueError):
+        return "░" * width + "  0%"
+    pct = max(0.0, min(1.0, cur_v / max(1.0, max_v)))
+    filled = int(round(pct * width))
+    return "█" * filled + "░" * (width - filled) + f" {int(pct * 100):>3}%"
+
+
+async def roll_dice_visual(chat_id: int, emoji: str = "🎲",
+                           settle_delay: float = 0.0) -> int | None:
+    """Envia dado animado nativo do Telegram (🎲 🎯 🎰 🏀 ⚽ 🎳).
+
+    O cliente anima ~3s ate parar. Retorna o valor sorteado pelo
+    Telegram (1-6 pra dado/dart/bowling/basquete/futebol; 1-64 pra slot).
+
+    ATENCAO: NAO usar pra calculo de jogo — eh flourish visual. O valor
+    eh decidido pelo servidor do Telegram no momento do envio.
+    `settle_delay` so vale a pena se voce precisa do valor de retorno.
+    """
+    if bot is None:
+        return None
+    try:
+        msg = await bot.send_dice(chat_id, emoji=emoji)
+        if settle_delay > 0:
+            await asyncio.sleep(settle_delay)
+        return msg.dice.value if msg and msg.dice else None
+    except Exception:
+        return None
+
+
 # Anti-spam: cooldown por (uid, acao). Pensado pra 500+ users simultaneos.
 # Comandos pesados (perfil, ranking, render) limitam 1 chamada / cooldown.
 _rate_limits: dict[tuple[int, str], float] = {}
@@ -971,8 +1054,8 @@ def get_anon_name(chat_id: int, user_id: int) -> str:
 
 def vote_keyboard(couple_id: int, likes: int = 0, dislikes: int = 0) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text=f"❤️ Apoio {likes}",  callback_data=f"ship_like:{couple_id}"),
-        InlineKeyboardButton(text=f"🤮 Ciúmes {dislikes}", callback_data=f"ship_dislike:{couple_id}"),
+        ikb(f"❤️ Apoio {likes}",     callback_data=f"ship_like:{couple_id}",    style=STYLE_OK),
+        ikb(f"🤮 Ciúmes {dislikes}", callback_data=f"ship_dislike:{couple_id}", style=STYLE_NO),
     ]])
 
 
@@ -1318,9 +1401,10 @@ def group_picker_kb(groups: list[tuple[int, str]],
     rows = []
     for cid, title in groups[:20]:
         label = title if len(title) <= 40 else title[:37] + "..."
-        rows.append([InlineKeyboardButton(
-            text=f"🏰 {label}",
-            callback_data=f"{prefix}:{cid}")])
+        rows.append([ikb(
+            f"🏰 {label}",
+            callback_data=f"{prefix}:{cid}",
+            style=STYLE_INFO)])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -2188,7 +2272,7 @@ def schedule_chest_after_palavra(chat_id: int) -> None:
 
 def chest_keyboard(chest_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="🎁 Abrir Baú", callback_data=f"r:chest:{chest_id}")
+        ikb("🎁 Abrir Baú", callback_data=f"r:chest:{chest_id}", style=STYLE_OK)
     ]])
 
 
@@ -2375,6 +2459,13 @@ async def handle_chest_claim(cb: CallbackQuery, chest_id: int) -> None:
 
     await cb.answer(f"🎁 +{xp} XP  +{gold}🪙", show_alert=False)
 
+    # Quando o bau eh totalmente saqueado, joga uma slot machine 🎰
+    # como celebracao (animacao nativa do Telegram, ~3s). Eh PURO
+    # flourish visual: o valor sorteado NAO afeta nada do jogo, ja
+    # que as recompensas foram fixadas em CHEST_REWARDS por slot.
+    if final_status == "closed":
+        await roll_dice_visual(chat_id, emoji="🎰")
+
 
 # =====================================================================
 # RPG — BOSS SEMANAL
@@ -2404,7 +2495,7 @@ def get_active_boss(chat_id: int) -> dict | None:
 
 def boss_keyboard(boss_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="⚔️ Atacar!", callback_data=f"r:atk:{boss_id}")
+        ikb("⚔️ Atacar!", callback_data=f"r:atk:{boss_id}", style=STYLE_NO)
     ]])
 
 
@@ -2454,6 +2545,18 @@ async def spawn_boss_if_due() -> None:
         db.commit()
         boss = {"id": boss_id, "chat_id": chat_id, "name": name,
                 "hp": max_hp, "max_hp": max_hp}
+        # Drama cinematografico: alerta digita-se char-by-char antes da
+        # ficha do boss aparecer. Eh nova mensagem separada do card —
+        # auto-deleta em 60s pra nao poluir o grupo a longo prazo.
+        intro = await reveal_text(
+            chat_id,
+            ">> !! ALERTA — ANOMALIA DETECTADA NO REINO\n"
+            ">> CONECTANDO PROTOCOLO BOSS_v0.7 ...\n"
+            ">> ENTIDADE MATERIALIZANDO ...",
+            chunk_delay=0.9,
+        )
+        if intro:
+            await auto_delete_after(intro, delay=60.0)
         msg = await safe_send(chat_id,
                               "🚨 <b>UM BOSS APARECEU!</b>\n\n" + format_boss_text(boss),
                               reply_markup=boss_keyboard(boss_id))
@@ -3079,11 +3182,12 @@ async def royal_up(message: Message):
 
 
 def up_keyboard() -> InlineKeyboardMarkup:
+    # FOR -> vermelho (combate), VIT -> verde (vida), DES/CAR -> azul (skill)
     return InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="💪 FORÇA",    callback_data="r:up:for"),
-        InlineKeyboardButton(text="🏃 DESTREZA", callback_data="r:up:des"),
-        InlineKeyboardButton(text="❤️ VITAL",    callback_data="r:up:vit"),
-        InlineKeyboardButton(text="✨ CARISMA",  callback_data="r:up:car"),
+        ikb("💪 FORÇA",    callback_data="r:up:for", style=STYLE_NO),
+        ikb("🏃 DESTREZA", callback_data="r:up:des", style=STYLE_INFO),
+        ikb("❤️ VITAL",    callback_data="r:up:vit", style=STYLE_OK),
+        ikb("✨ CARISMA",  callback_data="r:up:car", style=STYLE_INFO),
     ]])
 
 
@@ -3095,9 +3199,10 @@ def classe_keyboard() -> InlineKeyboardMarkup:
     for i in range(0, len(items), 2):
         row = []
         for cid, info in items[i:i+2]:
-            row.append(InlineKeyboardButton(
-                text=f"{info['emoji']} {info['name']}",
-                callback_data=f"r:cls:set:{cid}"))
+            row.append(ikb(
+                f"{info['emoji']} {info['name']}",
+                callback_data=f"r:cls:set:{cid}",
+                style=STYLE_INFO))
         rows.append(row)
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -3168,15 +3273,17 @@ def inv_keyboard(chat_id: int, uid: int) -> InlineKeyboardMarkup:
             continue
         if item["type"] == "equip":
             label = "❌ Desequipar" if r["equipped"] else "✅ Equipar"
-            buttons.append([InlineKeyboardButton(
-                text=f"{item['emoji']} {label}",
-                callback_data=f"r:inv:eq:{r['item_id']}")])
+            buttons.append([ikb(
+                f"{item['emoji']} {label}",
+                callback_data=f"r:inv:eq:{r['item_id']}",
+                style=STYLE_NO if r["equipped"] else STYLE_OK)])
         elif item["type"] == "consumable":
-            buttons.append([InlineKeyboardButton(
-                text=f"{item['emoji']} Usar",
-                callback_data=f"r:inv:use:{r['item_id']}")])
+            buttons.append([ikb(
+                f"{item['emoji']} Usar",
+                callback_data=f"r:inv:use:{r['item_id']}",
+                style=STYLE_OK)])
     return InlineKeyboardMarkup(inline_keyboard=buttons or [[
-        InlineKeyboardButton(text="🛒 Ir à loja", callback_data="r:loja")]])
+        ikb("🛒 Ir à loja", callback_data="r:loja", style=STYLE_INFO)]])
 
 
 # === /royalloja ===
@@ -3204,9 +3311,10 @@ async def royal_loja(message: Message):
 def loja_keyboard() -> InlineKeyboardMarkup:
     rows = []
     for iid, item in ITEMS.items():
-        rows.append([InlineKeyboardButton(
-            text=f"💳 {item['emoji']} {item['name']} ({item['price']}🪙)",
-            callback_data=f"r:buy:{iid}")])
+        rows.append([ikb(
+            f"💳 {item['emoji']} {item['name']} ({item['price']}🪙)",
+            callback_data=f"r:buy:{iid}",
+            style=STYLE_INFO)])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -3394,8 +3502,8 @@ async def royal_priv(message: Message):
                    status="CONFIG", status_color="CYAN",
                    stamp="dados sob seu controle"),
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=rank_btn, callback_data="r:priv:rank")],
-            [InlineKeyboardButton(text=stats_btn, callback_data="r:priv:stats")],
+            [ikb(rank_btn, callback_data="r:priv:rank", style=STYLE_INFO)],
+            [ikb(stats_btn, callback_data="r:priv:stats", style=STYLE_INFO)],
         ]))
 
 
@@ -3420,8 +3528,8 @@ async def royal_dados(message: Message):
         term_block("DADOS", body, status="CONFIG", status_color="CYAN",
                    stamp="LGPD · dados sob seu controle"),
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📥 Exportar JSON", callback_data="r:dados:export")],
-            [InlineKeyboardButton(text="🗑️ Apagar tudo", callback_data="r:dados:wipe")],
+            [ikb("📥 Exportar JSON", callback_data="r:dados:export", style=STYLE_INFO)],
+            [ikb("🗑️ Apagar tudo", callback_data="r:dados:wipe", style=STYLE_NO)],
         ]))
 
 
