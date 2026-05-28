@@ -10,6 +10,9 @@ from __future__ import annotations
 import io
 import logging
 import random
+import threading
+import time
+from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -18,6 +21,47 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 logger = logging.getLogger(__name__)
 
 CARD_SIZE = 1080
+
+
+# ---------------------------------------------------------------------
+# Cache LRU pros cards renderizados — dimensionado pra ~500 users
+# Key = tuple imutável (royal_id, level, xp_in_level, hp, gold, attrs...)
+# Cache miss apenas quando estado muda. TTL extra evita lixo eterno.
+# ---------------------------------------------------------------------
+_CARD_CACHE: "OrderedDict[tuple, tuple[float, bytes]]" = OrderedDict()
+_CARD_CACHE_MAX = 256
+_CARD_CACHE_TTL = 300  # 5 min
+# Renders rodam em asyncio.to_thread, entao threads concorrentes mexem na LRU.
+# Lock protege move_to_end/popitem que NAO sao atomicos sob GIL composto.
+_CARD_CACHE_LOCK = threading.Lock()
+
+
+def cache_get(key: tuple) -> bytes | None:
+    with _CARD_CACHE_LOCK:
+        entry = _CARD_CACHE.get(key)
+        if not entry:
+            return None
+        ts, payload = entry
+        if time.time() - ts > _CARD_CACHE_TTL:
+            _CARD_CACHE.pop(key, None)
+            return None
+        _CARD_CACHE.move_to_end(key)
+        return payload
+
+
+def cache_put(key: tuple, payload: bytes) -> None:
+    with _CARD_CACHE_LOCK:
+        _CARD_CACHE[key] = (time.time(), payload)
+        _CARD_CACHE.move_to_end(key)
+        while len(_CARD_CACHE) > _CARD_CACHE_MAX:
+            _CARD_CACHE.popitem(last=False)
+
+
+def cache_stats() -> dict:
+    with _CARD_CACHE_LOCK:
+        return {"size": len(_CARD_CACHE),
+                "max": _CARD_CACHE_MAX,
+                "ttl": _CARD_CACHE_TTL}
 
 # ---------------------------------------------------------------------
 # Paleta dystopian 8-bit (palette fechada, sem gradientes suaves)
@@ -373,7 +417,22 @@ def _draw_label_value(draw, *, x, y, label, value,
 def render_profile_card(data: ProfileCardData,
                         avatar_bytes: bytes | None) -> bytes | None:
     """Renderiza cartao 8-bit dystopian. Retorna bytes JPEG ou None.
-    Paleta varia por royal_id (5+ variantes retro-futuristas dark)."""
+    Paleta varia por royal_id (5+ variantes retro-futuristas dark).
+    Resultado é cacheado por estado do player (LRU 256 entries, TTL 5min)."""
+    # cache key = tudo que afeta o pixel final
+    cache_key = (
+        "profile", data.royal_id, data.name, data.class_name, data.season,
+        data.level, data.xp_in_level, data.xp_needed,
+        data.hp_cur, data.hp_max,
+        data.attr_for, data.attr_des, data.attr_vit, data.attr_car,
+        data.pts_available, data.rank, data.total_players,
+        data.palavras_won, data.casorios, data.gold,
+        data.msg_count, data.joined_str,
+        bool(avatar_bytes),  # so muda se ganhou/perdeu foto
+    )
+    cached = cache_get(cache_key)
+    if cached:
+        return cached
     try:
         pal = pick_palette(data.royal_id)
         # fundo base
@@ -593,8 +652,266 @@ def render_profile_card(data: ProfileCardData,
 
         buf = io.BytesIO()
         img.save(buf, format="JPEG", quality=90, optimize=True)
-        return buf.getvalue()
+        payload = buf.getvalue()
+        cache_put(cache_key, payload)
+        return payload
     except Exception:
         logger.exception("ROYAL_PROFILE_CARD_RENDER_FAILED royal_id=%s",
                          getattr(data, "royal_id", "?"))
+        return None
+
+
+# =====================================================================
+# RANKING PODIUM CARD — top 3 da temporada em estilo arcade
+# =====================================================================
+
+@dataclass(frozen=True)
+class RankingEntry:
+    rank: int
+    royal_id: str
+    name: str
+    season_xp: int
+    level: int
+
+
+def render_ranking_card(season_label: str,
+                        entries: tuple[RankingEntry, ...]) -> bytes | None:
+    """Pódio top-3 estilo arcade high-score. Recebe tupla (hashavel) pra cache."""
+    if not entries:
+        return None
+    cache_key = ("ranking", season_label,
+                 tuple((e.rank, e.royal_id, e.name, e.season_xp, e.level)
+                       for e in entries[:3]))
+    cached = cache_get(cache_key)
+    if cached:
+        return cached
+    try:
+        pal = pick_palette(season_label)
+        img = Image.new("RGB", (CARD_SIZE, CARD_SIZE), BG_DEEP)
+        draw = ImageDraw.Draw(img)
+
+        # estatica de fundo
+        rng = random.Random(hash(season_label) & 0xFFFF)
+        for _ in range(1200):
+            x = rng.randrange(CARD_SIZE)
+            y = rng.randrange(CARD_SIZE)
+            c = rng.choice([(20, 16, 22), (16, 14, 20), (28, 22, 30)])
+            pixel_rect(draw, (x, y, x + 3, y + 3), c)
+
+        OUT_PAD = 28
+        panel_box = (OUT_PAD, OUT_PAD, CARD_SIZE - OUT_PAD, CARD_SIZE - OUT_PAD)
+        pixel_rect(draw, panel_box, BG)
+        chunky_border(draw, panel_box, outer=BLACK, inner=GOLD_DIM, thick=8)
+
+        # Header
+        header_box = (OUT_PAD + 28, OUT_PAD + 28,
+                      CARD_SIZE - OUT_PAD - 28, OUT_PAD + 110)
+        pixel_rect(draw, header_box, PANEL)
+        pixel_rect(draw, (header_box[0], header_box[1],
+                          header_box[2], header_box[1] + 4), GOLD_DIM)
+        pixel_rect(draw, (header_box[0], header_box[3] - 4,
+                          header_box[2], header_box[3]), GOLD_DIM)
+        title_font = load_font(28, mono=True, bold=True)
+        season_font = load_font(20, mono=True, bold=False)
+        draw.text((header_box[0] + 22, header_box[1] + 22),
+                  "ROYAL.HIGHSCORE.SYS", font=title_font, fill=pal["header"])
+        season_txt = f">> {season_label.upper()}"
+        sw, _ = text_size(draw, season_txt, season_font)
+        draw.text((header_box[2] - 22 - sw, header_box[1] + 28),
+                  season_txt, font=season_font, fill=DIM)
+        pixel_rect(draw, (header_box[2] - 18, header_box[1] + 28,
+                          header_box[2] - 10, header_box[1] + 40), HOT)
+
+        # Pódio: posições 2-1-3 (1º no centro mais alto)
+        medal_colors = {1: GOLD, 2: (180, 180, 180), 3: (180, 100, 60)}
+        order = [(2, 0), (1, 1), (3, 2)]  # rank -> coluna
+        top3 = {e.rank: e for e in entries if e.rank <= 3}
+
+        podium_y = OUT_PAD + 200
+        col_w = (CARD_SIZE - OUT_PAD * 2 - 80) // 3
+        col_gap = 20
+        base_x = OUT_PAD + 40
+
+        for rank, col in order:
+            e = top3.get(rank)
+            cx0 = base_x + col * (col_w + col_gap)
+            cx1 = cx0 + col_w
+            # altura do pódio varia
+            heights = {1: 320, 2: 240, 3: 200}
+            ph = heights[rank]
+            podium_top = podium_y + (320 - ph) + 280
+            podium_bot = OUT_PAD + 28 + 800
+
+            # bloco pódio
+            pixel_rect(draw, (cx0, podium_top, cx1, podium_bot), PANEL)
+            pixel_rect(draw, (cx0, podium_top, cx1, podium_top + 6),
+                       medal_colors[rank])
+            # numero gigante
+            num_font = load_font(120, mono=True, bold=True)
+            num = str(rank)
+            nw, nh = text_size(draw, num, num_font)
+            draw.text((cx0 + (col_w - nw) // 2, podium_top + 20),
+                      num, font=num_font, fill=medal_colors[rank])
+
+            # caixa do jogador acima do pódio
+            box_top = podium_top - 160
+            pixel_rect(draw, (cx0, box_top, cx1, podium_top - 12), PANEL)
+            pixel_rect(draw, (cx0, box_top, cx1, box_top + 4),
+                       medal_colors[rank])
+            if e:
+                medal_txt = {1: "1ST", 2: "2ND", 3: "3RD"}[rank]
+                mt_font = load_font(16, mono=True, bold=True)
+                mw, _ = text_size(draw, medal_txt, mt_font)
+                draw.text((cx0 + (col_w - mw) // 2, box_top + 12),
+                          medal_txt, font=mt_font, fill=medal_colors[rank])
+
+                name_clean = ellipsize(e.name, 14).upper()
+                ns = 22 if len(name_clean) <= 10 else 18
+                name_font = load_font(ns, mono=True, bold=True)
+                nw2, _ = text_size(draw, name_clean, name_font)
+                draw.text((cx0 + (col_w - nw2) // 2, box_top + 40),
+                          name_clean, font=name_font, fill=INK)
+
+                id_font = load_font(14, mono=True, bold=False)
+                idw, _ = text_size(draw, e.royal_id, id_font)
+                draw.text((cx0 + (col_w - idw) // 2, box_top + 72),
+                          e.royal_id, font=id_font, fill=DIM)
+
+                xp_font = load_font(20, mono=True, bold=True)
+                xp_txt = format_br(e.season_xp) + " XP"
+                xpw, _ = text_size(draw, xp_txt, xp_font)
+                draw.text((cx0 + (col_w - xpw) // 2, box_top + 100),
+                          xp_txt, font=xp_font, fill=pal["xp"])
+
+                lv_font = load_font(14, mono=True, bold=False)
+                lv_txt = f"LV {e.level:02d}"
+                lvw, _ = text_size(draw, lv_txt, lv_font)
+                draw.text((cx0 + (col_w - lvw) // 2, box_top + 130),
+                          lv_txt, font=lv_font, fill=DIM)
+            else:
+                empty_font = load_font(16, mono=True, bold=False)
+                draw.text((cx0 + 20, box_top + 60),
+                          "[ VAGO ]", font=empty_font, fill=DIM)
+
+        # Lista dos demais (4-10) em rodapé
+        rest = [e for e in entries if e.rank > 3][:7]
+        if rest:
+            rest_y = OUT_PAD + 28 + 820
+            rest_font = load_font(16, mono=True, bold=False)
+            for i, e in enumerate(rest):
+                col = i % 2
+                row = i // 2
+                rx = OUT_PAD + 40 + col * ((CARD_SIZE - OUT_PAD * 2 - 80) // 2 + 20)
+                ry = rest_y + row * 22
+                name_short = ellipsize(e.name, 14)
+                line = f" {e.rank:02d}. {name_short:<14} {format_br(e.season_xp)} XP"
+                draw.text((rx, ry), line, font=rest_font, fill=DIM)
+
+        # Footer
+        foot_font = load_font(14, mono=True, bold=False)
+        foot_left = f"> COMPETIDORES: {len(entries)}  ::  TEMPORADA ATIVA"
+        foot_right = f"v0.1.ALPHA // {pal['name']}_MODE"
+        draw.text((OUT_PAD + 60, CARD_SIZE - OUT_PAD - 50),
+                  foot_left, font=foot_font, fill=DIM)
+        fw, _ = text_size(draw, foot_right, foot_font)
+        draw.text((CARD_SIZE - OUT_PAD - 60 - fw, CARD_SIZE - OUT_PAD - 50),
+                  foot_right, font=foot_font, fill=pal["footer"])
+
+        img = img.convert("RGBA")
+        apply_scanlines(img, every=3, alpha=55)
+        vimg = img.convert("RGB")
+        apply_vignette(vimg, strength=160)
+        img = vimg.convert("RGBA")
+        apply_grain(img, intensity=18)
+        img = img.convert("RGB")
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=90, optimize=True)
+        payload = buf.getvalue()
+        cache_put(cache_key, payload)
+        return payload
+    except Exception:
+        logger.exception("ROYAL_RANKING_CARD_RENDER_FAILED")
+        return None
+
+
+# =====================================================================
+# LEVEL-UP CARD — pop celebrativo, leve, sem cachear (sempre fresh)
+# =====================================================================
+
+def render_levelup_card(royal_id: str, name: str,
+                        new_level: int, class_name: str = "") -> bytes | None:
+    """Card menor (1080x540) pra anunciar level-up. Sem cache (evento único)."""
+    try:
+        pal = pick_palette(royal_id)
+        W, H = CARD_SIZE, 540
+        img = Image.new("RGB", (W, H), BG_DEEP)
+        draw = ImageDraw.Draw(img)
+
+        # estatica
+        rng = random.Random(hash(royal_id) & 0xFFFF)
+        for _ in range(600):
+            x = rng.randrange(W); y = rng.randrange(H)
+            c = rng.choice([(20, 16, 22), (28, 22, 30), pal["header"]])
+            pixel_rect(draw, (x, y, x + 3, y + 3), c)
+
+        OUT_PAD = 28
+        panel_box = (OUT_PAD, OUT_PAD, W - OUT_PAD, H - OUT_PAD)
+        pixel_rect(draw, panel_box, BG)
+        chunky_border(draw, panel_box, outer=BLACK, inner=pal["header"], thick=8)
+
+        # Header alerta
+        alert_font = load_font(22, mono=True, bold=True)
+        draw.text((OUT_PAD + 48, OUT_PAD + 40),
+                  ">> LEVEL_UP.SYS // ALERTA", font=alert_font, fill=HOT)
+
+        # NIVEL gigante
+        big_font = load_font(180, mono=True, bold=True)
+        num = f"{new_level:02d}"
+        nw, nh = text_size(draw, num, big_font)
+        center_x = W // 2
+        cy = H // 2 - 20
+        # sombra ASCII chunky
+        draw.text((center_x - nw // 2 + 6, cy - nh // 2 + 6),
+                  num, font=big_font, fill=BLACK)
+        draw.text((center_x - nw // 2, cy - nh // 2),
+                  num, font=big_font, fill=pal["level"])
+
+        lab_font = load_font(24, mono=True, bold=True)
+        lab = "NIVEL ATINGIDO"
+        lw, _ = text_size(draw, lab, lab_font)
+        draw.text((center_x - lw // 2, cy + nh // 2 + 10),
+                  lab, font=lab_font, fill=DIM)
+
+        # Nome
+        name_clean = ellipsize(name, 22).upper()
+        nfont = load_font(28, mono=True, bold=True)
+        nw2, _ = text_size(draw, name_clean, nfont)
+        draw.text((center_x - nw2 // 2, OUT_PAD + 90),
+                  name_clean, font=nfont, fill=INK)
+        if class_name:
+            cfont = load_font(18, mono=True, bold=False)
+            ctxt = f"// {ellipsize(class_name, 24).upper()}"
+            cw, _ = text_size(draw, ctxt, cfont)
+            draw.text((center_x - cw // 2, OUT_PAD + 128),
+                      ctxt, font=cfont, fill=CYAN)
+
+        # +1 PTS
+        pts_font = load_font(20, mono=True, bold=True)
+        pts_txt = "!! +1 PT DE ATRIBUTO  ::  /royalup"
+        pw, _ = text_size(draw, pts_txt, pts_font)
+        draw.text((center_x - pw // 2, H - OUT_PAD - 60),
+                  pts_txt, font=pts_font, fill=ACID)
+
+        img = img.convert("RGBA")
+        apply_scanlines(img, every=3, alpha=55)
+        vimg = img.convert("RGB")
+        apply_vignette(vimg, strength=140)
+        img = vimg.convert("RGBA")
+        apply_grain(img, intensity=18)
+        img = img.convert("RGB")
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=88, optimize=True)
+        return buf.getvalue()
+    except Exception:
+        logger.exception("ROYAL_LEVELUP_CARD_RENDER_FAILED royal_id=%s", royal_id)
         return None

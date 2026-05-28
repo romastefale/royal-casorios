@@ -43,7 +43,13 @@ from aiogram.types import (
 )
 
 from royal_words import PALAVRAS, CHARADAS
-from royal_render import ProfileCardData, render_profile_card
+from royal_render import (
+    ProfileCardData,
+    RankingEntry,
+    render_levelup_card,
+    render_profile_card,
+    render_ranking_card,
+)
 
 # =====================================================================
 # CONFIG & LOGGING
@@ -510,6 +516,47 @@ async def safe_typing(chat_id: int, action: str = "typing") -> None:
         pass
 
 
+# Anti-spam: cooldown por (uid, acao). Pensado pra 500+ users simultaneos.
+# Comandos pesados (perfil, ranking, render) limitam 1 chamada / cooldown.
+_rate_limits: dict[tuple[int, str], float] = {}
+_RATE_LIMIT_GC_INTERVAL = 600   # 10 min entre garbage collects
+_RATE_LIMIT_TTL = 3600          # entradas mais velhas que 1h sao removidas
+_rate_limits_last_gc: float = 0.0
+
+
+def rate_limited(uid: int, action: str, cooldown: float = 10.0) -> int:
+    """Retorna 0 se OK, ou segundos restantes se ainda em cooldown.
+    Faz GC oportunistico do dict (evita crescimento ilimitado em prod)."""
+    global _rate_limits_last_gc
+    now = utc_now().timestamp()
+    if now - _rate_limits_last_gc > _RATE_LIMIT_GC_INTERVAL:
+        # snapshot pra evitar 'dict changed size during iteration'
+        cutoff = now - _RATE_LIMIT_TTL
+        stale = [k for k, ts in list(_rate_limits.items()) if ts < cutoff]
+        for k in stale:
+            _rate_limits.pop(k, None)
+        _rate_limits_last_gc = now
+    last = _rate_limits.get((uid, action), 0.0)
+    if now - last < cooldown:
+        return int(cooldown - (now - last)) + 1
+    _rate_limits[(uid, action)] = now
+    return 0
+
+
+async def deny_if_rate_limited(message: Message, action: str,
+                                cooldown: float = 10.0) -> bool:
+    """Helper: responde com aviso e retorna True se rate-limited."""
+    if not message.from_user:
+        return False
+    wait = rate_limited(message.from_user.id, action, cooldown)
+    if wait > 0:
+        await message.answer(
+            term_block(action, f"⏳ Aguarde <b>{wait}s</b> antes de invocar de novo.",
+                       status="THROTTLED", status_color="AMBER"))
+        return True
+    return False
+
+
 GROUP_ONLY_MSG = (
     "🏰 Esse comando vive nos grupos do Reino.\n"
     "<i>Volta pro grupo Royal pra usar ele lá ✨</i>"
@@ -941,6 +988,8 @@ def award_xp_immediate(chat_id: int, user_id: int, amount: int, reason: str = ""
     db.commit()
     logger.info("xp+%d uid=%d chat=%d reason=%s level %d→%d",
                 amount, user_id, chat_id, reason, old_lvl, new_lvl)
+    if new_lvl > old_lvl:
+        _schedule_levelup_dm(chat_id, user_id, player, new_lvl)
 
 
 def award_xp_message(chat_id: int, user_id: int, is_reply: bool) -> None:
@@ -979,6 +1028,55 @@ def award_xp_message(chat_id: int, user_id: int, is_reply: bool) -> None:
         f"WHERE chat_id=? AND user_id=?",
         (new_xp, real_amount, pts_gain, now.isoformat(), chat_id, user_id),
     )
+    if new_lvl > old_lvl:
+        _schedule_levelup_dm(chat_id, user_id, player, new_lvl)
+
+
+def _schedule_levelup_dm(chat_id: int, user_id: int,
+                          player: dict, new_lvl: int) -> None:
+    """Agenda envio de card de level-up na DM (não bloqueia)."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    royal_id = player.get("royal_id") or ""
+    class_id = player.get("class_id")
+    name = get_name(chat_id, user_id)
+    loop.create_task(notify_level_up_dm(
+        user_id, royal_id, name, new_lvl, class_id))
+
+
+async def notify_level_up_dm(user_id: int, royal_id: str, name: str,
+                              new_level: int, class_id: str | None) -> None:
+    """Tenta enviar card de level-up na DM. Silencioso se user bloqueou ou
+    nunca falou com o bot em privado."""
+    if bot is None or not royal_id:
+        return
+    try:
+        class_name = ""
+        if class_id and class_id in CLASSES:
+            class_name = CLASSES[class_id].get("name", "")
+        png = await asyncio.to_thread(
+            render_levelup_card, royal_id, name, new_level, class_name)
+        caption = term_block(
+            "LEVEL_UP",
+            f"<b>NIVEL {new_level:02d} ATINGIDO</b>\n"
+            f"<i>+1 ponto de atributo. Use /royalup no grupo pra distribuir.</i>",
+            status="ALERTA", status_color="HOT",
+        )
+        if png:
+            await bot.send_photo(
+                user_id,
+                BufferedInputFile(png, filename="royal_levelup.jpg"),
+                caption=caption,
+                message_effect_id=EFFECT_THUMBS_UP,
+            )
+        else:
+            await bot.send_message(user_id, caption,
+                                   message_effect_id=EFFECT_THUMBS_UP)
+    except Exception:
+        # user nunca abriu DM ou bloqueou — silencioso
+        pass
 
 
 # =====================================================================
@@ -1363,8 +1461,12 @@ def get_active_challenge(chat_id: int) -> dict | None:
 
 
 def format_challenge_text(ch: dict, status: str = "open", winner_name: str = "") -> str:
-    type_label = {"anagrama": "🔤 Anagrama", "letras": "🔡 Letras Faltando", "charada": "💭 Charada"}.get(ch["type"], "🎯 Desafio")
-    base = f"🎯 <b>PALAVRA DA HORA</b>\n{type_label}\n\n"
+    type_label = {
+        "anagrama": "🔤 ANAGRAMA",
+        "letras":   "🔡 LETRAS_FALTANDO",
+        "charada":  "💭 CHARADA",
+    }.get(ch["type"], "🎯 DESAFIO")
+
     if status == "open":
         try:
             ends_at = datetime.fromisoformat(ch["ends_at"])
@@ -1372,29 +1474,38 @@ def format_challenge_text(ch: dict, status: str = "open", winner_name: str = "")
         except Exception:
             mins_left = ch.get("duration_min", 5)
         if ch["type"] == "charada":
-            base += f"<i>{html.escape(ch['hint'])}</i>\n\n"
+            puzzle = f"<blockquote>💭 <i>{html.escape(ch['hint'])}</i></blockquote>"
         else:
-            base += f"<code>{ch['display']}</code>\n\n"
-        base += (
-            f"⏱️ Tempo: ~{mins_left} min\n"
-            f"💬 Tentativas: {ch.get('attempts_count', 0)}\n"
-            f"⚡ Primeiro a acertar leva <b>{XP_PALAVRA_WIN_BONUS} XP + {GOLD_PALAVRA_WIN} 🪙</b>\n\n"
-            f"<i>Responda diretamente no chat</i>"
+            puzzle = f"<pre>{html.escape(ch['display'])}</pre>"
+        body = (
+            f">> <b>{type_label}</b>\n"
+            f"{puzzle}\n"
+            f"⏱️ <code>~{mins_left}min</code>  ·  "
+            f"💬 <code>{ch.get('attempts_count', 0)}</code> tentativas\n"
+            f"⚡ recompensa: <b>{XP_PALAVRA_WIN_BONUS} XP + {GOLD_PALAVRA_WIN}🪙</b>\n"
+            f"<i>Responda no chat pra tentar.</i>"
         )
-    elif status == "win":
-        base += (
-            f"🏆 <b>{winner_name} acertou!</b>\n"
-            f"A palavra era <b>{ch['word'].upper()}</b>\n"
-            f"⏱️ {(ch.get('winner_ms') or 0) / 1000:.1f}s · "
+        return term_block("PALAVRA", body,
+                          status="TRANSMITINDO", status_color="ACID")
+    if status == "win":
+        body = (
+            f"🏆 <b>{winner_name} ACERTOU!</b>\n"
+            f">> palavra: <code>{ch['word'].upper()}</code>\n"
+            f"⏱️ {(ch.get('winner_ms') or 0) / 1000:.1f}s  ·  "
             f"💬 {ch.get('attempts_count', 0)} tentativas"
         )
-    else:  # timeout
-        base += (
-            f"⏰ <b>Tempo esgotado!</b>\n"
-            f"A palavra era <b>{ch['word'].upper()}</b>\n"
-            f"😶 Ninguém acertou."
-        )
-    return base
+        return term_block("PALAVRA", body,
+                          status="RESOLVIDO", status_color="ACID",
+                          stamp=type_label)
+    # timeout
+    body = (
+        f"⏰ <i>Tempo esgotado.</i>\n"
+        f">> palavra: <code>{ch['word'].upper()}</code>\n"
+        f"😶 Ninguém acertou."
+    )
+    return term_block("PALAVRA", body,
+                      status="TIMEOUT", status_color="HOT",
+                      stamp=type_label)
 
 
 async def spawn_palavra(chat_id: int) -> None:
@@ -1585,16 +1696,20 @@ def format_boss_text(boss: dict) -> str:
     pct = boss["hp"] / max(1, boss["max_hp"])
     filled = max(0, min(bar_len, int(round(pct * bar_len))))
     bar = "█" * filled + "░" * (bar_len - filled)
+    pct_int = int(pct * 100)
     cur.execute("SELECT COUNT(DISTINCT user_id) AS n FROM boss_hits WHERE boss_id=?", (boss["id"],))
     attackers = cur.fetchone()["n"]
-    return (
-        f"🐉 <b>BOSS DA SEMANA</b>\n"
-        f"{boss['name']}\n\n"
-        f"❤️ {boss['hp']} / {boss['max_hp']}\n"
-        f"{bar}\n\n"
-        f"⚔️ {attackers} bravos atacando\n"
-        f"<i>Toque em Atacar para causar dano!</i>"
+    hp_now = f"{int(boss['hp']):,}".replace(",", ".")
+    hp_max = f"{int(boss['max_hp']):,}".replace(",", ".")
+    body = (
+        f">> <b>{boss['name']}</b>\n"
+        f"<pre>HP {bar} {pct_int:>3}%</pre>"
+        f"❤️ <code>{hp_now}/{hp_max}</code>  ·  "
+        f"⚔️ <code>{attackers}</code> atacantes\n"
+        f"<i>Toca em Atacar pra causar dano!</i>"
     )
+    return term_block("BOSS", body,
+                      status="HOSTIL", status_color="HOT")
 
 
 async def spawn_boss_if_due() -> None:
@@ -1780,14 +1895,23 @@ async def close_season(chat_id: int, old_code: str | None, new_code: str) -> Non
 async def start_cmd(message: Message):
     if message.chat.type != "private":
         return
+    body = (
+        "<b>// SISTEMA ROYAL INICIALIZADO</b>\n"
+        "<i>A corte te aguardava, nobre.</i>\n"
+        "<blockquote expandable>"
+        ">> ROTAS DISPONIVEIS\n"
+        "• 🏰 /royal — terminal principal\n"
+        "• 👤 /royalperfil — cartao de identidade\n"
+        "• 💍 /royalcasorios — ranking de casórios\n"
+        "• ⚔️ /royalpalavra — desafio ativo\n"
+        "• 🐉 /royalboss — boss semanal\n"
+        "• ❓ /royalajuda — manual completo"
+        "</blockquote>"
+        "<i>Toca num botão abaixo pra navegar 👇</i>"
+    )
     await message.answer(
-        "👑 <b>Bem-vindo ao Royal!</b>\n"
-        "<i>A corte te aguardava.</i>\n\n"
-        "Por aqui você pode:\n"
-        "• 🏰 Entrar no reino com /royal\n"
-        "• 👤 Ver seu perfil com /royalperfil\n"
-        "• 💍 Acompanhar casórios e ranking da temporada\n\n"
-        "Toca num botão abaixo ou usa /royalajuda 👇",
+        term_block("BOOT", body, status="CONECTADO",
+                   stamp=current_season_label()),
         reply_markup=private_menu,
         **effect_kw(message.chat.type, EFFECT_PARTY),
     )
@@ -1898,11 +2022,17 @@ async def royal_up(message: Message):
     p = ensure_player(chat_id, message.from_user.id)
     db.commit()
     if p["pts_available"] <= 0:
-        await message.answer("Você não tem pontos para distribuir. Suba de nível primeiro! ⭐")
+        await message.answer(term_block(
+            "ATRIBUTOS",
+            "<i>Sem pontos disponíveis. Suba de nível primeiro ⭐</i>",
+            status="EMPTY", status_color="AMBER"))
         return
+    body = (
+        f"<b>{p['pts_available']}</b> ponto(s) para distribuir.\n"
+        f"<i>Escolha um atributo abaixo:</i>"
+    )
     await message.answer(
-        f"⬆️ Você tem <b>{p['pts_available']}</b> ponto(s) para distribuir.\n"
-        f"Escolha um atributo:",
+        term_block("ATRIBUTOS", body, status="READY"),
         reply_markup=up_keyboard(),
     )
 
@@ -1938,10 +2068,13 @@ async def royal_classe(message: Message):
         return
     ensure_player(message.chat.id, message.from_user.id)
     db.commit()
-    txt = "🎭 <b>Escolha sua classe</b>\n\n"
+    lines = []
     for cid, info in CLASSES.items():
-        txt += f"{info['emoji']} <b>{info['name']}</b> — {info['bonus']}\n"
-    await message.answer(txt, reply_markup=classe_keyboard())
+        lines.append(f"{info['emoji']} <b>{info['name']}</b> — <i>{info['bonus']}</i>")
+    body = "<i>Escolha sua identidade no reino:</i>\n\n" + "\n".join(lines)
+    await message.answer(
+        term_block("CLASSE", body, status="SELECAO", status_color="CYAN"),
+        reply_markup=classe_keyboard())
 
 
 # === /royalinventario ===
@@ -1960,16 +2093,25 @@ async def royal_inv(message: Message):
         (chat_id, uid))
     rows = cur.fetchall()
     if not rows:
-        await message.answer("🎒 Seu inventário está vazio. Visite a /royalloja!")
+        await message.answer(term_block(
+            "INVENTARIO",
+            "<i>Cofre vazio. Visita a /royalloja pra comprar itens.</i>",
+            status="VAZIO", status_color="AMBER"))
         return
-    txt = "🎒 <b>Inventário</b>\n\n"
+    parts = []
     for r in rows:
         item = ITEMS.get(r["item_id"])
         if not item:
             continue
-        eq = "✅ " if r["equipped"] else ""
-        txt += f"{eq}{item['emoji']} <b>{item['name']}</b> x{r['qty']}\n<i>{item['desc']}</i>\n\n"
-    await message.answer(txt, reply_markup=inv_keyboard(chat_id, uid))
+        eq = "✅ " if r["equipped"] else "  "
+        parts.append(
+            f"{eq}{item['emoji']} <b>{item['name']}</b> "
+            f"<code>x{r['qty']}</code>\n   <i>{item['desc']}</i>"
+        )
+    body = "\n\n".join(parts)
+    await message.answer(
+        term_block("INVENTARIO", body, status="LOADED"),
+        reply_markup=inv_keyboard(chat_id, uid))
 
 
 def inv_keyboard(chat_id: int, uid: int) -> InlineKeyboardMarkup:
@@ -2004,11 +2146,17 @@ async def royal_loja(message: Message):
         return
     p = ensure_player(message.chat.id, message.from_user.id)
     db.commit()
-    txt = (f"🪙 <b>LOJA REAL</b>\n"
-           f"Seu saldo: <b>{p['gold']}</b> 🪙\n\n")
+    gold_br = f"{int(p['gold']):,}".replace(",", ".")
+    parts = [f">> SALDO: <b><code>{gold_br}</code></b> florins 🪙\n"]
     for iid, item in ITEMS.items():
-        txt += f"{item['emoji']} <b>{item['name']}</b> — {item['price']}🪙\n<i>{item['desc']}</i>\n\n"
-    await message.answer(txt, reply_markup=loja_keyboard())
+        parts.append(
+            f"{item['emoji']} <b>{item['name']}</b> "
+            f"— <code>{item['price']}</code>🪙\n   <i>{item['desc']}</i>"
+        )
+    body = "\n\n".join(parts)
+    await message.answer(
+        term_block("LOJA", body, status="OPEN", status_color="ACID"),
+        reply_markup=loja_keyboard())
 
 
 def loja_keyboard() -> InlineKeyboardMarkup:
@@ -2046,26 +2194,67 @@ async def royal_ranking(message: Message):
     if not is_group(message):
         await message.answer(GROUP_ONLY_MSG)
         return
+    if await deny_if_rate_limited(message, "RANKING", cooldown=15.0):
+        return
+    await send_ranking(message.chat.id, target_chat_id=message.chat.id)
+
+
+async def send_ranking(source_chat_id: int, *, target_chat_id: int) -> None:
+    """Envia ranking: card pódio (top 3) + caption com top 10."""
     cur.execute(
-        "SELECT royal_id, user_id, season_xp FROM players "
+        "SELECT royal_id, user_id, season_xp, total_xp FROM players "
         "WHERE chat_id=? AND season_xp > 0 AND privacy_hide_ranking=0 "
-        "ORDER BY season_xp DESC LIMIT 10", (message.chat.id,))
+        "ORDER BY season_xp DESC LIMIT 10", (source_chat_id,))
     rows = cur.fetchall()
     if not rows:
-        await message.answer("🏆 Ninguém pontuou nesta temporada ainda. Interaja para subir!")
+        await safe_send(target_chat_id, term_block(
+            "RANKING",
+            "<i>Ninguém pontuou nesta temporada ainda.\n"
+            "Interaja pra subir no pódio ⚔️</i>",
+            status="VAZIO", status_color="AMBER",
+            stamp=current_season_label()))
         return
+
     medals = ["🥇", "🥈", "🥉"] + ["🏅"] * 7
-    txt = f"🏆 <b>RANKING — {current_season_label()}</b>\n\n"
+    season = current_season_label()
+    lines = []
+    entries = []
     for i, r in enumerate(rows, 1):
-        name = get_name(message.chat.id, r["user_id"])
-        lvl, *_ = level_progress(r["season_xp"] if r["season_xp"] > _LEVEL_TABLE[1] else _LEVEL_TABLE[1] + 1)
-        # mostra so XP da temporada e level total (do lifetime)
-        cur.execute("SELECT total_xp FROM players WHERE chat_id=? AND user_id=?",
-                    (message.chat.id, r["user_id"]))
-        total = cur.fetchone()["total_xp"]
-        full_lvl, *_ = level_progress(total)
-        txt += f"{medals[i-1]} {i}. {html.escape(name)} ({r['royal_id']}) — Lvl {full_lvl} · {r['season_xp']} XP\n"
-    await message.answer(txt)
+        name = get_name(source_chat_id, r["user_id"])
+        full_lvl, *_ = level_progress(r["total_xp"] or 0)
+        lines.append(
+            f"{medals[i-1]} <b>{i}.</b> {html.escape(name)} "
+            f"<code>{r['royal_id']}</code> — "
+            f"Lvl <b>{full_lvl}</b> · {r['season_xp']} XP"
+        )
+        entries.append(RankingEntry(
+            rank=i, royal_id=r["royal_id"], name=name,
+            season_xp=int(r["season_xp"]), level=int(full_lvl)))
+
+    body = "\n".join(lines)
+    caption = term_block("RANKING", body,
+                         status="LIVE", status_color="ACID",
+                         stamp=season)
+    if len(caption) > 1024:
+        caption = term_block("RANKING",
+                             "\n".join(lines[:6]),
+                             status="LIVE", status_color="ACID",
+                             stamp=season)
+
+    # tenta enviar card pódio (top 3); fallback caption-only
+    await safe_typing(target_chat_id, "upload_photo")
+    try:
+        png = await asyncio.to_thread(
+            render_ranking_card, season, tuple(entries))
+        if png:
+            await bot.send_photo(
+                target_chat_id,
+                BufferedInputFile(png, filename="royal_ranking.jpg"),
+                caption=caption)
+            return
+    except Exception:
+        logger.exception("ranking card send failed; falling back to text")
+    await safe_send(target_chat_id, caption)
 
 
 # === /royalpalavra ===
@@ -2084,11 +2273,17 @@ async def royal_palavra_status(message: Message):
             try:
                 nxt_dt = datetime.fromisoformat(nxt)
                 mins = max(0, int((nxt_dt - local_now()).total_seconds() / 60))
-                await message.answer(f"🎯 Sem desafio ativo. Próximo em ~<b>{mins} min</b>.")
+                await message.answer(term_block(
+                    "PALAVRA",
+                    f"<i>Sem transmissão ativa.</i>\n>> próxima em <b>~{mins} min</b>",
+                    status="STANDBY", status_color="AMBER"))
                 return
             except Exception:
                 pass
-        await message.answer("🎯 Sem desafio ativo. Aguarde o próximo!")
+        await message.answer(term_block(
+            "PALAVRA",
+            "<i>Sem transmissão ativa. Aguarde o próximo sinal.</i>",
+            status="STANDBY", status_color="AMBER"))
         return
     await message.answer(format_challenge_text(ch))
 
@@ -2102,8 +2297,11 @@ async def royal_boss_status(message: Message):
         return
     boss = get_active_boss(message.chat.id)
     if not boss:
-        await message.answer(
-            f"🐉 Nenhum boss ativo. O próximo nasce no <b>domingo às {BOSS_SPAWN_HOUR}h</b>!")
+        await message.answer(term_block(
+            "BOSS",
+            f"<i>Nenhuma anomalia detectada.</i>\n"
+            f">> próximo spawn: <b>domingo {BOSS_SPAWN_HOUR}h</b>",
+            status="OFFLINE", status_color="AMBER"))
         return
     await message.answer(format_boss_text(boss), reply_markup=boss_keyboard(boss["id"]))
 
@@ -2152,11 +2350,21 @@ async def royal_dados(message: Message):
     if not message.from_user:
         return
     if is_group(message):
-        await message.answer("Use /royaldados no chat privado comigo.")
+        await message.answer(term_block(
+            "DADOS",
+            "<i>Use /royaldados no chat privado comigo.</i>",
+            status="DM_ONLY", status_color="AMBER"))
         return
+    body = (
+        "<i>Você controla seus dados no reino:</i>\n"
+        "<blockquote>"
+        "📥 <b>Exportar</b> — JSON com seus perfis e registros\n"
+        "🗑️ <b>Apagar</b> — remove tudo (irrecuperável)"
+        "</blockquote>"
+    )
     await message.answer(
-        "📦 <b>Seus dados</b>\n\n"
-        "Use os botões abaixo:",
+        term_block("DADOS", body, status="CONFIG", status_color="CYAN",
+                   stamp="LGPD · dados sob seu controle"),
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="📥 Exportar JSON", callback_data="r:dados:export")],
             [InlineKeyboardButton(text="🗑️ Apagar tudo", callback_data="r:dados:wipe")],
@@ -2177,13 +2385,22 @@ async def royal_ativar(message: Message):
         (message.chat.id, current_season_code()))
     schedule_next_palavra(message.chat.id)
     db.commit()
-    await message.answer(
-        f"👑 <b>Royal ativado neste grupo!</b>\n\n"
-        f"💍 Casórios automáticos: 3x ao dia\n"
-        f"🎯 Palavra da Hora: a cada 60 min\n"
-        f"🐉 Boss: domingos às {BOSS_SPAWN_HOUR}h\n"
-        f"📅 Temporada: {current_season_label()}\n\n"
-        f"💬 Chat ID: <code>{message.chat.id}</code>")
+    rows = [
+        ("CASORIOS", "3x / dia"),
+        ("PALAVRA", "60 min"),
+        ("BOSS", f"dom {BOSS_SPAWN_HOUR}h"),
+        ("TEMPORADA", current_season_label()),
+        ("CHAT ID", str(message.chat.id)),
+    ]
+    body = (
+        "<b>// SISTEMA ATIVADO NESTE GRUPO</b>\n"
+        f"{term_pre(rows)}"
+        "<i>Que comecem os feitos, nobre.</i>"
+    )
+    await message.answer(term_block(
+        "ROYAL", body, status="ONLINE",
+        stamp=current_season_label()),
+        **effect_kw(message.chat.type, EFFECT_PARTY))
 
 
 @dp.message(Command("royalcasar", "querocasar"))
@@ -2208,7 +2425,11 @@ async def royal_encalhar(message: Message):
     cur.execute("UPDATE users SET opt_out=1 WHERE chat_id=? AND user_id=?",
                 (chat_id, message.from_user.id))
     db.commit()
-    await message.answer("🚫💔 Você entrou no modo encalhado(a). O sistema não vai mais te colocar em casórios.")
+    await message.answer(term_block(
+        "SHIPPER",
+        "🚫💔 <i>Modo encalhado(a) ativado.</i>\n"
+        ">> sistema não vai mais te colocar em casórios.",
+        status="OPT_OUT", status_color="AMBER"))
 
 
 @dp.message(Command("royaldesencalhar", "desencalhar"))
@@ -2220,7 +2441,11 @@ async def royal_desencalhar(message: Message):
     cur.execute("UPDATE users SET opt_out=0 WHERE chat_id=? AND user_id=?",
                 (chat_id, message.from_user.id))
     db.commit()
-    await message.answer("🔄💘 Você voltou para o jogo dos casórios!")
+    await message.answer(term_block(
+        "SHIPPER",
+        "🔄💘 <i>De volta ao jogo dos casórios!</i>",
+        status="OPT_IN"),
+        **effect_kw(message.chat.type, EFFECT_HEART))
 
 
 @dp.message(Command("royalmeuscasorios", "meusdivorcios"))
@@ -2239,12 +2464,15 @@ async def royal_meus(message: Message):
         GROUP BY partner ORDER BY total DESC LIMIT 5
         """, (uid, chat_id, uid, uid))
     rows = cur.fetchall()
-    text = f"📊💔 <b>Seus casórios</b>\n\nVocê já participou de <b>{total}</b> casórios! 😳\n"
+    body = f"<i>Você já participou de <b>{total}</b> casórios. 😳</i>"
     if rows:
-        text += "\n🔥 <b>Top pares:</b>\n"
-        for row in rows:
-            text += f"• {html.escape(get_name(chat_id, row['partner']))} — {row['total']}x\n"
-    await message.answer(text)
+        body += "\n\n<b>>> TOP PARES</b>\n" + "\n".join(
+            f"• {html.escape(get_name(chat_id, row['partner']))} — "
+            f"<code>{row['total']}x</code>"
+            for row in rows
+        )
+    await message.answer(term_block(
+        "CASORIOS", body, status="HISTORICO", status_color="CYAN"))
 
 
 @dp.message(Command("royalcasorios", "divorcios"))
@@ -2257,13 +2485,22 @@ async def royal_casorios(message: Message):
         """, (chat_id,))
     rows = cur.fetchall()
     if not rows:
-        await message.answer("🏆💔 Ainda não existem casórios suficientes para ranking.")
+        await message.answer(term_block(
+            "CASORIOS",
+            "<i>Ainda não existem casórios suficientes pra ranking.</i>",
+            status="VAZIO", status_color="AMBER"))
         return
-    text = "🏆💔 <b>Ranking dos Casórios</b>\n\n"
+    medals = ["🥇", "🥈", "🥉"] + ["🏅"] * 7
+    lines = []
     for i, row in enumerate(rows, start=1):
-        text += (f"{i}. {html.escape(get_name(chat_id, row['user1']))} ❤️ "
-                 f"{html.escape(get_name(chat_id, row['user2']))} — {row['total']}x\n")
-    await message.answer(text)
+        lines.append(
+            f"{medals[i-1]} <b>{i}.</b> "
+            f"{html.escape(get_name(chat_id, row['user1']))} ❤️ "
+            f"{html.escape(get_name(chat_id, row['user2']))} — "
+            f"<code>{row['total']}x</code>")
+    await message.answer(term_block(
+        "CASORIOS", "\n".join(lines),
+        status="RANKING", stamp=current_season_label()))
 
 
 # === Botoes do menu privado ===
@@ -2275,16 +2512,20 @@ async def btn_meus(message: Message):
 
 @dp.message(F.text == "❓ Como funciona")
 async def btn_como_funciona(message: Message):
-    await message.answer(
-        "💡 <b>Como funciona o Royal</b>\n\n"
-        "👀 O bot observa interações no grupo:\n"
-        "• respostas, menções, proximidade de conversa\n\n"
-        "💍 <b>Casórios:</b> 3x ao dia, votação ❤️/🤮\n"
-        "🎯 <b>Palavra da Hora:</b> a cada 60 min, primeiro a acertar leva\n"
-        "🐉 <b>Boss da Semana:</b> domingo 20h, todos atacam juntos\n"
-        "⭐ <b>XP:</b> ganho por interagir, sobe nível, distribui atributos\n"
-        "🏆 <b>Temporadas:</b> seguem as estações do ano\n\n"
-        "Use /royal para acessar o menu completo.")
+    body = (
+        "<i>O bot observa interações no grupo (respostas, menções, conversa).</i>\n"
+        "<blockquote expandable>"
+        "💍 <b>CASORIOS</b> — 3x/dia, votação ❤️/🤮\n"
+        "🎯 <b>PALAVRA</b> — 60min, primeiro a acertar leva XP+🪙\n"
+        "🐉 <b>BOSS</b> — domingo 20h, todos atacam juntos\n"
+        "⭐ <b>XP</b> — ganho ao interagir, sobe nível, distribui atributos\n"
+        "🏆 <b>TEMPORADAS</b> — seguem as estações do ano"
+        "</blockquote>"
+        "<i>Use /royal pra acessar o menu completo.</i>"
+    )
+    await message.answer(term_block(
+        "MANUAL", body, status="DOC", status_color="CYAN",
+        stamp=current_season_label()))
 
 
 # =====================================================================
@@ -2363,27 +2604,23 @@ async def hub_cb(cb: CallbackQuery):
             return
 
         if action == "rank":
-            cur.execute(
-                "SELECT royal_id, user_id, season_xp, total_xp FROM players "
-                "WHERE chat_id=? AND season_xp > 0 AND privacy_hide_ranking=0 "
-                "ORDER BY season_xp DESC LIMIT 10", (chat_id,))
-            rows = cur.fetchall()
-            if not rows:
-                await cb.message.answer("🏆 Ninguém pontuou ainda nesta temporada.")
-            else:
-                medals = ["🥇", "🥈", "🥉"] + ["🏅"] * 7
-                txt = f"🏆 <b>RANKING — {current_season_label()}</b>\n\n"
-                for i, r in enumerate(rows, 1):
-                    name = get_name(chat_id, r["user_id"])
-                    lvl, *_ = level_progress(r["total_xp"])
-                    txt += f"{medals[i-1]} {i}. {html.escape(name)} ({r['royal_id']}) — Lvl {lvl} · {r['season_xp']} XP\n"
-                await cb.message.answer(txt)
+            wait = rate_limited(cb.from_user.id, "RANKING", cooldown=15.0)
+            if wait > 0:
+                await cb.answer(f"⏳ Aguarde {wait}s", show_alert=False)
+                return
             await cb.answer()
+            await send_ranking(chat_id, target_chat_id=cb.message.chat.id)
             return
 
         if action == "pal":
             ch = get_active_challenge(chat_id)
-            await cb.message.answer(format_challenge_text(ch) if ch else "🎯 Sem desafio ativo agora.")
+            if ch:
+                await cb.message.answer(format_challenge_text(ch))
+            else:
+                await cb.message.answer(term_block(
+                    "PALAVRA",
+                    "<i>Sem transmissão ativa agora.</i>",
+                    status="STANDBY", status_color="AMBER"))
             await cb.answer()
             return
 
@@ -2393,7 +2630,11 @@ async def hub_cb(cb: CallbackQuery):
                 await cb.message.answer(format_boss_text(boss),
                                         reply_markup=boss_keyboard(boss["id"]))
             else:
-                await cb.message.answer(f"🐉 Sem boss agora. Próximo: domingo {BOSS_SPAWN_HOUR}h")
+                await cb.message.answer(term_block(
+                    "BOSS",
+                    f"<i>Nenhuma anomalia detectada.</i>\n"
+                    f">> próximo spawn: <b>domingo {BOSS_SPAWN_HOUR}h</b>",
+                    status="OFFLINE", status_color="AMBER"))
             await cb.answer()
             return
 
@@ -2405,10 +2646,16 @@ async def hub_cb(cb: CallbackQuery):
         if action == "loja":
             p = ensure_player(chat_id, cb.from_user.id)
             db.commit()
-            txt = f"🪙 <b>LOJA REAL</b>\nSeu saldo: <b>{p['gold']}</b> 🪙\n\n"
+            gold_br = f"{int(p['gold']):,}".replace(",", ".")
+            parts_b = [f">> SALDO: <b><code>{gold_br}</code></b> 🪙\n"]
             for iid, item in ITEMS.items():
-                txt += f"{item['emoji']} <b>{item['name']}</b> — {item['price']}🪙\n<i>{item['desc']}</i>\n\n"
-            await cb.message.answer(txt, reply_markup=loja_keyboard())
+                parts_b.append(
+                    f"{item['emoji']} <b>{item['name']}</b> "
+                    f"— <code>{item['price']}</code>🪙\n   <i>{item['desc']}</i>")
+            await cb.message.answer(
+                term_block("LOJA", "\n\n".join(parts_b),
+                           status="OPEN", status_color="ACID"),
+                reply_markup=loja_keyboard())
             await cb.answer()
             return
 
@@ -2421,16 +2668,24 @@ async def hub_cb(cb: CallbackQuery):
                 (chat_id, cb.from_user.id))
             rows = cur.fetchall()
             if not rows:
-                await cb.message.answer("🎒 Seu inventário está vazio. Visite a /royalloja!")
+                await cb.message.answer(term_block(
+                    "INVENTARIO",
+                    "<i>Cofre vazio. Visita a /royalloja.</i>",
+                    status="VAZIO", status_color="AMBER"))
             else:
-                txt = "🎒 <b>Inventário</b>\n\n"
+                parts_b = []
                 for r in rows:
                     it = ITEMS.get(r["item_id"])
                     if not it:
                         continue
-                    eq = "✅ " if r["equipped"] else ""
-                    txt += f"{eq}{it['emoji']} <b>{it['name']}</b> x{r['qty']}\n<i>{it['desc']}</i>\n\n"
-                await cb.message.answer(txt, reply_markup=inv_keyboard(chat_id, cb.from_user.id))
+                    eq = "✅ " if r["equipped"] else "  "
+                    parts_b.append(
+                        f"{eq}{it['emoji']} <b>{it['name']}</b> "
+                        f"<code>x{r['qty']}</code>\n   <i>{it['desc']}</i>")
+                await cb.message.answer(
+                    term_block("INVENTARIO", "\n\n".join(parts_b),
+                               status="LOADED"),
+                    reply_markup=inv_keyboard(chat_id, cb.from_user.id))
             await cb.answer()
             return
 
@@ -2441,13 +2696,22 @@ async def hub_cb(cb: CallbackQuery):
                 (chat_id,))
             rows = cur.fetchall()
             if not rows:
-                await cb.message.answer("💍 Sem casórios ainda.")
+                await cb.message.answer(term_block(
+                    "CASORIOS",
+                    "<i>Sem casórios suficientes ainda.</i>",
+                    status="VAZIO", status_color="AMBER"))
             else:
-                txt = "🏆💔 <b>Ranking dos Casórios</b>\n\n"
+                medals = ["🥇", "🥈", "🥉"] + ["🏅"] * 7
+                lines = []
                 for i, r in enumerate(rows, 1):
-                    txt += (f"{i}. {html.escape(get_name(chat_id, r['user1']))} ❤️ "
-                            f"{html.escape(get_name(chat_id, r['user2']))} — {r['total']}x\n")
-                await cb.message.answer(txt)
+                    lines.append(
+                        f"{medals[i-1]} <b>{i}.</b> "
+                        f"{html.escape(get_name(chat_id, r['user1']))} ❤️ "
+                        f"{html.escape(get_name(chat_id, r['user2']))} — "
+                        f"<code>{r['total']}x</code>")
+                await cb.message.answer(term_block(
+                    "CASORIOS", "\n".join(lines),
+                    status="RANKING", stamp=current_season_label()))
             await cb.answer()
             return
 
@@ -2457,7 +2721,10 @@ async def hub_cb(cb: CallbackQuery):
                 p = ensure_player(chat_id, cb.from_user.id)
                 db.commit()
                 await cb.message.answer(
-                    f"⬆️ Você tem <b>{p['pts_available']}</b> pontos. Escolha:",
+                    term_block("ATRIBUTOS",
+                               f"<b>{p['pts_available']}</b> ponto(s) disponíveis.\n"
+                               f"<i>Escolha um atributo abaixo:</i>",
+                               status="READY"),
                     reply_markup=up_keyboard())
                 await cb.answer()
                 return
@@ -2481,10 +2748,17 @@ async def hub_cb(cb: CallbackQuery):
         if action == "cls":
             sub = parts[2] if len(parts) > 2 else "menu"
             if sub == "menu":
-                txt = "🎭 <b>Escolha sua classe</b>\n\n"
+                lines = []
                 for cid, info in CLASSES.items():
-                    txt += f"{info['emoji']} <b>{info['name']}</b> — {info['bonus']}\n"
-                await cb.message.answer(txt, reply_markup=classe_keyboard())
+                    lines.append(
+                        f"{info['emoji']} <b>{info['name']}</b> — "
+                        f"<i>{info['bonus']}</i>")
+                await cb.message.answer(
+                    term_block("CLASSE",
+                               "<i>Escolha sua identidade no reino:</i>\n\n"
+                               + "\n".join(lines),
+                               status="SELECAO", status_color="CYAN"),
+                    reply_markup=classe_keyboard())
                 await cb.answer()
                 return
             if sub == "set" and len(parts) > 3:
