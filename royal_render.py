@@ -1216,3 +1216,95 @@ def render_levelup_card(royal_id: str, name: str,
     except Exception:
         logger.exception("ROYAL_LEVELUP_CARD_RENDER_FAILED royal_id=%s", royal_id)
         return None
+
+
+# ---------------------------------------------------------------------
+# Card da PALAVRA da hora (modo spoiler_img)
+# A palavra inteira aparece em destaque no card; Telegram aplica o blur
+# nativo via has_spoiler=True no send_photo. Sem cache (palavra varia).
+# ---------------------------------------------------------------------
+def render_palavra_spoiler_card(word: str,
+                                seed: str | int | None = None) -> bytes | None:
+    try:
+        pal = pick_palette(seed if seed is not None else word)
+        W = H = CARD_SIZE
+        img = Image.new("RGB", (W, H), BG_DEEP)
+        draw = ImageDraw.Draw(img)
+
+        # Estatica de fundo (terminal corrompido)
+        rng = random.Random(hash((word, seed)) & 0xFFFF)
+        for _ in range(1200):
+            x = rng.randrange(W); y = rng.randrange(H)
+            c = rng.choice([(20, 16, 22), (28, 22, 30),
+                            pal["header"], pal["footer"]])
+            pixel_rect(draw, (x, y, x + 3, y + 3), c)
+
+        OUT_PAD = 36
+        panel_box = (OUT_PAD, OUT_PAD, W - OUT_PAD, H - OUT_PAD)
+        pixel_rect(draw, panel_box, BG)
+        chunky_border(draw, panel_box, outer=BLACK,
+                      inner=pal["header"], thick=10)
+
+        center_x = W // 2
+
+        # Header
+        alert_font = load_font(28, mono=True, bold=True)
+        alert_txt = ">> PALAVRA.SECRETA // CLASSIFICADO"
+        aw, ah = text_size(draw, alert_txt, alert_font)
+        draw.text((center_x - aw // 2, OUT_PAD + 40),
+                  alert_txt, font=alert_font, fill=pal["header"])
+
+        sub_font = load_font(18, mono=True, bold=False)
+        sub_txt = "// nivel de seguranca: MAX"
+        sw, _ = text_size(draw, sub_txt, sub_font)
+        draw.text((center_x - sw // 2, OUT_PAD + 40 + ah + 12),
+                  sub_txt, font=sub_font, fill=DIM)
+
+        # PALAVRA gigante no centro (ajusta size por comprimento)
+        word_up = word.upper()
+        n = len(word_up)
+        if n <= 5:
+            sz = 220
+        elif n <= 7:
+            sz = 180
+        elif n <= 9:
+            sz = 140
+        else:
+            sz = 110
+        wf = load_font(sz, mono=True, bold=True)
+        ww, wh = text_size(draw, word_up, wf)
+        wx = center_x - ww // 2
+        wy = (H - wh) // 2 - 30
+        # Sombra chunky duplicada
+        for dx, dy in [(10, 10), (5, 5)]:
+            draw.text((wx + dx, wy + dy), word_up, font=wf, fill=BLACK)
+        draw.text((wx, wy), word_up, font=wf, fill=pal["level"])
+
+        # Tags decorativas
+        tag_font = load_font(20, mono=True, bold=True)
+        tags = f"[ {n} CHAR ]  [ PT-BR ]  [ {pal['name']} ]"
+        tw, _ = text_size(draw, tags, tag_font)
+        draw.text((center_x - tw // 2, wy + wh + 40),
+                  tags, font=tag_font, fill=pal["xp"])
+
+        # Footer
+        foot_font = load_font(22, mono=True, bold=True)
+        foot_txt = "!! TOQUE PRA REVELAR  ::  RESPONDA NO CHAT"
+        fw, fh = text_size(draw, foot_txt, foot_font)
+        draw.text((center_x - fw // 2, H - OUT_PAD - fh - 40),
+                  foot_txt, font=foot_font, fill=pal["footer"])
+
+        # Pos-processamento
+        img = img.convert("RGBA")
+        apply_scanlines(img, every=3, alpha=55)
+        vimg = img.convert("RGB")
+        apply_vignette(vimg, strength=160)
+        img = vimg.convert("RGBA")
+        apply_grain(img, intensity=18)
+        img = img.convert("RGB")
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=88, optimize=True)
+        return buf.getvalue()
+    except Exception:
+        logger.exception("ROYAL_PALAVRA_SPOILER_RENDER_FAILED word=%r", word)
+        return None

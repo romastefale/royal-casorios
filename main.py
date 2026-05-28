@@ -31,6 +31,7 @@ from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter
 from aiogram.filters import Command, CommandStart, Filter
 from aiogram.types import (
     BotCommand,
+    BotCommandScopeAllChatAdministrators,
     BotCommandScopeAllGroupChats,
     BotCommandScopeAllPrivateChats,
     BufferedInputFile,
@@ -55,6 +56,7 @@ from royal_render import (
     ProfileCardData,
     RankingEntry,
     render_levelup_card,
+    render_palavra_spoiler_card,
     render_profile_card,
     render_ranking_card,
 )
@@ -1192,6 +1194,22 @@ async def safe_edit(chat_id: int, message_id: int, text: str, **kwargs):
         logger.exception("safe_edit failed")
 
 
+async def safe_edit_caption(chat_id: int, message_id: int, caption: str, **kwargs):
+    """Edita CAPTION de uma foto/midia (usado pelo modo spoiler_img da Palavra)."""
+    assert bot is not None
+    try:
+        return await bot.edit_message_caption(
+            chat_id=chat_id, message_id=message_id, caption=caption, **kwargs)
+    except TelegramBadRequest as e:
+        if "message is not modified" in str(e).lower():
+            return None
+        logger.warning("edit_caption failed: %s", e)
+    except TelegramRetryAfter as e:
+        await asyncio.sleep(e.retry_after + 1)
+    except Exception:
+        logger.exception("safe_edit_caption failed")
+
+
 # =====================================================================
 # ADMIN CHECK (cacheado)
 # =====================================================================
@@ -2054,9 +2072,10 @@ def get_active_challenge(chat_id: int) -> dict | None:
 
 def format_challenge_text(ch: dict, status: str = "open", winner_name: str = "") -> str:
     type_label = {
-        "anagrama": "🔤 ANAGRAMA",
-        "letras":   "🔡 LETRAS_FALTANDO",
-        "charada":  "💭 CHARADA",
+        "anagrama":    "🔤 ANAGRAMA",
+        "letras":      "🔡 LETRAS_FALTANDO",
+        "charada":     "💭 CHARADA",
+        "spoiler_img": "🖼️ SPOILER_IMG",
     }.get(ch["type"], "🎯 DESAFIO")
 
     if status == "open":
@@ -2065,7 +2084,9 @@ def format_challenge_text(ch: dict, status: str = "open", winner_name: str = "")
             mins_left = max(0, int((ends_at - utc_now()).total_seconds() / 60))
         except Exception:
             mins_left = ch.get("duration_min", 5)
-        if ch["type"] == "charada":
+        if ch["type"] == "spoiler_img":
+            puzzle = "<i>// palavra oculta na imagem acima — toque pra revelar</i>"
+        elif ch["type"] == "charada":
             puzzle = f"<blockquote>💭 <i>{html.escape(ch['hint'])}</i></blockquote>"
         else:
             puzzle = f"<pre>{html.escape(ch['display'])}</pre>"
@@ -2075,7 +2096,7 @@ def format_challenge_text(ch: dict, status: str = "open", winner_name: str = "")
             f"⏱️ <code>~{mins_left}min</code>  ·  "
             f"💬 <code>{ch.get('attempts_count', 0)}</code> tentativas\n"
             f"⚡ recompensa: <b>{XP_PALAVRA_WIN_BONUS} XP + {GOLD_PALAVRA_WIN}🪙</b>\n"
-            f"<i>Responda no chat pra tentar.</i>"
+            f"<i>Responda no chat pra tentar (acento/case/palavra extra OK).</i>"
         )
         return term_block("PALAVRA", body,
                           status="TRANSMITINDO", status_color="ACID")
@@ -2101,22 +2122,13 @@ def format_challenge_text(ch: dict, status: str = "open", winner_name: str = "")
 
 
 async def spawn_palavra(chat_id: int) -> None:
-    """Cria novo desafio e envia mensagem."""
+    """Cria novo desafio (modo spoiler_img — palavra inteira em imagem com blur do Telegram)."""
     assert bot is not None
-    use_charada = random.random() < 0.25 and CHARADAS
-    if use_charada:
-        hint, word = random.choice(CHARADAS)
-        challenge_type = "charada"
-        display = ""
-    else:
-        word = random.choice(PALAVRAS)
-        if random.random() < 0.5:
-            challenge_type = "anagrama"
-            display = make_anagrama(word)
-        else:
-            challenge_type = "letras"
-            display = make_letras_faltando(word)
-        hint = ""
+    word_raw = random.choice(PALAVRAS)
+    word = normalize_word(word_raw)
+    challenge_type = "spoiler_img"
+    display = ""
+    hint = ""
 
     duration_min = random.choice(PALAVRA_DURATIONS_MIN)
     started = utc_now()
@@ -2129,7 +2141,7 @@ async def spawn_palavra(chat_id: int) -> None:
              attempts_count, status)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 'open')
         """,
-        (chat_id, challenge_type, normalize_word(word), display, hint,
+        (chat_id, challenge_type, word, display, hint,
          started.isoformat(), ends.isoformat(), duration_min),
     )
     cid = cur.lastrowid
@@ -2137,15 +2149,48 @@ async def spawn_palavra(chat_id: int) -> None:
 
     ch = {
         "id": cid, "chat_id": chat_id, "type": challenge_type,
-        "word": normalize_word(word), "display": display, "hint": hint,
+        "word": word, "display": display, "hint": hint,
         "started_at": started.isoformat(), "ends_at": ends.isoformat(),
         "duration_min": duration_min, "attempts_count": 0,
     }
-    msg = await safe_send(chat_id, format_challenge_text(ch))
+    caption = format_challenge_text(ch)
+    if len(caption) > 1024:
+        caption = caption[:1020] + "…"
+
+    msg = None
+    try:
+        png = await asyncio.to_thread(
+            render_palavra_spoiler_card, word_raw, f"{chat_id}:{cid}")
+        if png:
+            await safe_typing(chat_id, "upload_photo")
+            msg = await bot.send_photo(
+                chat_id,
+                BufferedInputFile(png, filename=f"palavra-{cid}.jpg"),
+                caption=caption,
+                parse_mode="HTML",
+                has_spoiler=True,
+            )
+    except TelegramRetryAfter as e:
+        logger.warning("RetryAfter %ds on spawn_palavra to %d", e.retry_after, chat_id)
+        await asyncio.sleep(e.retry_after + 1)
+    except Exception:
+        logger.exception("spawn_palavra send_photo failed chat=%d", chat_id)
+
+    # Fallback texto se a foto falhar
+    if msg is None:
+        msg = await safe_send(chat_id,
+            term_block("PALAVRA",
+                f">> <b>🖼️ SPOILER_IMG</b>\n"
+                f"<tg-spoiler>{html.escape(word_raw.upper())}</tg-spoiler>\n"
+                f"⚡ recompensa: <b>{XP_PALAVRA_WIN_BONUS} XP + {GOLD_PALAVRA_WIN}🪙</b>\n"
+                f"<i>Responda no chat pra tentar (acento/case/palavra extra OK).</i>",
+                status="TRANSMITINDO", status_color="ACID"))
+
     if msg:
         cur.execute("UPDATE challenges SET message_id=? WHERE id=?", (msg.message_id, cid))
         db.commit()
-    logger.info("palavra spawned chat=%d cid=%d type=%s dur=%d", chat_id, cid, challenge_type, duration_min)
+    logger.info("palavra spawned chat=%d cid=%d type=%s dur=%d word=%s",
+                chat_id, cid, challenge_type, duration_min, word)
     # Agenda baú real pra 30min depois
     try:
         schedule_chest_after_palavra(chat_id)
@@ -2168,14 +2213,20 @@ async def handle_palavra_attempt(message: Message, ch: dict) -> bool:
         return False
     attempt_cooldowns[cd_key] = now_ts
 
-    attempt = normalize_word(message.text)
-    if not attempt:
-        return False
-    if len(attempt) > 30:  # ignora mensagens longas
+    # Limite generoso: aceita frases curtas tipo "acho que é gato" (3-5 palavras)
+    if message.text and len(message.text) > 120:
         return False
 
     target = ch["word"]
-    correct = attempt == target
+    # Match tolerante: tokeniza ANTES de normalizar (normalize_word remove
+    # espaços, então tokenização precisa rodar primeiro). Aceita a palavra
+    # alvo em qualquer posição da frase, ignorando acento/case/pontuação.
+    # Bordas de palavra evitam falso positivo: "casamento" NÃO mata "casa".
+    raw_tokens = re.split(r"\s+", (message.text or "").strip())
+    norm_tokens = [normalize_word(t) for t in raw_tokens if t]
+    if not norm_tokens:
+        return False
+    correct = target in norm_tokens
 
     cur.execute(
         "UPDATE challenges SET attempts_count=attempts_count+1 WHERE id=?",
@@ -2220,8 +2271,11 @@ async def handle_palavra_attempt(message: Message, ch: dict) -> bool:
     ch_final = dict(cur.fetchone())
     name = display_name(message)
     if ch_final.get("message_id"):
-        await safe_edit(chat_id, ch_final["message_id"],
-                        format_challenge_text(ch_final, status="win", winner_name=mention(uid, name)))
+        new_text = format_challenge_text(ch_final, status="win", winner_name=mention(uid, name))
+        if ch_final.get("type") == "spoiler_img":
+            await safe_edit_caption(chat_id, ch_final["message_id"], new_text, parse_mode="HTML")
+        else:
+            await safe_edit(chat_id, ch_final["message_id"], new_text)
     return True
 
 
@@ -2233,12 +2287,26 @@ async def finalize_expired_challenges() -> None:
         (now,),
     )
     expired = [dict(r) for r in cur.fetchall()]
+    any_updated = False
     for ch in expired:
-        cur.execute("UPDATE challenges SET status='timeout' WHERE id=?", (ch["id"],))
+        # Atomic: só vira timeout se ainda estiver open. Protege contra race
+        # com handle_palavra_attempt que pode ter virado 'won' entre o SELECT
+        # acima e este UPDATE.
+        cur.execute(
+            "UPDATE challenges SET status='timeout' WHERE id=? AND status='open'",
+            (ch["id"],),
+        )
+        if cur.rowcount == 0:
+            continue  # outro caminho (win) já fechou o desafio
+        any_updated = True
         if ch.get("message_id"):
-            await safe_edit(ch["chat_id"], ch["message_id"],
-                            format_challenge_text(ch, status="timeout"))
-    if expired:
+            new_text = format_challenge_text(ch, status="timeout")
+            if ch.get("type") == "spoiler_img":
+                await safe_edit_caption(ch["chat_id"], ch["message_id"],
+                                        new_text, parse_mode="HTML")
+            else:
+                await safe_edit(ch["chat_id"], ch["message_id"], new_text)
+    if any_updated:
         db.commit()
 
 
@@ -3419,6 +3487,34 @@ async def send_ranking(source_chat_id: int, *, target_chat_id: int) -> None:
     await safe_send(target_chat_id, caption)
 
 
+# === /royalpalavratest (admin) — dispara 1 desafio spoiler_img na hora ===
+
+@dp.message(Command("royalpalavratest"))
+async def royal_palavra_test(message: Message):
+    if not is_group(message):
+        await message.answer(GROUP_ONLY_MSG)
+        return
+    if not await is_admin(message):
+        ack = await message.answer(term_block(
+            "PALAVRA", ">> <b>!! ACESSO NEGADO</b>\n"
+            "<i>// só admins podem disparar testes.</i>",
+            status="NEGADO", status_color="HOT"))
+        if ack:
+            await auto_delete_after(ack, delay=8.0)
+        return
+    existing = get_active_challenge(message.chat.id)
+    if existing:
+        ack = await message.answer(term_block(
+            "PALAVRA", ">> <b>já existe desafio ativo</b>\n"
+            f"<i>// /royalpalavra mostra o atual (id={existing['id']}).</i>",
+            status="OCUPADO", status_color="AMBER"))
+        if ack:
+            await auto_delete_after(ack, delay=8.0)
+        return
+    await safe_typing(message.chat.id, "upload_photo")
+    await spawn_palavra(message.chat.id)
+
+
 # === /royalpalavra ===
 
 @dp.message(Command("royalpalavra"))
@@ -4537,9 +4633,14 @@ async def register_bot_commands():
         BotCommand(command="royalprivacidade",  description="🔒 Privacidade"),
         BotCommand(command="royaldados",        description="📦 Meus dados"),
     ]
+    admin_cmds = [
+        BotCommand(command="royalpalavratest", description="🧪 (admin) Disparar Palavra de teste"),
+    ]
+
     try:
         await bot.set_my_commands(group_cmds, scope=BotCommandScopeAllGroupChats())
         await bot.set_my_commands(private_cmds, scope=BotCommandScopeAllPrivateChats())
+        await bot.set_my_commands(admin_cmds, scope=BotCommandScopeAllChatAdministrators())
     except Exception:
         logger.exception("set_my_commands failed")
 
