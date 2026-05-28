@@ -148,7 +148,22 @@ FONT_REG = [
 ]
 
 
+# Telegram em mobile renderiza fotos em ~320-480px de largura. Com canvas
+# 1080, o scale chega a ~30-45% — então uma fonte source de 14px vira ~5px
+# na tela. Tiers diferentes pra fontes legíveis SEM quebrar layout:
+#  - footers/tags pequenos (<14): scale 1.55, piso 22
+#  - corpo normal (14-63): scale 1.6, piso 26
+#  - displays médios (64-119): scale 1.10 (já grandes)
+#  - hero/headline (>=120): sem scale (já gigantes)
 def load_font(size: int, *, mono: bool = True, bold: bool = True):
+    if size >= 120:
+        scaled = size
+    elif size >= 64:
+        scaled = int(round(size * 1.10))
+    elif size >= 14:
+        scaled = max(int(round(size * 1.6)), 26)
+    else:
+        scaled = max(int(round(size * 1.55)), 22)
     if mono:
         chain = FONT_MONO if bold else FONT_MONO_REG
     else:
@@ -156,7 +171,7 @@ def load_font(size: int, *, mono: bool = True, bold: bool = True):
     for path in chain:
         try:
             if Path(path).exists():
-                return ImageFont.truetype(path, size=size)
+                return ImageFont.truetype(path, size=scaled)
         except Exception:
             continue
     return ImageFont.load_default()
@@ -462,21 +477,21 @@ def render_profile_card(data: ProfileCardData,
         pixel_rect(draw, (header_box[0], header_box[3] - 4,
                           header_box[2], header_box[3]), GOLD_DIM)
 
-        title_font = load_font(26, mono=True, bold=True)
-        season_font = load_font(20, mono=True, bold=False)
-        title = (f"ROYAL.TERMINAL // ID#{data.royal_id.replace('RYL-', '')} "
-                 f"// {pal['name']}")
+        title_font = load_font(22, mono=True, bold=True)
+        season_font = load_font(16, mono=True, bold=False)
+        # Título curto pra caber junto da season à direita
+        title = f"ID#{data.royal_id.replace('RYL-', '')} // {pal['name']}"
         draw.text((header_box[0] + 22, header_box[1] + 22),
                   title, font=title_font, fill=pal["header"])
         # season a direita
         season_txt = f">> {data.season.upper()}"
         sw, _ = text_size(draw, season_txt, season_font)
-        draw.text((header_box[2] - 22 - sw, header_box[1] + 26),
+        draw.text((header_box[2] - 22 - sw, header_box[1] + 28),
                   season_txt, font=season_font, fill=DIM)
 
-        # blinker fake
-        pixel_rect(draw, (header_box[2] - 18, header_box[1] + 26,
-                          header_box[2] - 10, header_box[1] + 38), HOT)
+        # blinker fake (canto direito do header, abaixo da season)
+        pixel_rect(draw, (header_box[2] - 14, header_box[3] - 18,
+                          header_box[2] - 8, header_box[3] - 10), HOT)
 
         # ===== Avatar pixelado =====
         avatar_size = 296
@@ -629,11 +644,10 @@ def render_profile_card(data: ProfileCardData,
                       val, font=st_val_font, fill=pal["xp"])
 
         # ===== Rodape: footer terminal =====
-        foot_font = load_font(14, mono=True, bold=False)
-        foot_left = (
-            f"> LOG: {format_br(data.msg_count)} TX  ::  SINCE {data.joined_str}"
-        )
-        foot_right = f"v0.1.ALPHA // {pal['name']}_MODE"
+        # Textos curtos pra não colidir mesmo escalados; 12px = ~22px piso
+        foot_font = load_font(12, mono=True, bold=False)
+        foot_left = f"> LOG: {format_br(data.msg_count)} TX"
+        foot_right = f"v0.1 // {pal['name']}_MODE"
         draw.text((OUT_PAD + 60, CARD_SIZE - OUT_PAD - 50),
                   foot_left, font=foot_font, fill=DIM)
         fw, _ = text_size(draw, foot_right, foot_font)
@@ -807,10 +821,10 @@ def render_ranking_card(season_label: str,
                 line = f" {e.rank:02d}. {name_short:<14} {format_br(e.season_xp)} XP"
                 draw.text((rx, ry), line, font=rest_font, fill=DIM)
 
-        # Footer
-        foot_font = load_font(14, mono=True, bold=False)
-        foot_left = f"> COMPETIDORES: {len(entries)}  ::  TEMPORADA ATIVA"
-        foot_right = f"v0.1.ALPHA // {pal['name']}_MODE"
+        # Footer — textos curtos pra evitar colisão
+        foot_font = load_font(12, mono=True, bold=False)
+        foot_left = f"> N={len(entries)}"
+        foot_right = f"v0.1 // {pal['name']}_MODE"
         draw.text((OUT_PAD + 60, CARD_SIZE - OUT_PAD - 50),
                   foot_left, font=foot_font, fill=DIM)
         fw, _ = text_size(draw, foot_right, foot_font)
@@ -859,48 +873,61 @@ def render_levelup_card(royal_id: str, name: str,
         pixel_rect(draw, panel_box, BG)
         chunky_border(draw, panel_box, outer=BLACK, inner=pal["header"], thick=8)
 
-        # Header alerta
-        alert_font = load_font(22, mono=True, bold=True)
-        draw.text((OUT_PAD + 48, OUT_PAD + 40),
-                  ">> LEVEL_UP.SYS // ALERTA", font=alert_font, fill=HOT)
+        center_x = W // 2
 
-        # NIVEL gigante
-        big_font = load_font(180, mono=True, bold=True)
+        # Header alerta (topo)
+        alert_font = load_font(18, mono=True, bold=True)
+        alert_txt = ">> LEVEL_UP.SYS // ALERTA"
+        aw, ah = text_size(draw, alert_txt, alert_font)
+        draw.text((center_x - aw // 2, OUT_PAD + 24),
+                  alert_txt, font=alert_font, fill=HOT)
+
+        # Nome (logo abaixo do alerta)
+        name_clean = ellipsize(name, 22).upper()
+        nfont = load_font(22, mono=True, bold=True)
+        nw2, nh2 = text_size(draw, name_clean, nfont)
+        name_y = OUT_PAD + 24 + ah + 14
+        draw.text((center_x - nw2 // 2, name_y),
+                  name_clean, font=nfont, fill=INK)
+        next_y = name_y + nh2 + 6
+        if class_name:
+            cfont = load_font(14, mono=True, bold=False)
+            ctxt = f"// {ellipsize(class_name, 24).upper()}"
+            cw, ch_ = text_size(draw, ctxt, cfont)
+            draw.text((center_x - cw // 2, next_y),
+                      ctxt, font=cfont, fill=CYAN)
+            next_y += ch_ + 4
+
+        # Footer / PTS (parte de baixo)
+        pts_font = load_font(16, mono=True, bold=True)
+        pts_txt = "!! +1 PT  ::  /royalup"
+        pw, ph = text_size(draw, pts_txt, pts_font)
+        pts_y = H - OUT_PAD - ph - 24
+        draw.text((center_x - pw // 2, pts_y),
+                  pts_txt, font=pts_font, fill=ACID)
+
+        # Label "NIVEL ATINGIDO" (acima do número)
+        lab_font = load_font(18, mono=True, bold=True)
+        lab = "NIVEL ATINGIDO"
+        lw, lh = text_size(draw, lab, lab_font)
+
+        # NIVEL gigante centrado no espaço entre header e pts
+        big_font = load_font(140, mono=True, bold=True)
         num = f"{new_level:02d}"
         nw, nh = text_size(draw, num, big_font)
-        center_x = W // 2
-        cy = H // 2 - 20
-        # sombra ASCII chunky
-        draw.text((center_x - nw // 2 + 6, cy - nh // 2 + 6),
-                  num, font=big_font, fill=BLACK)
-        draw.text((center_x - nw // 2, cy - nh // 2),
-                  num, font=big_font, fill=pal["level"])
-
-        lab_font = load_font(24, mono=True, bold=True)
-        lab = "NIVEL ATINGIDO"
-        lw, _ = text_size(draw, lab, lab_font)
-        draw.text((center_x - lw // 2, cy + nh // 2 + 10),
+        avail_top = next_y + 10
+        avail_bot = pts_y - 10
+        block_h = lh + 8 + nh
+        block_top = avail_top + max(0, ((avail_bot - avail_top) - block_h) // 2)
+        # Label primeiro
+        draw.text((center_x - lw // 2, block_top),
                   lab, font=lab_font, fill=DIM)
-
-        # Nome
-        name_clean = ellipsize(name, 22).upper()
-        nfont = load_font(28, mono=True, bold=True)
-        nw2, _ = text_size(draw, name_clean, nfont)
-        draw.text((center_x - nw2 // 2, OUT_PAD + 90),
-                  name_clean, font=nfont, fill=INK)
-        if class_name:
-            cfont = load_font(18, mono=True, bold=False)
-            ctxt = f"// {ellipsize(class_name, 24).upper()}"
-            cw, _ = text_size(draw, ctxt, cfont)
-            draw.text((center_x - cw // 2, OUT_PAD + 128),
-                      ctxt, font=cfont, fill=CYAN)
-
-        # +1 PTS
-        pts_font = load_font(20, mono=True, bold=True)
-        pts_txt = "!! +1 PT DE ATRIBUTO  ::  /royalup"
-        pw, _ = text_size(draw, pts_txt, pts_font)
-        draw.text((center_x - pw // 2, H - OUT_PAD - 60),
-                  pts_txt, font=pts_font, fill=ACID)
+        # Numero embaixo do label
+        num_y = block_top + lh + 8
+        draw.text((center_x - nw // 2 + 6, num_y + 6),
+                  num, font=big_font, fill=BLACK)
+        draw.text((center_x - nw // 2, num_y),
+                  num, font=big_font, fill=pal["level"])
 
         img = img.convert("RGBA")
         apply_scanlines(img, every=3, alpha=55)
