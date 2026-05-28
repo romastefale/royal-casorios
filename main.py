@@ -4699,12 +4699,10 @@ async def royal_palavra_status(message: Message):
         if png and bot is not None:
             caption = (f"<i>Transmissão ativa — "
                        f"<b>~{mins_left}min</b> restantes</i>")
-            if len(caption) > 1024:
-                caption = caption[:1020] + "…"
             await bot.send_photo(
                 message.chat.id,
                 BufferedInputFile(png, filename="palavra.jpg"),
-                caption=caption)
+                caption=cap1024(caption))
             return
     except Exception:
         logger.exception("[ROYALPALAVRA] card render failed; fallback texto")
@@ -5055,12 +5053,10 @@ async def royal_encalhar(message: Message):
         if png and bot is not None:
             caption = ("<i>🚫💔 modo encalhado ativado — "
                        "sem casórios automáticos.</i>")
-            if len(caption) > 1024:
-                caption = caption[:1020] + "…"
             await bot.send_photo(
                 message.chat.id,
                 BufferedInputFile(png, filename="encalhar.jpg"),
-                caption=caption)
+                caption=cap1024(caption))
             return
     except Exception:
         logger.exception("[ROYALENCALHAR] card render failed; fallback texto")
@@ -5096,12 +5092,10 @@ async def royal_desencalhar(message: Message):
         png = await asyncio.to_thread(render_shipper_card, data)
         if png and bot is not None:
             caption = "<i>💘🔄 de volta ao jogo dos casórios!</i>"
-            if len(caption) > 1024:
-                caption = caption[:1020] + "…"
             await bot.send_photo(
                 message.chat.id,
                 BufferedInputFile(png, filename="desencalhar.jpg"),
-                caption=caption,
+                caption=cap1024(caption),
                 **effect_kw(message.chat.type, EFFECT_HEART))
             return
     except Exception:
