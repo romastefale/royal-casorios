@@ -1743,3 +1743,156 @@ def render_boss_kill_card(data: BossKillData) -> bytes | None:
         logger.exception("ROYAL_BOSS_KILL_CARD_RENDER_FAILED boss=%r",
                          data.boss_name)
         return None
+
+
+# =====================================================================
+# IDENTITY CARD — minimal, fixed, cached by file_id no DB.
+# So tem avatar + ROY#ID + nome. SEM level/XP/atributos.
+# Regenerado APENAS quando nome ou avatar muda (sweep diario).
+# =====================================================================
+
+@dataclass(frozen=True)
+class IdentityCardData:
+    royal_id: str
+    name: str
+    avatar_slug: str | None = None
+
+
+def render_identity_card(data: IdentityCardData) -> bytes | None:
+    """Card 1080x1080 de identidade fixa do jogador. Sem dados dinamicos
+    (level/xp/gold) — so identifica que este user eh ESTE personagem do
+    Reino. Retorna JPEG bytes ou None."""
+    try:
+        royal_id = (data.royal_id or "RYL-????").upper()
+        name = (data.name or "?").strip() or "?"
+
+        pal = pick_palette(royal_id)
+        W = H = CARD_SIZE
+        img = Image.new("RGB", (W, H), BG_DEEP)
+        draw = ImageDraw.Draw(img)
+
+        # Estatica de fundo
+        rng = random.Random(hash(royal_id) & 0xFFFF)
+        for _ in range(1200):
+            x = rng.randrange(W); y = rng.randrange(H)
+            c = rng.choice([(18, 16, 22), (14, 12, 20), (24, 20, 28)])
+            pixel_rect(draw, (x, y, x + 3, y + 3), c)
+
+        # Painel principal
+        OUT_PAD = 28
+        panel_box = (OUT_PAD, OUT_PAD, W - OUT_PAD, H - OUT_PAD)
+        pixel_rect(draw, panel_box, BG)
+        accent = pal.get("header", ACID)
+        chunky_border(draw, panel_box, outer=BLACK, inner=accent, thick=8)
+
+        # ===== Header =====
+        header_box = (OUT_PAD + 28, OUT_PAD + 28,
+                      W - OUT_PAD - 28, OUT_PAD + 110)
+        pixel_rect(draw, header_box, PANEL)
+        pixel_rect(draw, (header_box[0], header_box[1],
+                          header_box[2], header_box[1] + 4), accent)
+        pixel_rect(draw, (header_box[0], header_box[3] - 4,
+                          header_box[2], header_box[3]), accent)
+
+        title_font = load_font(26, mono=True, bold=True)
+        title = "> ROYAL.ID  // CADASTRADO"
+        draw.text((header_box[0] + 22, header_box[1] + 24),
+                  title, font=title_font, fill=accent)
+
+        # Game tag a direita
+        tag_font = load_font(18, mono=True, bold=False)
+        tag_txt = ">> RPG.REINO"
+        tw, _ = text_size(draw, tag_txt, tag_font)
+        draw.text((header_box[2] - 22 - tw, header_box[1] + 30),
+                  tag_txt, font=tag_font, fill=DIM)
+
+        # Blinker
+        pixel_rect(draw, (header_box[2] - 18, header_box[3] - 18,
+                          header_box[2] - 10, header_box[3] - 10), accent)
+
+        # ===== Avatar GIGANTE centrado =====
+        AVATAR_SIZE = 560
+        AX = (W - AVATAR_SIZE) // 2
+        AY = 200
+        # Moldura tripla preta + accent + preta
+        pixel_rect(draw, (AX - 8, AY - 8,
+                          AX + AVATAR_SIZE + 8, AY + AVATAR_SIZE + 8),
+                   BLACK)
+        pixel_rect(draw, (AX - 4, AY - 4,
+                          AX + AVATAR_SIZE + 4, AY + AVATAR_SIZE + 4),
+                   accent)
+        pixel_rect(draw, (AX, AY, AX + AVATAR_SIZE, AY + AVATAR_SIZE),
+                   BLACK)
+
+        resolved = royal_avatars.resolve_slug(data.avatar_slug, royal_id)
+        portrait = royal_avatars.load_avatar(resolved, AVATAR_SIZE)
+        if portrait is not None:
+            img.paste(portrait, (AX, AY),
+                      portrait if portrait.mode == "RGBA" else None)
+        else:
+            # Fallback: sigilo procedural grande
+            sigil = procedural_sigil(royal_id, AVATAR_SIZE, palette=pal)
+            img.paste(sigil, (AX, AY))
+
+        # ===== Royal ID =====
+        id_y = AY + AVATAR_SIZE + 32
+        id_font = load_font(32, mono=True, bold=True)
+        id_txt = f"ROY#{royal_id.replace('RYL-', '').replace('ROY-', '')}"
+        iw, ih = text_size(draw, id_txt, id_font)
+        # Caixa de ID
+        id_pad_x = 28
+        id_pad_y = 12
+        id_box_x0 = (W - iw) // 2 - id_pad_x
+        id_box_y0 = id_y - id_pad_y
+        id_box_x1 = (W + iw) // 2 + id_pad_x
+        id_box_y1 = id_y + ih + id_pad_y
+        pixel_rect(draw, (id_box_x0, id_box_y0, id_box_x1, id_box_y1), PANEL)
+        pixel_rect(draw, (id_box_x0, id_box_y0,
+                          id_box_x1, id_box_y0 + 3), accent)
+        pixel_rect(draw, (id_box_x0, id_box_y1 - 3,
+                          id_box_x1, id_box_y1), accent)
+        draw.text(((W - iw) // 2, id_y), id_txt, font=id_font, fill=accent)
+
+        # ===== Nome do jogador =====
+        # Reduz fonte se nome longo
+        max_name_chars = 22
+        display_name = ellipsize(name, max_name_chars)
+        # Tenta 38, cai pra 32, depois 26
+        for fsize in (38, 32, 26):
+            name_font = load_font(fsize, mono=False, bold=True)
+            nw, nh = text_size(draw, display_name, name_font)
+            if nw <= W - 120:
+                break
+        name_y = id_box_y1 + 22
+        # Sombra preta
+        draw.text(((W - nw) // 2 + 3, name_y + 3),
+                  display_name, font=name_font, fill=BLACK)
+        draw.text(((W - nw) // 2, name_y),
+                  display_name, font=name_font, fill=INK)
+
+        # ===== Footer =====
+        footer_font = load_font(18, mono=True, bold=False)
+        footer_txt = "[ JOGADOR DO REINO  //  RPG ROYAL PARA GEEKS ]"
+        fw, fh = text_size(draw, footer_txt, footer_font)
+        if fw > W - 80:
+            footer_txt = "[ JOGADOR DO REINO ]"
+            fw, fh = text_size(draw, footer_txt, footer_font)
+        footer_y = H - OUT_PAD - 60
+        draw.text(((W - fw) // 2, footer_y),
+                  footer_txt, font=footer_font, fill=DIM)
+
+        # Pos-processamento
+        img = img.convert("RGBA")
+        apply_scanlines(img, every=3, alpha=55)
+        vimg = img.convert("RGB")
+        apply_vignette(vimg, strength=160)
+        img = vimg.convert("RGBA")
+        apply_grain(img, intensity=18)
+        img = img.convert("RGB")
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=90, optimize=True)
+        return buf.getvalue()
+    except Exception:
+        logger.exception("ROYAL_IDENTITY_CARD_RENDER_FAILED rid=%r",
+                         data.royal_id)
+        return None

@@ -57,15 +57,18 @@ from royal_render import (
     BossKillAttacker,
     BossKillData,
     CasorioPartner,
+    IdentityCardData,
     ProfileCardData,
     RankingEntry,
     render_boss_kill_card,
     render_casorio_card,
+    render_identity_card,
     render_levelup_card,
     render_palavra_spoiler_card,
     render_profile_card,
     render_ranking_card,
 )
+import hashlib
 
 # =====================================================================
 # CONFIG & LOGGING
@@ -83,6 +86,15 @@ TEST_CHAT_IDS: set[int] = {
     for x in os.getenv("TEST_CHAT_IDS", "").split(",")
     if x.strip().lstrip("-").isdigit()
 }
+
+# STASH_CHAT_ID — chat_id de um canal/grupo privado controlado pelo dono do
+# bot (bot precisa ser admin). Usado pra fazer upload silencioso do identity
+# card e capturar o file_id pro inline mode. Sem essa env var, o identity
+# card NAO eh cacheado e o inline cai no fallback de texto atual.
+_stash_raw = os.getenv("STASH_CHAT_ID", "").strip()
+STASH_CHAT_ID: int | None = (
+    int(_stash_raw) if _stash_raw.lstrip("-").isdigit() else None
+)
 
 DB_PATH = os.getenv("DATABASE_PATH", "./data/royal_casorios.sqlite3")
 TZ_NAME = os.getenv("TZ", "America/Sao_Paulo")
@@ -428,11 +440,26 @@ def migrate_to_v3(c: sqlite3.Cursor) -> None:
                 raise
 
 
+def migrate_to_v5(c: sqlite3.Cursor) -> None:
+    """Identity card: file_id do Telegram + hash do (nome, avatar_slug)
+    pra detectar quando precisa regenerar. Atualizacao via sweep diario."""
+    for col, ddl in (
+        ("inline_card_file_id", "ALTER TABLE players ADD COLUMN inline_card_file_id TEXT"),
+        ("inline_card_hash",    "ALTER TABLE players ADD COLUMN inline_card_hash TEXT"),
+    ):
+        try:
+            c.execute(ddl)
+        except sqlite3.OperationalError as e:
+            if "duplicate column" not in str(e).lower():
+                raise
+
+
 MIGRATIONS = [
     (1, migrate_to_v1),
     (2, migrate_to_v2),
     (3, migrate_to_v3),
     (4, migrate_to_v4),
+    (5, migrate_to_v5),
 ]
 
 
@@ -1318,7 +1345,11 @@ def ensure_player(chat_id: int, user_id: int) -> dict:
     )
     db.commit()
     cur.execute("SELECT * FROM players WHERE chat_id=? AND user_id=?", (chat_id, user_id))
-    return dict(cur.fetchone())
+    new_row = dict(cur.fetchone())
+    # Player novo — agenda render do identity card em background. O hash
+    # ainda eh None, entao ensure_identity_card_async vai gerar/upload.
+    schedule_identity_card_refresh(chat_id, user_id)
+    return new_row
 
 
 def get_player(chat_id: int, user_id: int) -> dict | None:
@@ -1460,6 +1491,120 @@ def get_cached_profile_file_id(owner_chat: int, owner_uid: int) -> str | None:
         _profile_file_id_cache.pop((owner_chat, owner_uid), None)
         return None
     return fid
+
+
+# =====================================================================
+# IDENTITY CARD — file_id persistido no SQL, gerado 1x por player
+# e regenerado APENAS quando (nome, avatar_slug) muda (sweep diario).
+# Upload silencioso pro STASH_CHAT_ID.
+# =====================================================================
+
+def _identity_card_hash(name: str, avatar_slug: str | None) -> str:
+    """Hash estavel pra detectar mudancas. Sem temporada — virada de season
+    SEM mudanca de avatar nao deve regenerar."""
+    raw = f"{(name or '').strip()}|{(avatar_slug or '').strip()}"
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
+
+
+def _get_identity_card_file_id(chat_id: int, user_id: int) -> str | None:
+    cur.execute(
+        "SELECT inline_card_file_id FROM players "
+        "WHERE chat_id=? AND user_id=?", (chat_id, user_id))
+    row = cur.fetchone()
+    return row["inline_card_file_id"] if row else None
+
+
+# Lock por (chat_id, user_id) pra evitar uploads duplicados quando
+# ensure_player + sweep + manual disparam simultaneamente.
+_identity_card_locks: dict[tuple[int, int], asyncio.Lock] = {}
+
+
+def _identity_lock(chat_id: int, user_id: int) -> asyncio.Lock:
+    key = (chat_id, user_id)
+    lk = _identity_card_locks.get(key)
+    if lk is None:
+        lk = asyncio.Lock()
+        _identity_card_locks[key] = lk
+    return lk
+
+
+async def ensure_identity_card_async(chat_id: int, user_id: int,
+                                     force: bool = False) -> str | None:
+    """Garante que o identity card do player exista no DB (file_id cacheado).
+    Se o hash atual (nome, avatar_slug) for igual ao salvo, no-op. Caso
+    contrario re-renderiza, sobe pro STASH_CHAT_ID (silencioso), captura o
+    file_id e atualiza o DB. Retorna o file_id atual ou None se falhou."""
+    if not bot:
+        return None
+    async with _identity_lock(chat_id, user_id):
+        cur.execute(
+            "SELECT p.royal_id, p.avatar_slug, p.inline_card_file_id, "
+            "       p.inline_card_hash, u.display_name "
+            "FROM players p "
+            "LEFT JOIN users u ON u.chat_id=p.chat_id AND u.user_id=p.user_id "
+            "WHERE p.chat_id=? AND p.user_id=?", (chat_id, user_id))
+        row = cur.fetchone()
+        if not row:
+            return None
+        raw_name = (row["display_name"] or "").strip()
+        avatar_slug = row["avatar_slug"]
+        royal_id = row["royal_id"] or "RYL-????"
+        # PII guard: nunca renderizar com fallback de user_id numerico.
+        # Sem display_name → adia regen, sweep pega depois que o user
+        # mandar 1a msg no grupo (upsert_user popula display_name).
+        if not raw_name:
+            logger.info("identity_card: sem display_name p/ uid=%d chat=%d, "
+                        "adiando (rid=%s)", user_id, chat_id, royal_id)
+            return row["inline_card_file_id"]
+        name = raw_name
+        target_hash = _identity_card_hash(name, avatar_slug)
+        current_fid = row["inline_card_file_id"]
+        current_hash = row["inline_card_hash"]
+        if not force and current_fid and current_hash == target_hash:
+            return current_fid
+        if not STASH_CHAT_ID:
+            logger.info("identity_card: STASH_CHAT_ID nao configurado, "
+                        "pulando upload (rid=%s)", royal_id)
+            return current_fid
+        try:
+            data = IdentityCardData(
+                royal_id=royal_id, name=name, avatar_slug=avatar_slug)
+            card = await asyncio.to_thread(render_identity_card, data)
+            if not card:
+                return current_fid
+            sent = await bot.send_photo(
+                STASH_CHAT_ID,
+                photo=BufferedInputFile(card, filename=f"id-{royal_id}.jpg"),
+                disable_notification=True,
+            )
+            if not sent or not sent.photo:
+                return current_fid
+            new_fid = sent.photo[-1].file_id
+            cur.execute(
+                "UPDATE players SET inline_card_file_id=?, inline_card_hash=? "
+                "WHERE chat_id=? AND user_id=?",
+                (new_fid, target_hash, chat_id, user_id))
+            db.commit()
+            logger.info("identity_card refreshed rid=%s uid=%d chat=%d",
+                        royal_id, user_id, chat_id)
+            return new_fid
+        except Exception:
+            logger.exception("identity_card upload/render failed rid=%s", royal_id)
+            return current_fid
+
+
+def schedule_identity_card_refresh(chat_id: int, user_id: int) -> None:
+    """Fire-and-forget pro ensure_identity_card_async. Usa
+    get_running_loop — se nao houver loop ativo (ex: chamado de
+    contexto sync de teste), loga warning e nao silencia."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        logger.warning("schedule_identity_card_refresh: sem event loop "
+                       "ativo, refresh dropado (chat=%d uid=%d)",
+                       chat_id, user_id)
+        return
+    loop.create_task(ensure_identity_card_async(chat_id, user_id))
 
 
 def group_picker_kb(groups: list[tuple[int, str]],
@@ -3892,6 +4037,15 @@ async def inline_profile(iq: InlineQuery):
     text_full = build_profile_text(owner_chat, uid)
 
     results: list = []
+    # Prefere identity card (fixo, salvo no DB, atualizado por sweep diario)
+    identity_fid = _get_identity_card_file_id(owner_chat, uid)
+    if identity_fid:
+        results.append(InlineQueryResultCachedPhoto(
+            id=f"identity-{owner_chat}-{uid}",
+            photo_file_id=identity_fid,
+            caption=f"<b>{html.escape(royal_id)}</b> // Jogador do Reino",
+            parse_mode="HTML",
+        ))
     file_id = get_cached_profile_file_id(owner_chat, uid)
     if file_id:
         results.append(InlineQueryResultCachedPhoto(
@@ -3911,7 +4065,7 @@ async def inline_profile(iq: InlineQuery):
     ))
 
     button = None
-    if not file_id:
+    if not file_id and not identity_fid:
         # Sem foto cacheada — guia o user pra gerar uma via /royalperfil na DM
         button = InlineQueryResultsButton(
             text="📸 Gerar foto do perfil (abrir o bot)",
@@ -4752,6 +4906,61 @@ async def cleanup_job():
             logger.exception("cleanup_job failed")
 
 
+# Marca quando o sweep diario rodou pela ultima vez. Em memoria — ao
+# restart o sweep roda uma vez na proxima janela e ja realinha tudo.
+_identity_sweep_last_day: str | None = None
+
+
+async def identity_card_sweep_job():
+    """Sweep diario: percorre todos os players e regenera o identity card
+    de quem teve mudanca de nome ou avatar desde a ultima geracao. Roda
+    1x por dia local (~03:30 horario local pra evitar pico). Silencioso —
+    upload vai pro STASH_CHAT_ID sem notificacao."""
+    global _identity_sweep_last_day
+    while True:
+        await asyncio.sleep(600)  # checa a cada 10 min
+        try:
+            now_local = local_now()
+            today = now_local.date().isoformat()
+            # Roda 1x por dia, em qualquer momento depois das 03:00
+            # local. Se o bot estava down as 03h, pega assim que voltar
+            # online no mesmo dia (catch-up resiliente).
+            if (_identity_sweep_last_day == today
+                    or now_local.hour < 3):
+                continue
+            if not STASH_CHAT_ID:
+                _identity_sweep_last_day = today
+                logger.info("identity sweep: STASH_CHAT_ID nao configurado, "
+                            "skip do dia")
+                continue
+            cur.execute(
+                "SELECT p.chat_id, p.user_id, p.avatar_slug, "
+                "       p.inline_card_hash, u.display_name "
+                "FROM players p "
+                "LEFT JOIN users u ON u.chat_id=p.chat_id AND u.user_id=p.user_id"
+            )
+            rows = cur.fetchall()
+            refreshed = 0
+            checked = 0
+            for r in rows:
+                checked += 1
+                name = (r["display_name"] or "").strip() or str(r["user_id"])
+                target = _identity_card_hash(name, r["avatar_slug"])
+                if r["inline_card_hash"] == target:
+                    continue
+                fid = await ensure_identity_card_async(
+                    r["chat_id"], r["user_id"])
+                if fid:
+                    refreshed += 1
+                # Throttle leve pra nao spammar Telegram (~1 upload/s)
+                await asyncio.sleep(1.2)
+            _identity_sweep_last_day = today
+            logger.info("identity sweep ok: checked=%d refreshed=%d",
+                        checked, refreshed)
+        except Exception:
+            logger.exception("identity_card_sweep failed")
+
+
 async def scheduler():
     """Loop unificado: casórios, palavra, boss, temporadas."""
     last_minute = -1
@@ -4904,6 +5113,7 @@ async def main():
     asyncio.create_task(cleanup_job())
     asyncio.create_task(scheduler())
     asyncio.create_task(healthcheck())
+    asyncio.create_task(identity_card_sweep_job())
     await dp.start_polling(bot)
 
 

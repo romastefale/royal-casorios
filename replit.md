@@ -72,6 +72,37 @@ saldo, palavras, configs por usuário, etc).
 - **`TEST_CHAT_IDS`** (opcional, comma-separated) — chat_ids de grupos de
   teste. Esses grupos **não** aparecem no picker de DM nem no fallback
   do inline mode. Ex.: `TEST_CHAT_IDS="-1001234567890,-1009876543210"`
+- **`STASH_CHAT_ID`** (opcional) — chat_id de um canal/grupo privado
+  controlado pelo dono do bot (bot precisa ser admin). Usado pra upload
+  silencioso do **identity card** e capturar o `file_id` que o inline
+  mode reusa. Sem essa env var, o identity card **não é cacheado** e
+  o inline cai no fallback de texto. Ex.: `STASH_CHAT_ID="-1001234567890"`.
+  Setup: cria um canal privado → adiciona o bot como admin → pega o
+  chat_id (use @userinfobot ou similar) → seta a env var.
+
+## 🪪 Identity Card (inline mode)
+
+Cada player tem um **identity card 1080×1080 fixo** (só avatar + ROY#ID
++ nome — sem level/XP/stats). Gerado 1x no `ensure_player` e regenerado
+**apenas** quando muda nome ou avatar.
+
+**Triggers de regen:**
+- Player novo (em `ensure_player`) → fire-and-forget render.
+- Sweep diário em `identity_card_sweep_job()` (~3h local) → compara
+  `inline_card_hash` salvo com `_identity_card_hash(name, avatar_slug)`
+  atual; regenera onde divergiu. Throttle: 1 upload/s.
+
+**Storage:** colunas `inline_card_file_id` + `inline_card_hash` em
+`players` (migration v5). Hash = `sha1(name|avatar_slug)[:16]`.
+
+**Upload silencioso:** `ensure_identity_card_async` faz `send_photo`
+pro `STASH_CHAT_ID` com `disable_notification=True`, captura o
+`file_id` da resposta e salva no DB. Sem `STASH_CHAT_ID` configurado,
+o sweep loga e pula (no-op gracioso).
+
+**Inline mode:** `inline_profile` prefere `inline_card_file_id` do DB
+quando existe; mantém também os results antigos (profile card + texto)
+como fallback.
 
 ## 💬 DM + inline mode
 
