@@ -2284,6 +2284,31 @@ async def handle_palavra_attempt(message: Message, ch: dict) -> bool:
             await safe_edit_caption(chat_id, ch_final["message_id"], new_text, parse_mode="HTML")
         else:
             await safe_edit(chat_id, ch_final["message_id"], new_text)
+
+    # Feedback direto na mensagem do vencedor: reacao 🏆 + reply confirmando
+    await react_to(chat_id, message.message_id, "🏆")
+    try:
+        secs = max(1, winner_ms // 1000) if winner_ms else 0
+        stamp_bits = [f"+{base_xp} XP", f"+{gold_award}🪙"]
+        if secs:
+            stamp_bits.append(f"{secs}s")
+        feedback = term_block(
+            "ACERTOU.SYS",
+            (
+                f">> <b>{mention(uid, name)}</b> respondeu primeiro\n"
+                f"// palavra confirmada // recompensa creditada"
+            ),
+            status="PRIMEIRO",
+            status_color="ACID",
+            stamp=" · ".join(stamp_bits),
+        )
+        await message.reply(
+            feedback,
+            parse_mode="HTML",
+            **effect_kw(message.chat.type, EFFECT_PARTY),
+        )
+    except Exception as e:
+        log.warning(f"palavra winner feedback falhou: {e}")
     return True
 
 
