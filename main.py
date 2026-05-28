@@ -480,6 +480,39 @@ def normalize_word(s: str) -> str:
     return "".join(c for c in s if not unicodedata.combining(c) and c.isalnum())
 
 
+# =====================================================================
+# UX HELPERS — message effects (Bot API 7.7+, DM-only) + chat actions
+# =====================================================================
+
+EFFECT_FIRE = "5104841245755180586"
+EFFECT_THUMBS_UP = "5107584321108051014"
+EFFECT_HEART = "5044134455711629726"
+EFFECT_PARTY = "5046509860389126442"
+EFFECT_POO = "5046589136895476101"
+EFFECT_THUMBS_DOWN = "5104858069142078462"
+
+
+def effect_kw(chat_type: str | None, effect_id: str) -> dict:
+    """message_effect_id so funciona em DM 1:1; em grupos retorna dict vazio."""
+    return {"message_effect_id": effect_id} if chat_type == "private" else {}
+
+
+async def safe_typing(chat_id: int, action: str = "typing") -> None:
+    """Envia chat action ignorando falhas (nao precisa admin)."""
+    if bot is None:
+        return
+    try:
+        await bot.send_chat_action(chat_id, action)
+    except Exception:
+        pass
+
+
+GROUP_ONLY_MSG = (
+    "🏰 Esse comando vive nos grupos do Reino.\n"
+    "<i>Volta pro grupo Royal pra usar ele lá ✨</i>"
+)
+
+
 def ensure_chat(chat_id: int, title: str | None = None) -> None:
     cur.execute(
         """
@@ -1000,8 +1033,11 @@ def build_profile_text(chat_id: int, user_id: int) -> str:
 async def send_profile_card(chat_id_to: int, owner_chat: int, owner_uid: int):
     """Envia cartao de perfil (com foto se publica) para chat_id_to."""
     assert bot is not None
+    await safe_typing(chat_id_to, "typing")
     text = build_profile_text(owner_chat, owner_uid)
     photo_id = await get_user_photo_file_id(owner_uid)
+    if photo_id:
+        await safe_typing(chat_id_to, "upload_photo")
     try:
         if photo_id:
             await bot.send_photo(chat_id_to, photo=photo_id, caption=text, parse_mode="HTML")
@@ -1035,11 +1071,13 @@ def hub_keyboard_main() -> InlineKeyboardMarkup:
     ])
 
 
-HUB_TEXT = (
-    "👑 <b>REINO ROYAL</b>\n\n"
-    f"📅 {current_season_label()}\n\n"
-    "Escolha o que deseja:"
-)
+def hub_text() -> str:
+    return (
+        f"👑 <b>Reino Royal</b>  ·  {current_season_label()}\n"
+        f"\n"
+        f"<i>Bem-vindo de volta, nobre.</i>\n"
+        f"Toque num botão pra navegar pela corte 👇"
+    )
 
 
 # =====================================================================
@@ -1497,13 +1535,15 @@ async def start_cmd(message: Message):
     if message.chat.type != "private":
         return
     await message.answer(
-        "👑 <b>Bem-vindo ao Royal!</b>\n\n"
-        "Aqui é a corte. Você pode:\n"
-        "• 👑 Acessar o reino com /royal\n"
+        "👑 <b>Bem-vindo ao Royal!</b>\n"
+        "<i>A corte te aguardava.</i>\n\n"
+        "Por aqui você pode:\n"
+        "• 🏰 Entrar no reino com /royal\n"
         "• 👤 Ver seu perfil com /royalperfil\n"
-        "• 💍 Acompanhar casórios e ranking\n\n"
-        "Use os botões abaixo ou /royalajuda",
+        "• 💍 Acompanhar casórios e ranking da temporada\n\n"
+        "Toca num botão abaixo ou usa /royalajuda 👇",
         reply_markup=private_menu,
+        **effect_kw(message.chat.type, EFFECT_PARTY),
     )
 
 
@@ -1511,44 +1551,45 @@ async def start_cmd(message: Message):
 
 @dp.message(Command("royal"))
 async def royal_hub(message: Message):
-    await message.answer(HUB_TEXT, reply_markup=hub_keyboard_main())
+    await message.answer(hub_text(), reply_markup=hub_keyboard_main())
 
 
 @dp.message(F.text == "👑 Reino")
 async def royal_hub_btn(message: Message):
-    await message.answer(HUB_TEXT, reply_markup=hub_keyboard_main())
+    await message.answer(hub_text(), reply_markup=hub_keyboard_main())
 
 
 # === /royalajuda ===
 
 ROYAL_HELP = (
-    "👑 <b>COMANDOS DO REINO</b>\n\n"
-    "<b>Geral</b>\n"
-    "/royal — abre o menu principal\n"
+    "👑 <b>Guia do Reino</b>\n"
+    "<i>Toca em cada seção pra expandir ▾</i>\n\n"
+    "<blockquote expandable>🏰 <b>Geral</b>\n"
+    "/royal — menu principal\n"
     "/royalperfil — seu cartão de perfil\n"
     "/royalperfil RYL-0042 — perfil de outro nobre\n"
     "/royalficha — atalho pro perfil\n"
-    "/royalajuda — esta ajuda\n\n"
-    "<b>RPG</b>\n"
+    "/royalajuda — esta ajuda</blockquote>\n"
+    "<blockquote expandable>⚔️ <b>RPG</b>\n"
     "/royalup — distribuir pontos de atributo\n"
     "/royalclasse — escolher classe\n"
-    "/royalinventario — ver itens\n"
+    "/royalinventario — ver seus itens\n"
     "/royalloja — comprar itens\n"
-    "/royalsaldo — saldo de florins\n"
-    "/royalranking — ranking da temporada\n\n"
-    "<b>Eventos</b>\n"
+    "/royalsaldo — quantos florins você tem 🪙\n"
+    "/royalranking — top 10 da temporada</blockquote>\n"
+    "<blockquote expandable>🎯 <b>Eventos</b>\n"
     "/royalpalavra — status da Palavra da Hora\n"
-    "/royalboss — status do boss da semana\n\n"
-    "<b>Casórios (corte)</b>\n"
+    "/royalboss — status do boss da semana</blockquote>\n"
+    "<blockquote expandable>💍 <b>Casórios</b>\n"
     "/royalcasorios — ranking dos casais\n"
     "/royalmeuscasorios — seu histórico\n"
-    "/royalencalhar — sair do sistema\n"
-    "/royaldesencalhar — voltar ao sistema\n"
+    "/royalencalhar — sair do shipper\n"
+    "/royaldesencalhar — voltar pro shipper\n"
     "/royalcasar — admin: forçar casório\n"
-    "/royalativar — admin: ativar bot no grupo\n\n"
-    "<b>Privacidade</b>\n"
+    "/royalativar — admin: ativar bot no grupo</blockquote>\n"
+    "<blockquote expandable>🔒 <b>Privacidade &amp; dados</b>\n"
     "/royalprivacidade — controles de privacidade\n"
-    "/royaldados — exportar/apagar seus dados"
+    "/royaldados — exportar ou apagar seus dados</blockquote>"
 )
 
 
@@ -1605,7 +1646,7 @@ async def royal_perfil(message: Message):
 @dp.message(Command("royalup"))
 async def royal_up(message: Message):
     if not message.from_user or not is_group(message):
-        await message.answer("Use no grupo Royal para distribuir pontos.")
+        await message.answer(GROUP_ONLY_MSG)
         return
     chat_id = message.chat.id
     p = ensure_player(chat_id, message.from_user.id)
@@ -1647,7 +1688,7 @@ def classe_keyboard() -> InlineKeyboardMarkup:
 @dp.message(Command("royalclasse"))
 async def royal_classe(message: Message):
     if not message.from_user or not is_group(message):
-        await message.answer("Use no grupo Royal.")
+        await message.answer(GROUP_ONLY_MSG)
         return
     ensure_player(message.chat.id, message.from_user.id)
     db.commit()
@@ -1662,7 +1703,7 @@ async def royal_classe(message: Message):
 @dp.message(Command("royalinventario"))
 async def royal_inv(message: Message):
     if not message.from_user or not is_group(message):
-        await message.answer("Use no grupo Royal.")
+        await message.answer(GROUP_ONLY_MSG)
         return
     chat_id = message.chat.id
     uid = message.from_user.id
@@ -1713,7 +1754,7 @@ def inv_keyboard(chat_id: int, uid: int) -> InlineKeyboardMarkup:
 @dp.message(Command("royalloja"))
 async def royal_loja(message: Message):
     if not message.from_user or not is_group(message):
-        await message.answer("Use no grupo Royal.")
+        await message.answer(GROUP_ONLY_MSG)
         return
     p = ensure_player(message.chat.id, message.from_user.id)
     db.commit()
@@ -1738,11 +1779,14 @@ def loja_keyboard() -> InlineKeyboardMarkup:
 @dp.message(Command("royalsaldo"))
 async def royal_saldo(message: Message):
     if not message.from_user or not is_group(message):
-        await message.answer("Use no grupo Royal.")
+        await message.answer(GROUP_ONLY_MSG)
         return
     p = ensure_player(message.chat.id, message.from_user.id)
     db.commit()
-    await message.answer(f"🪙 <b>{p['gold']}</b> florins")
+    await message.answer(
+        f"🪙 Suas arcas guardam <b>{p['gold']}</b> florins.\n"
+        f"<i>Gasta com sabedoria em /royalloja.</i>"
+    )
 
 
 # === /royalranking ===
@@ -1750,7 +1794,7 @@ async def royal_saldo(message: Message):
 @dp.message(Command("royalranking"))
 async def royal_ranking(message: Message):
     if not is_group(message):
-        await message.answer("Use no grupo Royal.")
+        await message.answer(GROUP_ONLY_MSG)
         return
     cur.execute(
         "SELECT royal_id, user_id, season_xp FROM players "
@@ -1779,7 +1823,7 @@ async def royal_ranking(message: Message):
 @dp.message(Command("royalpalavra"))
 async def royal_palavra_status(message: Message):
     if not is_group(message):
-        await message.answer("Use no grupo Royal.")
+        await message.answer(GROUP_ONLY_MSG)
         return
     ch = get_active_challenge(message.chat.id)
     if not ch:
@@ -1804,7 +1848,7 @@ async def royal_palavra_status(message: Message):
 @dp.message(Command("royalboss"))
 async def royal_boss_status(message: Message):
     if not is_group(message):
-        await message.answer("Use no grupo Royal.")
+        await message.answer(GROUP_ONLY_MSG)
         return
     boss = get_active_boss(message.chat.id)
     if not boss:
@@ -1832,13 +1876,18 @@ async def royal_priv(message: Message):
     chat_id = row["chat_id"]
     p = ensure_player(chat_id, message.from_user.id)
     db.commit()
+    hide_rank = bool(p["privacy_hide_ranking"])
+    hide_stats = bool(p["privacy_hide_stats"])
+    rank_btn = ("🙈 Estou oculto do ranking" if hide_rank
+                else "🏆 Estou no ranking")
+    stats_btn = ("🙈 Stats detalhados ocultos" if hide_stats
+                 else "📊 Stats detalhados visíveis")
     await message.answer(
-        f"🔒 <b>Privacidade</b>\n\n"
-        f"Esconder do ranking: {'✅' if p['privacy_hide_ranking'] else '❌'}\n"
-        f"Esconder stats detalhados: {'✅' if p['privacy_hide_stats'] else '❌'}",
+        "🔒 <b>Privacidade</b>\n\n"
+        "<i>Toca pra alternar:</i>",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="Toggle ranking", callback_data="r:priv:rank")],
-            [InlineKeyboardButton(text="Toggle stats", callback_data="r:priv:stats")],
+            [InlineKeyboardButton(text=rank_btn, callback_data="r:priv:rank")],
+            [InlineKeyboardButton(text=stats_btn, callback_data="r:priv:stats")],
         ]))
 
 
@@ -1863,7 +1912,7 @@ async def royal_dados(message: Message):
 @dp.message(Command("royalativar", "noivado"))
 async def royal_ativar(message: Message):
     if not is_group(message):
-        await message.answer("Use no grupo.")
+        await message.answer(GROUP_ONLY_MSG)
         return
     ensure_chat(message.chat.id, message.chat.title)
     cur.execute(
@@ -1884,7 +1933,7 @@ async def royal_ativar(message: Message):
 @dp.message(Command("royalcasar", "querocasar"))
 async def royal_casar(message: Message):
     if not is_group(message):
-        await message.answer("Use no grupo.")
+        await message.answer(GROUP_ONLY_MSG)
         return
     if not await is_admin(message):
         await message.answer("🚫 Só admin pode invocar um casório agora.")
@@ -2042,7 +2091,8 @@ async def hub_cb(cb: CallbackQuery):
     # Acoes que requerem contexto de chat Royal:
     needs_chat = {"rank", "pal", "boss", "loja", "cas", "up", "cls", "buy", "atk", "inv"}
     if action in needs_chat and chat_id is None:
-        await cb.answer("Use no grupo Royal primeiro.", show_alert=True)
+        await cb.answer("🏰 Esse atalho precisa de um grupo do Reino. Volta pra lá pra usar.",
+                        show_alert=True)
         return
 
     try:
