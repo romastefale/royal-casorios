@@ -4119,16 +4119,26 @@ async def inline_profile(iq: InlineQuery):
     p = get_player(owner_chat, uid)
     royal_id = (p.get("royal_id") if p else None) or "RYL-????"
 
-    # SO o identity card. Se nao existir cacheado, tenta gerar agora
-    # (operacao rapida quando ja existe; sweep diario garante manutencao).
-    identity_fid = _get_identity_card_file_id(owner_chat, uid)
-    if not identity_fid:
+    # Refresh do username vivo do Telegram (caso user mudou @ desde a
+    # ultima msg no grupo) — garante que o card reflita o handle atual.
+    if iq.from_user and iq.from_user.username:
+        live_name = (iq.from_user.full_name
+                     or iq.from_user.first_name or "").strip()
         try:
-            identity_fid = await ensure_identity_card_async(owner_chat, uid)
+            refresh_user_identity(owner_chat, uid, live_name,
+                                  iq.from_user.username)
+            db.commit()
         except Exception:
-            logger.exception("inline_profile: ensure_identity_card_async failed "
-                             "uid=%d chat=%d", uid, owner_chat)
-            identity_fid = None
+            logger.exception("inline_profile: refresh_user_identity failed")
+
+    # SEMPRE chama ensure (idempotente — short-circuit quando hash bate).
+    # Garante que cards velhos (gerados sem @username) regenerem na hora.
+    try:
+        identity_fid = await ensure_identity_card_async(owner_chat, uid)
+    except Exception:
+        logger.exception("inline_profile: ensure_identity_card_async failed "
+                         "uid=%d chat=%d", uid, owner_chat)
+        identity_fid = _get_identity_card_file_id(owner_chat, uid)
 
     if identity_fid:
         await iq.answer(

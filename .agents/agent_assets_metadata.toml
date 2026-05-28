@@ -359,3 +359,15 @@ id = "L6Y55jRvS8Vo2tJJkyYiG"
 uri = "file://.local/preview/identity_long.jpg"
 type = "image"
 title = "Identity — username longo (truncado)"
+
+[[outputs]]
+id = "K0qdD2iAjrAAxgd2jyceM"
+uri = "file://.local/preview/identity_only_username.jpg"
+type = "image"
+title = "Identity — com @username (mesmo com emoji no nome)"
+
+[[outputs]]
+id = "BYOn0zO1CKdR4k9pBJcRI"
+uri = "file://.local/preview/identity_no_handle.jpg"
+type = "image"
+title = "Identity — sem @username (so ROY#ID, sem tofu)"

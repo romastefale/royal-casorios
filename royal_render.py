@@ -1855,25 +1855,23 @@ def render_identity_card(data: IdentityCardData) -> bytes | None:
         draw.text(((W - iw) // 2, id_y), id_txt, font=id_font, fill=accent)
 
         # ===== Handle (@username) do jogador =====
-        # Prefere @username (estavel + ASCII garantido); fallback display name.
+        # Mostra APENAS @username — handles do Telegram sao ASCII puro,
+        # entao a fonte mono renderiza 100%. Se o user nao tem @username
+        # configurado, NAO renderiza nada (sem fallback pro display_name,
+        # que pode conter emoji/glifos que viram tofu). ROY#ID ja identifica.
         handle_raw = (data.username or "").strip().lstrip("@")
         if handle_raw:
             display_handle = "@" + ellipsize(handle_raw, 20)
-        else:
-            display_handle = ellipsize(name, 22)
-        # Tenta 38, cai pra 32, depois 26
-        for fsize in (38, 32, 26):
-            name_font = load_font(fsize, mono=True if handle_raw else False,
-                                  bold=True)
-            nw, nh = text_size(draw, display_handle, name_font)
-            if nw <= W - 120:
-                break
-        name_y = id_box_y1 + 22
-        # Sombra preta
-        draw.text(((W - nw) // 2 + 3, name_y + 3),
-                  display_handle, font=name_font, fill=BLACK)
-        draw.text(((W - nw) // 2, name_y),
-                  display_handle, font=name_font, fill=INK)
+            for fsize in (38, 32, 26):
+                name_font = load_font(fsize, mono=True, bold=True)
+                nw, nh = text_size(draw, display_handle, name_font)
+                if nw <= W - 120:
+                    break
+            name_y = id_box_y1 + 22
+            draw.text(((W - nw) // 2 + 3, name_y + 3),
+                      display_handle, font=name_font, fill=BLACK)
+            draw.text(((W - nw) // 2, name_y),
+                      display_handle, font=name_font, fill=INK)
 
         # ===== Footer =====
         footer_font = load_font(18, mono=True, bold=False)
