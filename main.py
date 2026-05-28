@@ -1577,10 +1577,12 @@ def get_cached_profile_file_id(owner_chat: int, owner_uid: int) -> str | None:
 # Upload silencioso pro STASH_CHAT_ID.
 # =====================================================================
 
-def _identity_card_hash(name: str, avatar_slug: str | None) -> str:
+def _identity_card_hash(name: str, avatar_slug: str | None,
+                        username: str | None = None) -> str:
     """Hash estavel pra detectar mudancas. Sem temporada — virada de season
-    SEM mudanca de avatar nao deve regenerar."""
-    raw = f"{(name or '').strip()}|{(avatar_slug or '').strip()}"
+    SEM mudanca de avatar/handle nao deve regenerar."""
+    raw = (f"{(name or '').strip()}|{(avatar_slug or '').strip()}|"
+           f"{(username or '').strip().lstrip('@').lower()}")
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
 
 
@@ -1617,7 +1619,7 @@ async def ensure_identity_card_async(chat_id: int, user_id: int,
     async with _identity_lock(chat_id, user_id):
         cur.execute(
             "SELECT p.royal_id, p.avatar_slug, p.inline_card_file_id, "
-            "       p.inline_card_hash, u.display_name "
+            "       p.inline_card_hash, u.display_name, u.username "
             "FROM players p "
             "LEFT JOIN users u ON u.chat_id=p.chat_id AND u.user_id=p.user_id "
             "WHERE p.chat_id=? AND p.user_id=?", (chat_id, user_id))
@@ -1626,16 +1628,18 @@ async def ensure_identity_card_async(chat_id: int, user_id: int,
             return None
         raw_name = (row["display_name"] or "").strip()
         avatar_slug = row["avatar_slug"]
+        username = (row["username"] or "").strip() or None
         royal_id = row["royal_id"] or "RYL-????"
         # PII guard: nunca renderizar com fallback de user_id numerico.
-        # Sem display_name → adia regen, sweep pega depois que o user
-        # mandar 1a msg no grupo (upsert_user popula display_name).
-        if not raw_name:
-            logger.info("identity_card: sem display_name p/ uid=%d chat=%d, "
-                        "adiando (rid=%s)", user_id, chat_id, royal_id)
+        # Sem display_name E sem @username → adia (precisa de ao menos 1
+        # identificador legivel). Sweep pega depois que upsert_user popular.
+        if not raw_name and not username:
+            logger.info("identity_card: sem display_name nem @username p/ "
+                        "uid=%d chat=%d, adiando (rid=%s)",
+                        user_id, chat_id, royal_id)
             return row["inline_card_file_id"]
-        name = raw_name
-        target_hash = _identity_card_hash(name, avatar_slug)
+        name = raw_name or (f"@{username}" if username else "?")
+        target_hash = _identity_card_hash(name, avatar_slug, username)
         current_fid = row["inline_card_file_id"]
         current_hash = row["inline_card_hash"]
         if not force and current_fid and current_hash == target_hash:
@@ -1646,7 +1650,8 @@ async def ensure_identity_card_async(chat_id: int, user_id: int,
             return current_fid
         try:
             data = IdentityCardData(
-                royal_id=royal_id, name=name, avatar_slug=avatar_slug)
+                royal_id=royal_id, name=name, avatar_slug=avatar_slug,
+                username=username)
             card = await asyncio.to_thread(render_identity_card, data)
             if not card:
                 return current_fid
@@ -4113,51 +4118,40 @@ async def inline_profile(iq: InlineQuery):
 
     p = get_player(owner_chat, uid)
     royal_id = (p.get("royal_id") if p else None) or "RYL-????"
-    caption = build_profile_caption(owner_chat, uid)
-    if len(caption) > 1024:
-        caption = caption[:1020] + "..."
-    text_full = build_profile_text(owner_chat, uid)
 
-    results: list = []
-    # Prefere identity card (fixo, salvo no DB, atualizado por sweep diario)
+    # SO o identity card. Se nao existir cacheado, tenta gerar agora
+    # (operacao rapida quando ja existe; sweep diario garante manutencao).
     identity_fid = _get_identity_card_file_id(owner_chat, uid)
+    if not identity_fid:
+        try:
+            identity_fid = await ensure_identity_card_async(owner_chat, uid)
+        except Exception:
+            logger.exception("inline_profile: ensure_identity_card_async failed "
+                             "uid=%d chat=%d", uid, owner_chat)
+            identity_fid = None
+
     if identity_fid:
-        results.append(InlineQueryResultCachedPhoto(
-            id=f"identity-{owner_chat}-{uid}",
-            photo_file_id=identity_fid,
-            caption=f"<b>{html.escape(royal_id)}</b> // Jogador do Reino",
-            parse_mode="HTML",
-        ))
-    file_id = get_cached_profile_file_id(owner_chat, uid)
-    if file_id:
-        results.append(InlineQueryResultCachedPhoto(
-            id=f"perfil-photo-{owner_chat}-{uid}",
-            photo_file_id=file_id,
-            caption=caption,
-            parse_mode="HTML",
-        ))
-    # Sempre adiciona o fallback de texto (cliente escolhe)
-    results.append(InlineQueryResultArticle(
-        id=f"perfil-text-{owner_chat}-{uid}",
-        title=f"📜 Meu perfil — {royal_id}",
-        description="Envia a ficha (texto) no chat atual.",
-        input_message_content=InputTextMessageContent(
-            message_text=text_full,
-            parse_mode="HTML"),
-    ))
+        await iq.answer(
+            results=[InlineQueryResultCachedPhoto(
+                id=f"identity-{owner_chat}-{uid}",
+                photo_file_id=identity_fid,
+                caption=f"<b>{html.escape(royal_id)}</b> // Jogador do Reino",
+                parse_mode="HTML",
+            )],
+            cache_time=30,
+            is_personal=True,
+        )
+        return
 
-    button = None
-    if not file_id and not identity_fid:
-        # Sem foto cacheada — guia o user pra gerar uma via /royalperfil na DM
-        button = InlineQueryResultsButton(
-            text="📸 Gerar foto do perfil (abrir o bot)",
-            start_parameter="cacheperfil")
-
+    # Sem identity card disponivel ainda — guia user a interagir 1x no grupo
+    # pra popular display_name/username e disparar o render.
     await iq.answer(
-        results=results,
-        cache_time=30,
+        results=[],
+        cache_time=10,
         is_personal=True,
-        button=button,
+        button=InlineQueryResultsButton(
+            text="📸 Gerar identidade (abrir o bot)",
+            start_parameter="identity"),
     )
 
 
