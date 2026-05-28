@@ -14,6 +14,7 @@ Roda como worker (sem frontend) em Railway com volume SQLite alocado.
 
 import asyncio
 import html
+import io
 import logging
 import os
 import random
@@ -31,6 +32,7 @@ from aiogram.types import (
     BotCommand,
     BotCommandScopeAllGroupChats,
     BotCommandScopeAllPrivateChats,
+    BufferedInputFile,
     CallbackQuery,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
@@ -41,6 +43,7 @@ from aiogram.types import (
 )
 
 from royal_words import PALAVRAS, CHARADAS
+from royal_render import ProfileCardData, render_profile_card
 
 # =====================================================================
 # CONFIG & LOGGING
@@ -957,6 +960,21 @@ async def get_user_photo_file_id(user_id: int) -> str | None:
     return None
 
 
+async def get_user_photo_bytes(user_id: int) -> bytes | None:
+    """Baixa os bytes da foto de perfil pra renderizar dentro de cards."""
+    assert bot is not None
+    file_id = await get_user_photo_file_id(user_id)
+    if not file_id:
+        return None
+    try:
+        buf = io.BytesIO()
+        await bot.download(file_id, destination=buf)
+        return buf.getvalue()
+    except Exception:
+        logger.warning("download avatar bytes failed uid=%d", user_id, exc_info=True)
+        return None
+
+
 # =====================================================================
 # RPG — CARTAO DE PERFIL
 # =====================================================================
@@ -1030,14 +1048,195 @@ def build_profile_text(chat_id: int, user_id: int) -> str:
     )
 
 
+def build_profile_card_data(chat_id: int, user_id: int) -> ProfileCardData:
+    """Coleta dados pra renderizar o cartao 1080x1080."""
+    p = ensure_player(chat_id, user_id)
+    name = get_name(chat_id, user_id) or "Nobre"
+    lvl, in_lvl, needed, _ = level_progress(p["total_xp"])
+
+    cur.execute("SELECT COUNT(*) AS total FROM players WHERE chat_id=?", (chat_id,))
+    total_players = cur.fetchone()["total"]
+    cur.execute(
+        "SELECT COUNT(*)+1 AS rank FROM players WHERE chat_id=? AND season_xp > ?",
+        (chat_id, p["season_xp"]),
+    )
+    rank = cur.fetchone()["rank"]
+    cur.execute(
+        "SELECT COUNT(*) AS total FROM couples WHERE chat_id=? AND (user1=? OR user2=?)",
+        (chat_id, user_id, user_id),
+    )
+    casorios = cur.fetchone()["total"]
+    cur.execute(
+        "SELECT COUNT(*) AS total FROM challenges WHERE chat_id=? AND winner_user_id=?",
+        (chat_id, user_id),
+    )
+    palavras_won = cur.fetchone()["total"]
+
+    class_id = p.get("class_id")
+    class_name = (CLASSES[class_id]["name"]
+                  if class_id and class_id in CLASSES else "Sem classe")
+
+    hp = hp_max(p)
+    joined_str = "?"
+    if p.get("joined_at"):
+        try:
+            joined_dt = datetime.fromisoformat(p["joined_at"])
+            joined_str = joined_dt.strftime("%d/%m/%Y")
+        except Exception:
+            pass
+
+    return ProfileCardData(
+        royal_id=p.get("royal_id") or "RYL-????",
+        name=name,
+        initial=(name[:1] or "?").upper(),
+        class_name=class_name,
+        season=current_season_label(),
+        level=lvl,
+        xp_in_level=in_lvl,
+        xp_needed=needed,
+        hp_cur=hp,
+        hp_max=hp,
+        attr_for=effective_attr(p, "for"),
+        attr_des=effective_attr(p, "des"),
+        attr_vit=effective_attr(p, "vit"),
+        attr_car=effective_attr(p, "car"),
+        pts_available=p.get("pts_available", 0),
+        rank=rank,
+        total_players=total_players,
+        palavras_won=palavras_won,
+        casorios=casorios,
+        gold=p.get("gold", 0),
+        msg_count=p.get("rpg_message_count", 0),
+        joined_str=joined_str,
+    )
+
+
+def build_profile_caption(chat_id: int, user_id: int) -> str:
+    """Caption do card usando TODAS as formatacoes nativas do Telegram:
+    <b>, <i>, <u>, <s>, <code>, <pre>, <a>, <blockquote expandable>, <tg-spoiler>.
+    Limite de caption do Telegram: 1024 chars.
+    """
+    p = ensure_player(chat_id, user_id)
+    name = get_name(chat_id, user_id) or "Nobre"
+    lvl, in_lvl, needed, _ = level_progress(p["total_xp"])
+
+    cur.execute("SELECT COUNT(*) AS total FROM players WHERE chat_id=?", (chat_id,))
+    total_players = cur.fetchone()["total"]
+    cur.execute(
+        "SELECT COUNT(*)+1 AS rank FROM players WHERE chat_id=? AND season_xp > ?",
+        (chat_id, p["season_xp"]),
+    )
+    rank = cur.fetchone()["rank"]
+    cur.execute(
+        "SELECT COUNT(*) AS total FROM couples WHERE chat_id=? AND (user1=? OR user2=?)",
+        (chat_id, user_id, user_id),
+    )
+    casorios = cur.fetchone()["total"]
+    cur.execute(
+        "SELECT COUNT(*) AS total FROM challenges WHERE chat_id=? AND winner_user_id=?",
+        (chat_id, user_id),
+    )
+    palavras_won = cur.fetchone()["total"]
+
+    class_id = p.get("class_id")
+    if class_id and class_id in CLASSES:
+        class_html = (
+            f"{html.escape(CLASSES[class_id]['emoji'])} "
+            f"{html.escape(CLASSES[class_id]['name'])}"
+        )
+    else:
+        # Strikethrough nativo (<s>) — montado FORA do escape
+        class_html = "🎭 <s>Sem classe</s>"
+    season = current_season_label()
+    hp = hp_max(p)
+
+    def _br(n):
+        return f"{int(n):,}".replace(",", ".")
+
+    pts_extra = (f"  ·  <u>+{p['pts_available']} pts</u>"
+                 if p.get("pts_available", 0) > 0 else "")
+
+    f_ = effective_attr(p, "for")
+    d_ = effective_attr(p, "des")
+    v_ = effective_attr(p, "vit")
+    c_ = effective_attr(p, "car")
+
+    joined_str = "?"
+    if p.get("joined_at"):
+        try:
+            joined_str = datetime.fromisoformat(p["joined_at"]).strftime("%d/%m/%Y")
+        except Exception:
+            pass
+
+    royal_id = p["royal_id"] or "RYL-????"
+
+    # Header: bold + italic + mention link
+    # class_html ja inclui tag <s> quando sem classe — NAO escapar
+    header = (
+        f"👑 <b>{html.escape(royal_id)}</b> · {mention(user_id, name)}\n"
+        f"<i>{class_html} · {html.escape(season)}</i>"
+    )
+
+    # Ficha completa em blockquote expandable (clica pra abrir)
+    # com <pre> pros atributos em grade monospace
+    stats_grid = (
+        f"FOR {f_:>2}    DES {d_:>2}\n"
+        f"VIT {v_:>2}    CAR {c_:>2}"
+    )
+    ficha = (
+        f"<blockquote expandable>"
+        f"<b>📜 Ficha do nobre</b>\n"
+        f"⭐ <b>Nível {lvl}</b> — {_br(in_lvl)}/{_br(needed)} XP{pts_extra}\n"
+        f"🩸 HP <b>{hp}</b>/{hp}\n"
+        f"\n"
+        f"<pre>{stats_grid}</pre>"
+        f"🏆 <b>#{rank}</b> de {total_players}   ·   🎯 {palavras_won} palavras\n"
+        f"💍 {casorios} casórios   ·   🪙 <code>{_br(p['gold'])}</code> florins\n"
+        f"<i>💬 {_br(p.get('rpg_message_count', 0))} mensagens desde {joined_str}</i>"
+        f"</blockquote>"
+    )
+
+    # Spoiler discreto com o ID em code (pra copiar/colar facil)
+    footer = (
+        f'<tg-spoiler>🪪 toque pra revelar ID — <code>{html.escape(royal_id)}</code></tg-spoiler>'
+    )
+
+    full = f"{header}\n\n{ficha}\n{footer}"
+    # Guarda do limite de caption do Telegram (1024 chars).
+    # Se estourar (nomes/temporadas muito longos), corta o footer/spoiler.
+    if len(full) > 1024:
+        full = f"{header}\n\n{ficha}"
+    if len(full) > 1024:
+        full = f"{header}\n\n{ficha[: max(0, 1024 - len(header) - 2 - len('</blockquote>'))]}</blockquote>"
+    if len(full) > 1024:
+        full = full[:1020] + "…"
+    return full
+
+
 async def send_profile_card(chat_id_to: int, owner_chat: int, owner_uid: int):
-    """Envia cartao de perfil (com foto se publica) para chat_id_to."""
+    """Envia cartao de perfil renderizado 1080x1080. Fallback pra texto puro."""
     assert bot is not None
-    await safe_typing(chat_id_to, "typing")
+    await safe_typing(chat_id_to, "upload_photo")
+
+    # Tenta render do card primeiro
+    try:
+        data = build_profile_card_data(owner_chat, owner_uid)
+        avatar_bytes = await get_user_photo_bytes(owner_uid)
+        card = await asyncio.to_thread(render_profile_card, data, avatar_bytes)
+        if card:
+            caption = build_profile_caption(owner_chat, owner_uid)
+            await bot.send_photo(
+                chat_id_to,
+                photo=BufferedInputFile(card, filename=f"perfil-{data.royal_id}.jpg"),
+                caption=caption,
+            )
+            return
+    except Exception:
+        logger.exception("render_profile_card path failed; caindo pro fallback")
+
+    # Fallback: texto puro (com foto bruta se houver)
     text = build_profile_text(owner_chat, owner_uid)
     photo_id = await get_user_photo_file_id(owner_uid)
-    if photo_id:
-        await safe_typing(chat_id_to, "upload_photo")
     try:
         if photo_id:
             await bot.send_photo(chat_id_to, photo=photo_id, caption=text, parse_mode="HTML")
