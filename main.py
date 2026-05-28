@@ -1283,8 +1283,7 @@ PREMIUM_ITEMS: dict[str, dict] = {
 # M04 — ROYAL PLUS (Stars subscription recorrente, Bot API 10)
 # Cobranca mensal via sendInvoice(subscription_period=2592000).
 # Telegram so aceita 2592000s = 30 dias (unico valor permitido em XTR).
-# Perks: +20% XP perma (enquanto ativo), slot extra de casorio, badge
-# violeta no profile card.
+# Perks: +20% XP perma (enquanto ativo) + badge violeta no profile card.
 # Doc: https://core.telegram.org/bots/payments-stars#subscriptions
 # =====================================================================
 ROYAL_PLUS_PERIOD_SEC = 2592000   # 30 dias — unico valor aceito pelo Telegram
@@ -1295,9 +1294,8 @@ SUBSCRIPTIONS: dict[str, dict] = {
         "emoji": "🌟", "name": "Royal Plus",
         "stars": ROYAL_PLUS_STARS,
         "period_sec": ROYAL_PLUS_PERIOD_SEC,
-        "desc": "Assinatura mensal: +20% XP permanente, slot extra "
-                "de casorio, badge violeta. Renovacao automatica via "
-                "Telegram Stars.",
+        "desc": "Assinatura mensal: +20% XP permanente + badge "
+                "violeta. Renovacao automatica via Telegram Stars.",
         "perk": "royal_plus",
     },
 }
@@ -7064,7 +7062,7 @@ def _grant_premium_perk(chat_id: int, user_id: int, iid: str,
         except Exception:
             d = until[:10]
         return (f"🌟 <b>Royal Plus</b> ativo ate <b>{d}</b>.\n"
-                f"// +20% XP, slot extra de casorio, badge violeta.")
+                f"// +20% XP + badge violeta.")
     if perk == "xp_boost":
         hours = int(item.get("duration_h", 24))
         until = (utc_now() + timedelta(hours=hours)).isoformat()

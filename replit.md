@@ -1,278 +1,196 @@
-# Royal Casorios → RPG - Royal para Geeks
+# RPG - Royal para Geeks
 
-> **Nome oficial do jogo do bot:** **RPG - Royal para Geeks** (usar este nome em UI/comunicação pública daqui pra frente).
+> **Nome oficial do jogo:** **RPG - Royal para Geeks** (usar em UI/comunicação pública).
+> Antigo nome interno: "Royal Casorios".
 
+Telegram bot em **aiogram 3.28.2 / Bot API 10 / Python 3.12**. Roda como **worker** (sem
+frontend), persistindo em **SQLite local**. No Replit fazemos **apenas o código** — não
+é necessário rodar/configurar workflow aqui; o deploy é no Railway.
 
-Telegram bot construído com aiogram (Python 3.12). Roda como worker (sem frontend), persistindo dados em SQLite local.
+## 📑 Índice
+1. [Deploy & push](#-deploy--push-crítico) · CRÍTICO
+2. [Persistência de dados](#-persistência-de-dados-crítico) · CRÍTICO
+3. [User preferences (regras do dono)](#-user-preferences-regras-do-dono)
+4. [Estrutura de arquivos](#-estrutura-de-arquivos)
+5. [Env vars](#-env-vars)
+6. [Testes & CI](#-testes--ci)
+7. [Features de jogo (M-series)](#-features-de-jogo-m-series)
+8. [Premium · Telegram Stars](#-premium--telegram-stars-m01--m04--m03)
+9. [Infra hardening (F-series)](#️-infra-hardening-f-series)
+10. [DM, inline mode & identity card](#-dm-inline-mode--identity-card)
+11. [Menus (BotCommands)](#-menus-botcommands)
+12. [UI: botões coloridos + helpers UX](#️-ui-botões-coloridos-bot-api-10--helpers-ux)
+13. [Identidade visual](#-identidade-visual--retro-futurist-dystopian)
 
-**Deploy:** Railway (config em `railway.json`). No Replit fazemos apenas o código — não é necessário rodar/configurar workflow aqui.
+---
 
-### Push para o repositório (Railway escuta a branch `royalRPG`)
-**Use `GITHUB_TOKEN`** (auto-provisionado pelo Replit nesta workspace, sempre disponível). **NÃO** use `GH_TOKEN` — não existe como secret aqui.
+## 🚀 Deploy & push (CRÍTICO)
 
+**Deploy:** Railway (config em `railway.json`). O Railway escuta a branch **`royalRPG`**.
+
+**Push (sempre `GITHUB_TOKEN`, NUNCA `GH_TOKEN`):**
 ```bash
 git push "https://x-access-token:${GITHUB_TOKEN}@github.com/romastefale/royal-casorios.git" main:royalRPG
 ```
+- `GITHUB_TOKEN` é auto-provisionado pelo Replit nesta workspace, sempre disponível.
+- `GH_TOKEN` **não existe** como secret aqui (é só env var de runtime do Railway, p/ gist).
+- A branch `main` LOCAL **nunca** é alterada no remoto — sempre `main:royalRPG`.
 
-A branch `main` LOCAL nunca é alterada no remoto — sempre fazemos `main:royalRPG` para o Railway pegar o deploy.
+---
 
-## Estrutura
-- `main.py` — código principal do bot
-- `royal_render.py` — gerador de cards 1080×1080 (Pillow puro, sem Chromium)
-- `royal_words.py` — palavras e charadas pro mini-game
-- `requirements.txt` — dependências de runtime (`aiogram`, `Pillow`, `aiohttp`)
-- `requirements-dev.txt` — deps SÓ de dev/CI (`pytest`, `ruff`); não vão pro Railway
-- `tests/` — suíte pytest (M17): `conftest.py` (DB tmp), `test_pure.py`, `test_db_smoke.py`
-- `.github/workflows/ci.yml` — CI (M18): ruff crítico + pytest em push/PR
-- Requer secret `BOT_TOKEN`
+## 💾 Persistência de dados (CRÍTICO)
 
-## 🧪 Testes & CI (M17/M18)
-
-- **Rodar local:** `pip install -r requirements-dev.txt && python -m pytest -q` (20 testes).
-- **`conftest.py`** aponta `DATABASE_PATH` pra arquivo temporário ANTES do import de
-  `main` → migrations rodam em DB vazio descartável (nunca toca o DB real).
-- **`test_pure.py`** cobre funções puras: `format_br`, `normalize_word`,
-  `normalize_pair`, `level_progress`, eventos sazonais, season code, week marker,
-  identity hash.
-- **`test_db_smoke.py`** valida migrations até v13 + tabelas críticas + integrity_check.
-- **CI** (`.github/workflows/ci.yml`) roda em push pra `royalRPG`/`main` + PRs:
-  `ruff check --select E9,F63,F7,F82` (só bugs reais: undefined names/syntax, sem ruído
-  de estilo) + `pytest -q`.
-- ⚠️ O ruff crítico já pegou 3 NameErrors reais em produção (`format_br`, `TZ`, `log`)
-  que crashavam saldo/card-de-boss/presente/casório/feedback-de-palavra — todos
-  corrigidos. **Manter o gate no CI.**
-
-> 📌 Auditado nesta entrega: `/start`, `/royalajuda`, `/royaltutorial` e
-> `register_bot_commands()` **não precisaram mudar** (correções foram bug-fix interno
-> + infra de teste, sem comando novo nem mudança de UX visível).
-
-## 💾 Persistência de dados — CRÍTICO (Railway)
-
-**Container do Railway é efêmero.** A cada `git push` que dispara
-redeploy, o filesystem é recriado a partir do snapshot do repo. Se o
-SQLite mora em `./data/royal_casorios.sqlite3` (path RELATIVO), o
-arquivo é restaurado pro estado commitado e **TODOS os dados gravados
-em runtime são perdidos** (perfis, royal_id, XP, casórios, inventário,
-saldo, palavras, configs por usuário, etc).
+**O container do Railway é efêmero.** A cada `git push` que dispara redeploy o filesystem
+é recriado do snapshot do repo. Se o SQLite morar em path RELATIVO
+(`./data/royal_casorios.sqlite3`), o arquivo volta ao estado commitado e **TODOS os dados
+de runtime são perdidos** (perfis, royal_id, XP, casórios, inventário, saldo, etc).
 
 **Solução obrigatória — Railway Volumes:**
+1. Dashboard Railway → serviço do bot → aba **Volumes** → **+ New Volume**.
+2. Mount path `/data`, size 1 GB (sobra).
+3. Aba **Variables** → `DATABASE_PATH=/data/royal_casorios.sqlite3`.
+4. Redeploy. Na 1ª boot, `_ensure_db_persistence()` (`main.py`) detecta `/data/...` vazio e
+   **copia o seed** do repo pro volume — uma única vez. Daí em diante o volume persiste.
 
-1. No dashboard do Railway → serviço do bot → aba **Volumes** → **+ New
-   Volume**.
-2. Mount path: `/data`. Size: 1 GB (sobra muito; SQLite cresce devagar).
-3. Aba **Variables** → adicionar:
-   ```
-   DATABASE_PATH=/data/royal_casorios.sqlite3
-   ```
-4. Redeploy. Na 1ª boot, `_ensure_db_persistence()` em `main.py`
-   detecta `/data/royal_casorios.sqlite3` vazio e **copia o seed**
-   do repo (`./data/royal_casorios.sqlite3` baked no build) pra
-   dentro do volume — uma única vez. A partir daí o volume persiste
-   independente de redeploys.
-
-**Como confirmar que tá funcionando:**
-- Logs da 1ª boot pós-volume: `[DB] BOOTSTRAP: copiei seed do repo ...`
+**Confirmar que funciona (logs):**
+- 1ª boot pós-volume: `[DB] BOOTSTRAP: copiei seed do repo ...`
 - Boots seguintes: `[DB] usando /data/royal_casorios.sqlite3 (XXX KB)`
-- Se aparecer `[DB] !! ATENCAO: DATABASE_PATH eh relativo ...` →
-  **volume não está montado / env var não foi setada** → corrigir antes
-  de qualquer outro deploy.
+- ⚠️ `[DB] !! ATENCAO: DATABASE_PATH eh relativo ...` → volume não montado / env var não
+  setada → **corrigir antes de qualquer deploy.**
 
-> ⚠️ Enquanto não configurar o volume, **não faça commits novos do
-> `data/royal_casorios.sqlite3`** — cada commit do DB sobrescreve o
-> snapshot que é "restaurado" em redeploy. O `.gitignore` já ignora
-> `data/` e `*.sqlite3` daqui pra frente; o arquivo atualmente trackado
-> precisa ser removido com `git rm --cached data/royal_casorios.sqlite3`
-> (ação destrutiva — pedir ao usuário ou rodar via project task).
+> ⚠️ Enquanto não houver volume, **não commitar** `data/royal_casorios.sqlite3` — cada
+> commit do DB sobrescreve o snapshot "restaurado" no redeploy. O `.gitignore` já ignora
+> `data/` e `*.sqlite3`; o arquivo trackado precisa de `git rm --cached
+> data/royal_casorios.sqlite3` (destrutivo — pedir ao usuário ou rodar via project task).
 
-## 🔇 `/royalmudo` — master switch via DM do owner
+---
 
-- **Em GRUPO** (owner-only): toggle do chat atual (ON/OFF).
-- **Em DM do owner**: **broadcast** — se qualquer grupo estiver ON-AIR, silencia TODOS os grupos do `chats_rpg`. Se todos já estiverem mudos, religa TODOS.
-- Útil pra silenciar tudo de uma vez antes de deploy/manutenção sem precisar entrar em cada grupo.
-- Log: `[MUDO] BROADCAST actor=<uid> new_state=ON|OFF total=N changed=M`.
+## 📌 User preferences (regras do dono)
 
-## 📜 Log dump — `/royallog` + auto 5min
+**Versões fixas (não fazer downgrade):**
+- **Telegram Bot API: 10** — usar sempre.
+- **aiogram: 3.28.2** (última estável, 10/05/2026).
 
-- **Ring buffer in-memory:** `_LogRingBuffer` (maxlen 5000) anexado ao root logger em `main.py:107` — captura logs do bot + aiogram.
-- **`/royallog`** (owner-only, off-menu, qualquer chat): manda snapshot agora pro DM do owner como `.log` file + atualiza gist (se `GH_TOKEN` setado). Ack auto-deletado em 12s no grupo.
-- **Job automático `log_dump_job()`** roda a cada `LOG_DUMP_INTERVAL_SEC` (default 300s = 5min):
-  - Envia file pro DM do `OWNER_USER_ID` (silent, sem notificação)
-  - Faz PATCH no secret gist (cria 1x na 1ª chamada, salva `gist_id` em `bot_meta`)
-- **Gist é secret** (`public: false`) — só com URL acessível, não indexável.
-- Cap de 500KB no conteúdo enviado pro gist (limite seguro abaixo dos 1MB).
-- Failsafe: DM falha (bot bloqueado / sem DM iniciada) → loga + segue. Gist sem token → no-op silencioso.
+**Sincronia obrigatória com o código** — sempre que mexer no bot, revisar/atualizar quando
+aplicável:
+- `/start` (`start_cmd`) — rotas pessoais + inline mode.
+- `/royalajuda` (`ROYAL_HELP`) — manual completo de comandos.
+- `/royaltutorial` (`send_tutorial()` + `ROYAL_TUTORIAL_PARTS`) — tutorial didático em
+  **6 partes** (cada parte = 1 mensagem, ≤4096 chars). `send_tutorial(message)` envia todas
+  em sequência; usado por `/start`, `/royaltutorial`, `/royalajuda`, `/help` e o botão
+  "📖 Tutorial".
+- `register_bot_commands()` — se adicionou comando novo.
+- `replit.md` — env vars, persistência, doutrina visual, menus.
+- `README.md` — overview público.
 
-**Como ativar gist no Railway:** Variables → adicionar `GH_TOKEN` com PAT do GitHub (scope: `gist`). Sem isso, só DM funciona.
+> Se a mudança for **puramente infra interna** (cache, retry, log format), só atualizar
+> `replit.md` e mencionar no commit que /start/help/tutorial foram auditados e não mudaram.
 
-**Como desligar tudo:** `LOG_DUMP_ENABLED=0` no Railway.
+---
 
-## 💎 M01 — Telegram Stars (Premium)
+## 📁 Estrutura de arquivos
+- `main.py` — código principal do bot.
+- `royal_render.py` — gerador de cards 1080×1080 (Pillow puro, sem Chromium).
+- `royal_words.py` — palavras e charadas do mini-game.
+- `requirements.txt` — deps de runtime (`aiogram`, `Pillow`, `aiohttp`).
+- `requirements-dev.txt` — deps SÓ de dev/CI (`pytest`, `ruff`); não vão pro Railway.
+- `tests/` — pytest: `conftest.py` (DB tmp), `test_pure.py`, `test_db_smoke.py`.
+- `.github/workflows/ci.yml` — CI: ruff crítico + pytest em push/PR.
 
-**Pagamento via Telegram Stars (XTR)** — sem gateway externo, sem provider_token. Telegram processa diretamente.
+---
 
-**Acesso:** `/royalloja` → botão **💎 Premium**.
+## 🔧 Env vars
 
-**Itens premium (`PREMIUM_ITEMS` em `main.py`):**
-| Item | Stars | Perk armazenado em `players` |
-|---|---|---|
-| ⚡ Boost +20% XP (24h) | 50⭐ | `xp_boost_until` (ISO timestamp) |
-| 💡 Dica da Palavra | 1⭐ | `prm_hints` (contador) |
-| 🔱 Ressurreicao no Boss | 10⭐ | `prm_ressurrects` (contador) |
-| 🥇 Skin Dourada permanente | 100⭐ | `prm_skin_gold` (0/1) |
+| Var | Obrig.? | Default | Para que serve |
+|---|---|---|---|
+| `BOT_TOKEN` | ✅ | — | Token do BotFather. |
+| `DATABASE_PATH` | rec. | `./data/royal_casorios.sqlite3` | **No Railway use `/data/...` com volume** (ver Persistência). |
+| `TZ` | — | `America/Sao_Paulo` | Timezone. |
+| `AUTO_HOURS` | — | `9,15,21` | Horas dos casórios automáticos. |
+| `OWNER_USER_ID` | rec. | — | user_id do dono. Habilita `/royallog`, `/royalmudo`, `/royalpalavratest`. Sem isso, comandos owner ficam off (modo seguro). |
+| `TEST_CHAT_IDS` | — | — | chat_ids de grupos de teste (não aparecem no picker de DM nem no fallback inline). Comma-separated. |
+| `STASH_CHAT_ID` | — | `-1003941532741` (hardcoded) | Canal privado p/ upload silencioso de identity card + backups. |
+| `GH_TOKEN` | — | — | PAT GitHub (scope `gist`). Habilita upload de logs pro gist secreto a cada 5min. Sem isso, só DM do owner. |
+| `LOG_DUMP_INTERVAL_SEC` | — | `300` | Intervalo do auto-dump de logs. |
+| `LOG_DUMP_ENABLED` | — | `1` | `0` desliga o auto-dump (mantém `/royallog` manual). |
+| `LOG_JSON` | — | `0` | `1` faz stdout root sair em JSON (1 linha/record). Ring buffer do `/royallog` sempre em texto humano. |
+| `PORT` | — | — | Se setado, sobe health server HTTP (`GET /health`). Railway injeta com healthcheck. |
+| `HEALTH_STALE_SEC` | — | `600` | `/health` → 503 se nenhuma update do Telegram nesse intervalo. |
+| `BACKUP_ENABLED` | — | `1` | `0` desliga backup diário. |
+| `BACKUP_HOUR` | — | `3` | Hora local do backup diário. |
+| `BACKUP_RETENTION_DAYS` | — | `7` | Dias de backup mantidos em `<DB_DIR>/backups/`. |
 
-**Fluxo técnico:**
-1. Callback `r:xtr:{iid}` chama `bot.send_invoice(currency="XTR", prices=[LabeledPrice])`.
-2. Handler `pre_checkout_handler` aceita queries com prefixo `prm|`.
-3. Handler `successful_payment_handler` valida payload, grava em `stars_purchases` (idempotente por `charge_id`), concede perk via `_grant_premium_perk()`.
-4. Ack com efeito 🎉 (DM) ou texto (grupo).
+---
 
-**Migration v10:** adiciona colunas em `players` + tabela `stars_purchases` (ledger auditável).
+## 🧪 Testes & CI
 
-**Aplicação dos perks:**
-- ✅ `xp_boost_until` — aplicado: `premium_xp_active(player)` (`main.py`) checa
-  `now < xp_boost_until` (ou `royal_plus_until`) → `*1.20` (`PREMIUM_XP_BUFF`) em
-  `award_xp_immediate` **e** `award_xp_message` (depois de classe/casamento, antes
-  do evento sazonal).
-- ✅ `prm_hints` — consumido em `/royalpaldica` (M03) revelando 1 letra.
-- ✅ `prm_skin_gold` — `ProfileCardData.skin_gold` (vindo de `build_profile_card_data`)
-  → moldura do avatar em GOLD vivo + tag `[ * OURO * ]`. Entra na cache_key do render
-  e no `_profile_card_data_hash` (F09) pra invalidar o file_id persistido.
-- ⛔ `prm_ressurrects` — **BLOQUEADO (não é "aplicação de perk", é feature nova):**
-  o combate de boss (`handle_boss_attack`) **não tem mecânica de morte do player** —
-  player só dá tap/causa dano, não tem HP de combate nem estado de derrota (`hp_max`
-  e os corações no card são puramente **cosméticos**). Não existe ponto de hook pra
-  "ressuscitar". Aplicar exigiria desenhar do zero: HP de combate, contra-ataque do
-  boss, estado de morte, lockout e revive — com números de balance que teriam de ser
-  **inventados**. Não implementado sem inventar mecânica.
+- **Rodar local:** `pip install -r requirements-dev.txt && python -m pytest -q`.
+- **`conftest.py`** aponta `DATABASE_PATH` p/ arquivo temporário ANTES de importar `main` →
+  migrations rodam em DB vazio descartável (nunca toca o DB real).
+- **`test_pure.py`** — funções puras (`format_br`, `normalize_word`, `normalize_pair`,
+  `level_progress`, eventos sazonais, season code, week marker, identity hash).
+- **`test_db_smoke.py`** — valida migrations até v13 + tabelas críticas + integrity_check.
+- **CI** (`ci.yml`, push p/ `royalRPG`/`main` + PRs): `ruff check --select E9,F63,F7,F82`
+  (só bugs reais: undefined names/syntax) + `pytest -q`.
+- ⚠️ O ruff crítico já pegou 3 NameErrors reais em produção (`format_br`, `TZ`, `log`) que
+  crashavam saldo/boss/presente/casório/feedback-de-palavra. **Manter o gate no CI.**
 
-> ⚠️ M01 entrega o pipeline de cobrança + grant + ledger. XP boost / hint / skin
-> dourada já aplicados; ressurreição depende de mecânica de morte de boss inexistente
-> (feature nova, não wiring de perk).
+---
 
-## 🌟 M04 — Royal Plus (assinatura Stars recorrente)
+## 🎮 Features de jogo (M-series)
 
-**Assinatura mensal via Telegram Stars** — `sendInvoice(subscription_period=2592000)` (30 dias, único valor aceito em XTR). Renovação automática gerenciada pelo Telegram.
+### 🎁 Presentes — `/royalpresentear` (M02)
+Transferência atômica de florins entre players (grupo-only).
+- `/royalpresentear @user 100` (explícito) ou reply + `/royalpresentear 100` (implícito).
+- Limites `GIFT_MIN=10`, `GIFT_MAX=5000`. Bloqueia self-gift, valida saldo, `UPDATE …
+  WHERE gold>=?` (anti-race). Conquista `generoso` no 1º envio.
+- **Migration v12:** tabela `gifts` (ledger).
 
-**Item (`SUBSCRIPTIONS` em `main.py`):**
-| Perk | Stars | Coluna em `players` |
-|---|---|---|
-| 🌟 Royal Plus — +20% XP + slot extra casório + badge violeta | 50⭐/mês | `royal_plus_until` (ISO), `royal_plus_charge_id` |
+### 🏅 Conquistas — `/royalconquistas` (M11)
+11 slugs MVP em `ACHIEVEMENTS`: primeiro_acerto, dez_acertos, cem_acertos, primeiro_boss,
+lvl_dez/vinte_cinco/cinquenta, primeiro_amor, mecenas, nobreza, generoso.
+- API `unlock_achievement(chat_id, uid, slug)` — idempotente (PK `chat_id,user_id,slug`),
+  retorna True só na 1ª unlock + DM `_notify_achievement_dm` (`EFFECT_PARTY`).
+- **Triggers:** level-up→lvl 10/25/50 · PALAVRA win→1/10/100 · `finalize_boss`→primeiro_boss
+  · `assign_couple`→primeiro_amor · `_grant_premium_perk`→nobreza/mecenas · presente→generoso.
+- **Migration v12:** tabela `achievements` + índice por user_id.
 
-**Fluxo:**
-1. Callback `r:sub:royal_plus` → `bot.send_invoice(currency="XTR", subscription_period=2592000, prices=[...])`.
-2. `pre_checkout_handler` aceita prefixo `sub|` (além de `prm|` do M01), valida amount/item.
-3. `successful_payment_handler` detecta `sp.subscription_expiration_date` (Unix), grava ISO em `royal_plus_until`.
-4. **Renovações automáticas:** Telegram envia novos `successful_payment` mensalmente com `is_recurring=True` e novo `charge_id` — o handler trata cada um igualzinho (idempotente por charge_id, atualiza `royal_plus_until`).
-5. **Cancelamento:** usuário cancela no próprio Telegram (Settings → My Stars → Subscriptions). Bot só observa: quando `now > royal_plus_until` → assinatura expirou → perks param de aplicar.
+### ⚙️ Preferências — `/royalconfig` (M19)
+Flags em `user_dm_settings.prefs_json` (migration v12). API `get_user_prefs(uid)` /
+`set_user_pref(uid, key, val)`. Callback `r:cfg:{key}` toggla (verde=ON/vermelho=OFF).
 
-**Migration v11:** cols `royal_plus_until` + `royal_plus_charge_id` em `players`.
-
-**Aplicação dos perks:**
-- ✅ `now < royal_plus_until` aplicado nos hot paths de XP (`premium_xp_active` →
-  `*1.20`), junto com o boost do M01.
-- ✅ **Badge violeta no profile card** — `ProfileCardData.royal_plus` (populado por
-  `_royal_plus_active(p)` em `build_profile_card_data`) → tag `[ PLUS+ ]` em MAGENTA
-  no topo do bloco de info, right-aligned (sem colidir com o nome). Entra na cache_key
-  do render e no `_profile_card_data_hash`. Coexiste com a skin dourada (frame GOLD +
-  badge violeta ao mesmo tempo).
-- ⛔ **Slot extra de casório — BLOQUEADO (não é "aplicação de perk", é feature nova):**
-  o código **não tem limite de slot por usuário**. `user_is_available` só checa
-  `opt_out=0 AND last_seen>=48h`; `pick_couple` só exclui pares repetidos (`pair_recently_used`,
-  72h). Não existe regra "1 casório ativo por user" pra estender. Aplicar exigiria
-  **primeiro criar um limite** (nerf em TODOS os users free, que hoje pareiam sem teto)
-  e então deixar o Royal Plus burlá-lo — decisão de produto/balance, não wiring. Não
-  implementado sem inventar mecânica.
-
-## 💡 M03 — Dica paga da PALAVRA
-
-Comando `/royalpaldica` (DM ou grupo). Consome 1 crédito de `prm_hints` (coluna em `players`, populada por compra Stars do item `prm_hint` em M01 — 1⭐ por crédito).
-
-**Fluxo:**
-1. Resolve grupo via `resolve_dm_chat`, lê `get_active_challenge`.
-2. Decrementa `prm_hints` com `UPDATE … WHERE prm_hints>0` (atomic, evita double-spend).
-3. Escolhe posição alfabética aleatória, revela letra.
-4. Envia na DM com `EFFECT_FIRE`; fallback `<tg-spoiler>` no chat atual se DM falhar.
-
-Compra de créditos: `/royalloja` → 💎 Premium → 💡 Dica da Palavra.
-
-## 🎁 M02 — Presentes (gifts de florins)
-
-Comando `/royalpresentear` (grupo-only). Transferencia atomica de florins entre players.
-
-**Uso:**
-- `/royalpresentear @user 100` — explicito
-- Reply na msg do destinatario + `/royalpresentear 100` — implícito
-
-**Limites:** `GIFT_MIN=10`, `GIFT_MAX=5000` (em `main.py`). Bloqueia self-gift, valida saldo, transação atomica com `UPDATE … WHERE gold>=?` pra evitar race.
-
-**Migration v12:** tabela `gifts` (ledger auditavel: from_user, to_user, amount, sent_at).
-
-Conquista `generoso` desbloqueada no 1º presente enviado.
-
-## 🏅 M11 — Conquistas (Achievements)
-
-**11 slugs MVP** em `ACHIEVEMENTS` dict (`main.py`): primeiro_acerto, dez_acertos, cem_acertos, primeiro_boss, lvl_dez/vinte_cinco/cinquenta, primeiro_amor, mecenas, nobreza, generoso.
-
-**API:** `unlock_achievement(chat_id, uid, slug)` — idempotente via PK `(chat_id, user_id, slug)`. Retorna True só na 1ª unlock + dispara notificação DM (`_notify_achievement_dm`) com `EFFECT_PARTY`.
-
-**Triggers wired:**
-- `award_xp_immediate` (level-up) → `check_level_achievements` (lvl 10/25/50)
-- `attempt_word` (PALAVRA win) → `check_palavra_achievements` (1/10/100, count via challenges WHERE status='won')
-- `finalize_boss` → `primeiro_boss` pra cada atacante
-- `assign_couple` → `primeiro_amor` pros 2 noivos
-- `_grant_premium_perk` → `nobreza` (royal_plus) ou `mecenas` (one-shot)
-- `/royalpresentear` → `generoso`
-
-**Comando:** `/royalconquistas` — lista do user no chat ativo, locked com `🔒 <s>tachado</s>`.
-
-**Migration v12:** tabela `achievements` + índice por user_id.
-
-## ⚙️ M19 — Preferências do user (`/royalconfig`)
-
-Flags persistidas em `user_dm_settings.prefs_json` (TEXT JSON; migration v12).
-
-**Flags MVP (`USER_PREFS_DEFAULTS`):**
 | key | default | efeito |
 |---|---|---|
-| `silent_levelup` | False | suprime card de level-up na DM (check em `_schedule_levelup_dm`) |
-| `hide_rank` | False | reservado (wiring no Sprint 5 — filtrar do ranking) |
-| `palavra_ping` | True | reservado (ping de spawn na DM, futuro) |
+| `silent_levelup` | False | suprime card de level-up na DM (`_schedule_levelup_dm`) |
+| `hide_rank` | False | reservado (futuro — filtrar do ranking) |
+| `palavra_ping` | True | reservado (ping de spawn na DM) |
 
-**API:** `get_user_prefs(uid)` retorna dict merged com defaults; `set_user_pref(uid, key, val)` upsert.
+### 🗺️ Quests diárias — `/royalmissoes` (M05)
+4 missões em `DAILY_QUESTS`, reset por dia (`today_key()`):
 
-**Comando:** `/royalconfig` — InlineKeyboard com 1 botão por flag (estilo verde=ON, vermelho=OFF). Callback `r:cfg:{key}` toggla e re-renderiza.
-
-## 🗺️ M05 — Quests diárias (`/royalmissoes`)
-
-4 missões diárias em `DAILY_QUESTS` (`main.py`), reset automático por dia (chave `today_key()`):
 | id | evento | target | recompensa |
 |---|---|---|---|
-| `msgs` 💬 | message | 20 msgs | +60 XP +30🪙 |
-| `palavra` 🎯 | palavra_win | 1 acerto | +80 XP +50🪙 |
-| `boss` 🐉 | boss_hit | 3 hits | +50 XP +40🪙 |
-| `social` 👍 | reaction | 5 reactions | +30 XP +20🪙 |
+| `msgs` 💬 | message | 20 | +60 XP +30🪙 |
+| `palavra` 🎯 | palavra_win | 1 | +80 XP +50🪙 |
+| `boss` 🐉 | boss_hit | 3 | +50 XP +40🪙 |
+| `social` 👍 | reaction | 5 | +30 XP +20🪙 |
 
-**API:** `quest_bump(chat_id, uid, event, n=1)` incrementa progresso (cap no target, atomic via `MIN(progress+?, ?)`). Só roda em grupo (`chat_id<0`). `get_quest_state(chat_id, uid)` retorna lista com progress/done/claimed.
+- `quest_bump(chat_id, uid, event, n)` incrementa (cap atomic `MIN(progress+?, ?)`, só grupo).
+  Claim via `r:quest:{id}` (`UPDATE … WHERE progress>=target AND claimed=0`).
+- **Triggers:** `track()` · `attempt_word` win · `boss_attack` · `on_message_reaction`.
+- **Migration v13:** tabela `quest_progress` (PK `chat_id,user_id,day,quest_id`).
 
-**Triggers wired:** `track()` (message) · `attempt_word` win (palavra_win) · `boss_attack` (boss_hit) · `on_message_reaction` (reaction).
+### 👍 Reactions = XP (M06)
+Reagir com emoji em grupo dá `REACTION_XP=3`, cap diário `REACTION_XP_DAILY_CAP=10`/user/chat.
+- Handler `@dp.message_reaction` (`on_message_reaction`) — só premia ao ADICIONAR
+  (`len(new)>len(old)`), respeita mute, conta no cap, XP via `award_xp_immediate` + quest `social`.
+- ⚠️ Requer `allowed_updates` com `message_reaction` — resolvido em `main()` via
+  `dp.resolve_used_update_types()`.
+- **Migration v13:** tabela `reaction_xp_daily` (PK `chat_id,user_id,day`).
 
-**Comando:** `/royalmissoes` (DM/grupo via `resolve_dm_chat`) — barra de progresso + botão **Resgatar** (verde) por missão concluída. Callback `r:quest:{id}` faz claim atômico (`UPDATE … WHERE progress>=target AND claimed=0`), concede XP+gold.
+### 🎉 Eventos sazonais — `/royalevento` (M09)
+Boost de XP global por data, sem DB — `SEASONAL_EVENTS`:
 
-**Migration v13:** tabela `quest_progress` (PK `chat_id,user_id,day,quest_id`).
-
-## 👍 M06 — Reactions = XP
-
-Reagir com emoji a qualquer mensagem de grupo dá `REACTION_XP=3` XP, cap diário `REACTION_XP_DAILY_CAP=10` por user/chat.
-
-**Handler:** `@dp.message_reaction` (`on_message_reaction`) — só premia quando ADICIONA reaction (`len(new) > len(old)`), respeita mute, conta no cap (`reaction_xp_daily`), concede XP via `award_xp_immediate` + bump da quest `social`.
-
-⚠️ **Requer `allowed_updates` com `message_reaction`** — resolvido automaticamente em `main()` via `dp.resolve_used_update_types()` passado pro `start_polling`.
-
-**Migration v13:** tabela `reaction_xp_daily` (PK `chat_id,user_id,day`).
-
-## 🎉 M09 — Eventos sazonais (boost de XP) — `/royalevento`
-
-Boost de XP global por data, sem DB — pura lógica em `SEASONAL_EVENTS` (`main.py`):
 | evento | data | mult |
 |---|---|---|
 | 🎆 Reveillon Real | 31/12–01/01 | 2.0× |
@@ -282,175 +200,154 @@ Boost de XP global por data, sem DB — pura lógica em `SEASONAL_EVENTS` (`main
 | ❤️ Dia dos Namorados | 12/06 | 1.5× |
 | 🍻 Fim de Semana Real | sáb/dom (fallback) | 1.5× |
 
-**API:** `active_seasonal_event(d=None)` (datas especiais > FDS) · `event_xp_mult()` retorna float. Aplicado em `award_xp_immediate` e `award_xp_message` (depois dos bônus de classe/casamento).
+API `active_seasonal_event(d=None)` (datas especiais > FDS) · `event_xp_mult()`. Aplicado em
+`award_xp_immediate` e `award_xp_message` (após bônus de classe/casamento).
 
-**Comando:** `/royalevento` — mostra evento ativo (ON-AIR/OFFLINE).
+### 🔇 `/royalmudo` — master switch (owner)
+- **Grupo** (owner): toggle do chat (ON/OFF).
+- **DM do owner:** broadcast — se qualquer grupo está ON-AIR, silencia TODOS; se todos mudos,
+  religa TODOS. Log `[MUDO] BROADCAST actor=<uid> new_state=ON|OFF total=N changed=M`.
 
-## 🔧 Env vars
+### 📜 `/royallog` — dump de logs (owner) + auto 5min
+- Ring buffer in-memory `_LogRingBuffer` (maxlen 5000) no root logger (captura bot + aiogram).
+- `/royallog` (owner, off-menu): snapshot → DM do owner como `.log` + atualiza gist (se
+  `GH_TOKEN`). Ack auto-deletado em 12s no grupo.
+- Job `log_dump_job()` a cada `LOG_DUMP_INTERVAL_SEC`: file silent p/ DM + PATCH no gist secreto
+  (`public:false`, cap 500KB). Failsafe: DM falha → loga e segue; sem token → no-op.
+- Desligar tudo: `LOG_DUMP_ENABLED=0`.
 
-- `BOT_TOKEN` (obrigatório) — token do BotFather
-- `DATABASE_PATH` (opcional, default `./data/royal_casorios.sqlite3`;
-  **no Railway use `/data/royal_casorios.sqlite3` com volume mountado —
-  ver seção "Persistência de dados" acima**)
-- `TZ` (opcional, default `America/Sao_Paulo`)
-- `AUTO_HOURS` (opcional, default `9,15,21`)
-- **`TEST_CHAT_IDS`** (opcional, comma-separated) — chat_ids de grupos de
-  teste. Esses grupos **não** aparecem no picker de DM nem no fallback
-  do inline mode. Ex.: `TEST_CHAT_IDS="-1001234567890,-1009876543210"`
-- **`OWNER_USER_ID`** (recomendado) — user_id do dono. Habilita `/royallog`, `/royalmudo`, `/royalpalavratest`. Sem isso, comandos owner-only ficam inacessíveis (modo seguro).
-- **`GH_TOKEN`** (opcional) — Personal Access Token do GitHub com scope `gist`. Habilita upload automático dos logs pro gist secreto a cada 5min. Sem isso, só DM do owner recebe.
-- **`LOG_DUMP_INTERVAL_SEC`** (opcional, default `300`) — intervalo entre dumps automáticos.
-- **`LOG_DUMP_ENABLED`** (opcional, default `1`) — `0` desliga o job de auto-dump (mantém `/royallog` manual).
-- **`LOG_JSON`** (opcional, default `0`) — `1` faz o stdout root sair em JSON (1 linha por record com `ts`/`lvl`/`logger`/`msg` + extras + `exc`). Ring buffer de `/royallog` **sempre** sai em texto humano (independe da flag). Ativa em Railway pra ingest em Logtail/Better Stack/Loki/etc.
-- **`STASH_CHAT_ID`** (opcional, override) — chat_id de canal privado
-  pra upload silencioso do **identity card**. **Hardcoded** em
-  `main.py` como `-1003941532741` (canal privado só do dono +
-  bot). Só seta a env var se precisar trocar o canal.
-- **`PORT`** (opcional) — se setado, sobe o **health server HTTP** (F13)
-  em `0.0.0.0:$PORT` com `GET /health`. Railway injeta automaticamente
-  quando o serviço tem healthcheck. Sem `PORT`, o server é no-op (worker
-  puro não precisa).
-- **`HEALTH_STALE_SEC`** (opcional, default `600`) — `/health` retorna
-  `503` se não recebeu nenhuma update do Telegram nesse intervalo
-  (detecta `getUpdates` travado sem o processo crashar).
-- **`BACKUP_ENABLED`** (opcional, default `1`) — `0` desliga o backup
-  diário do DB (F10).
-- **`BACKUP_HOUR`** (opcional, default `3`) — hora local do backup diário.
-- **`BACKUP_RETENTION_DAYS`** (opcional, default `7`) — quantos dias de
-  backups manter em `<DB_DIR>/backups/`.
+---
 
-## 🛡️ Infra hardening (F-series — correções de escala/robustez)
+## 💎 Premium · Telegram Stars (M01 + M04 + M03)
 
-> Itens da PARTE 1 do `ROADMAP.md`. Estado **real** (auditado no código,
-> não no roadmap, que está desatualizado).
+Pagamento via **Telegram Stars (XTR)** — sem gateway externo, sem provider_token. Acesso:
+`/royalloja` → **💎 Premium**.
 
-- **F10 · Backup automático** (`/royalbackup` owner + `backup_job`):
-  `VACUUM INTO <DB_DIR>/backups/YYYY-MM-DD.sqlite3` diário em `BACKUP_HOUR`
-  (default 3h local), precedido de `PRAGMA integrity_check` (não salva DB
-  corrompido). Retenção `BACKUP_RETENTION_DAYS`. Sobe o dump pro
-  `STASH_CHAT_ID` (Telegram = storage grátis) com `disable_notification`.
-  Usa **conexão sqlite separada** pra não tocar o cursor global. Comando
-  manual `/royalbackup` (owner-only, off-menu) gera + reporta agora.
-- **F11 · Migrations transacionais** (`run_migrations`): cada migration
-  roda em `BEGIN … COMMIT`; falha no meio → `ROLLBACK` + aborta boot, sem
-  deixar schema em estado intermediário (o `user_version` só avança no
-  sucesso).
-- **F13 · Health endpoint HTTP** (`start_health_server` + `/health`):
-  checa DB ping (`SELECT 1`), staleness de updates e `user_version`.
-  Middleware `_track_last_update` (outer, em toda update) alimenta o
-  timer. Só sobe se `PORT` setado.
-- **F14 · Graceful shutdown** (`@dp.shutdown` → `_on_shutdown`): aiogram
-  já trata SIGTERM/SIGINT (`handle_signals=True`); o hook faz
-  `flush_buffers_once()` + fecha health server + `db.commit()/close()`.
-- **Já feitos (verificados no código):** F03, F04 (semaphore de render),
-  F05, F06, F07 (`with_retry`), F08 (softban anti-spam), F12 (logs JSON
-  via `LOG_JSON`), F15 (alerta de typing), F16, F17, F18 (`next_royal_id`
-  à prova de colisão via UNIQUE index), F19 (cache de avatar em disco),
-  F20.
-- **F01/F02 (escala — auditados):** o cursor global (`cur`) é **seguro
-  no design atual** — em asyncio single-thread não há `await` entre
-  `execute` e `fetch`, logo handlers não interleavam no cursor; e
-  **nenhum** `to_thread` toca `cur`/`db` (todos chamam renders puros que
-  recebem `data` pré-buscado, ou `_do_backup_sync` com conexão separada).
-  "database is locked" já é mitigado por `PRAGMA journal_mode=WAL` +
-  `busy_timeout=5000` + `synchronous=NORMAL` (setados em
-  `setup_connection`). O rewrite completo pra `aiosqlite` (214 call
-  sites) **não foi feito**: é alto risco e exige teste em runtime (não
-  disponível nesta workspace) — deve ser feito como esforço dedicado e
-  testável, não cego em produção.
+### Itens avulsos (`PREMIUM_ITEMS`)
+| Item | Stars | Perk em `players` |
+|---|---|---|
+| ⚡ Boost +20% XP (24h) | 50⭐ | `xp_boost_until` (ISO) |
+| 💡 Dica da Palavra | 1⭐ | `prm_hints` (contador) |
+| 🔱 Ressurreição no Boss | 10⭐ | `prm_ressurrects` (contador) |
+| 🥇 Skin Dourada permanente | 100⭐ | `prm_skin_gold` (0/1) |
 
-## 🪪 Identity Card (inline mode)
+### Assinatura (`SUBSCRIPTIONS`)
+| Perk | Stars | Colunas |
+|---|---|---|
+| 🌟 Royal Plus — +20% XP + badge violeta | 50⭐/mês | `royal_plus_until` (ISO), `royal_plus_charge_id` |
 
-Cada player tem um **identity card 1080×1080 fixo** (só avatar + ROY#ID
-+ nome — sem level/XP/stats). Gerado 1x no `ensure_player` e regenerado
-**apenas** quando muda nome ou avatar.
+Royal Plus usa `sendInvoice(subscription_period=2592000)` (30 dias — único valor aceito em XTR).
+Renovação automática gerenciada pelo Telegram; cancelamento no app (Settings → My Stars →
+Subscriptions). Bot só observa: `now > royal_plus_until` → perks param.
 
-**Triggers de regen:**
-- Player novo (em `ensure_player`) → fire-and-forget render.
-- Sweep diário em `identity_card_sweep_job()` (~3h local) → compara
-  `inline_card_hash` salvo com `_identity_card_hash(name, avatar_slug)`
-  atual; regenera onde divergiu. Throttle: 1 upload/s.
+### Fluxo técnico
+1. Callback `r:xtr:{iid}` (avulso) / `r:sub:royal_plus` → `bot.send_invoice(currency="XTR", …)`.
+2. `pre_checkout_handler` aceita prefixos `prm|` (avulso) e `sub|` (assinatura), valida amount/item.
+3. `successful_payment_handler` grava em `stars_purchases` (idempotente por `charge_id`), concede
+   via `_grant_premium_perk()`. Assinatura: lê `sp.subscription_expiration_date` → `royal_plus_until`;
+   renovações chegam mensalmente (`is_recurring=True`, novo charge_id, tratadas igual).
+- **Migrations:** v10 (cols premium + `stars_purchases`), v11 (`royal_plus_until` +
+  `royal_plus_charge_id`).
 
-**Storage:** colunas `inline_card_file_id` + `inline_card_hash` em
-`players` (migration v5). Hash = `sha1(name|avatar_slug)[:16]`.
+### Dica paga da Palavra — `/royalpaldica` (M03)
+Consome 1 crédito `prm_hints` (`UPDATE … WHERE prm_hints>0`, anti double-spend), revela 1 letra
+alfabética aleatória. DM com `EFFECT_FIRE`; fallback `<tg-spoiler>` no chat se DM falhar.
 
-**Upload silencioso:** `ensure_identity_card_async` faz `send_photo`
-pro `STASH_CHAT_ID` com `disable_notification=True`, captura o
-`file_id` da resposta e salva no DB. Sem `STASH_CHAT_ID` configurado,
-o sweep loga e pula (no-op gracioso).
+### Aplicação dos perks — estado real
+- ✅ **XP boost / Royal Plus** — `premium_xp_active(player)` checa `now < xp_boost_until` OU
+  `now < royal_plus_until` → `*1.20` (`PREMIUM_XP_BUFF`) em `award_xp_immediate` e
+  `award_xp_message` (após classe/casamento, antes do evento sazonal).
+- ✅ **`prm_hints`** — consumido em `/royalpaldica`.
+- ✅ **`prm_skin_gold`** — moldura GOLD + tag `[ * OURO * ]` (`ProfileCardData.skin_gold`); entra
+  na cache_key do render + `_profile_card_data_hash`.
+- ✅ **Badge violeta Royal Plus** — tag `[ PLUS+ ]` MAGENTA no card (`_royal_plus_active`);
+  coexiste com a skin dourada.
+- ⛔ **`prm_ressurrects` — BLOQUEADO (feature nova, não wiring):** o combate de boss não tem
+  mecânica de morte do player (HP e corações no card são **cosméticos**, não há HP de combate,
+  derrota ou hook de revive). Aplicar exigiria desenhar do zero HP de combate, contra-ataque,
+  morte, lockout e revive — com balance inventado. Não implementado. **O item ainda é vendível
+  na loja mas não tem efeito** (pendência de produto).
+- ⛔ **Slot extra de casório — BLOQUEADO (feature nova, não wiring):** o código não tem limite de
+  slot por usuário (`user_is_available` só checa opt_out+last_seen; `pick_couple` só evita pares
+  repetidos). Aplicar exigiria primeiro CRIAR um limite (nerf em todos os free) e deixar o Plus
+  burlá-lo — decisão de produto. **Por isso a copy do Royal Plus NÃO menciona slot extra.**
 
-**Inline mode:** `inline_profile` prefere `inline_card_file_id` do DB
-quando existe; mantém também os results antigos (profile card + texto)
-como fallback.
+---
 
-## 💬 DM + inline mode
+## 🛡️ Infra hardening (F-series)
 
-- Os comandos pessoais (`/royalperfil`, `/royalficha`, `/royalranking`,
-  `/royalinventario`, `/royalsaldo`, `/royalmeuscasorios`, configs) rodam
-  tanto em grupo quanto em DM. Em DM, o bot resolve o "grupo ativo" via
-  `user_dm_settings` (migration v4).
-- 1 grupo elegível → auto-seleciona. 2+ → mostra picker. Troca via
-  `/royalgrupo`.
-- **Inline mode** (`@nomedobot` em qualquer chat) envia o card de perfil.
-  Usa file_id cacheado em memória populado quando `send_profile_card`
-  roda; sem cache, fallback texto + botão "Gerar foto na DM".
-- ⚠️ Inline mode **precisa estar habilitado no BotFather**:
-  `/setinline` → texto placeholder (ex.: "Enviar meu perfil Royal").
-  Sem isso o Telegram não dispara `inline_query`.
+> Estado **real** (auditado no código; o `ROADMAP.md` está desatualizado).
+
+- **F10 · Backup** (`/royalbackup` owner + `backup_job`): `VACUUM INTO
+  <DB_DIR>/backups/YYYY-MM-DD.sqlite3` diário em `BACKUP_HOUR`, precedido de
+  `PRAGMA integrity_check` (não salva DB corrompido). Retenção `BACKUP_RETENTION_DAYS`. Sobe o
+  dump pro `STASH_CHAT_ID` (silent). Conexão sqlite separada (não toca o cursor global).
+- **F11 · Migrations transacionais** (`run_migrations`): cada migration em `BEGIN…COMMIT`; falha
+  → `ROLLBACK` + aborta boot (o `user_version` só avança no sucesso).
+- **F13 · Health endpoint** (`start_health_server` + `/health`): DB ping (`SELECT 1`), staleness
+  de updates, `user_version`. Middleware `_track_last_update` alimenta o timer. Só sobe se `PORT`.
+- **F14 · Graceful shutdown** (`@dp.shutdown` → `_on_shutdown`): aiogram trata SIGTERM/SIGINT;
+  hook faz `flush_buffers_once()` + fecha health server + `db.commit()/close()`.
+- **Já feitos (verificados):** F03, F04 (semaphore de render), F05, F06, F07 (`with_retry`),
+  F08 (softban anti-spam), F12 (logs JSON via `LOG_JSON`), F15 (alerta de typing), F16, F17,
+  F18 (`next_royal_id` à prova de colisão via UNIQUE index), F19 (cache de avatar em disco), F20.
+- **F01/F02 (escala — auditados):** o cursor global (`cur`) é **seguro no design atual** — asyncio
+  single-thread, sem `await` entre `execute` e `fetch`, e nenhum `to_thread` toca `cur`/`db`.
+  "database is locked" mitigado por `journal_mode=WAL` + `busy_timeout=5000` +
+  `synchronous=NORMAL` (em `setup_connection`). O rewrite p/ `aiosqlite` (214 call sites) **não
+  foi feito**: alto risco, exige teste em runtime (indisponível aqui) — esforço dedicado, não cego.
+
+---
+
+## 💬 DM, inline mode & identity card
+
+**Comandos pessoais em DM:** `/royalperfil`, `/royalficha`, `/royalranking`, `/royalinventario`,
+`/royalsaldo`, `/royalmeuscasorios`, configs rodam em grupo E na DM. Na DM o bot resolve o "grupo
+ativo" via `user_dm_settings` (migration v4): 1 grupo → auto; 2+ → picker; troca via `/royalgrupo`.
+
+**Inline mode** (`@nome_do_bot` em qualquer chat): envia o card de perfil. Usa file_id cacheado
+em memória (populado quando `send_profile_card` roda); sem cache → fallback texto + botão "Gerar
+foto na DM". ⚠️ Precisa estar habilitado no BotFather (`/setinline` com placeholder).
+
+**Identity card** (1080×1080 fixo: só avatar + ROY#ID + nome): gerado 1× no `ensure_player`,
+regenerado só ao mudar nome/avatar.
+- Triggers: player novo (fire-and-forget) + sweep diário `identity_card_sweep_job()` (~3h local;
+  compara `inline_card_hash` salvo vs `_identity_card_hash(name, avatar_slug)`; throttle 1 upload/s).
+- Storage: cols `inline_card_file_id` + `inline_card_hash` (migration v5; hash =
+  `sha1(name|avatar_slug)[:16]`). Upload silencioso via `ensure_identity_card_async` →
+  `STASH_CHAT_ID` (`disable_notification`). Sem `STASH_CHAT_ID` → no-op gracioso.
+
+---
 
 ## 📋 Menus (BotCommands)
 
-Registrados em `register_bot_commands()` em `main.py`. Telegram atualiza
-o autocomplete `/` automaticamente na 1ª inicialização com novo token.
+Registrados em `register_bot_commands()`. Telegram atualiza o autocomplete `/` na 1ª inicialização
+com novo token. Se trocou `BOT_TOKEN` e o menu antigo persiste, reinicie o bot 1× (reescreve os
+dois scopes).
 
-**Grupo** (`BotCommandScopeAllGroupChats`): `royal`, `royalperfil`,
-`royalficha`, `royalavatar`, `royalup`, `royalclasse`, `royalinventario`,
-`royalloja`, `royalsaldo`, `royalranking`, `royalpalavra`, `royalboss`,
-`royalcasorios`, `royalmeuscasorios`, `royalencalhar`, `royaldesencalhar`,
-`royalcasar` (admin), `royalativar` (admin), `royaltutorial`, `royalajuda`.
+- **Grupo** (`BotCommandScopeAllGroupChats`): `royal`, `royalperfil`, `royalficha`, `royalavatar`,
+  `royalup`, `royalclasse`, `royalinventario`, `royalloja`, `royalsaldo`, `royalranking`,
+  `royalpalavra`, `royalboss`, `royalcasorios`, `royalmeuscasorios`, `royalencalhar`,
+  `royaldesencalhar`, `royalcasar` (admin), `royalativar` (admin), `royaltutorial`, `royalajuda`.
+- **DM** (`BotCommandScopeAllPrivateChats`): `royal`, `royalperfil`, `royalavatar`, `royalficha`,
+  `royalranking`, `royalinventario`, `royalsaldo`, `royalmeuscasorios`, `royalgrupo`,
+  `royaltutorial`, `royalajuda`, `royalprivacidade`, `royaldados`.
 
-**DM** (`BotCommandScopeAllPrivateChats`): `royal`, `royalperfil`,
-`royalavatar`, `royalficha`, `royalranking`, `royalinventario`,
-`royalsaldo`, `royalmeuscasorios`, `royalgrupo`, `royaltutorial`,
-`royalajuda`, `royalprivacidade`, `royaldados`.
+---
 
-> 💡 Se você trocou o `BOT_TOKEN` e o menu antigo persiste, basta reiniciar
-> o bot uma vez — `register_bot_commands()` reescreve os dois scopes.
+## 🎛️ UI: botões coloridos (Bot API 10) + helpers UX
 
-## User preferences
-- **Versões fixas (regra do usuário):**
-  - **Telegram Bot API: 10** — usar sempre, não fazer downgrade
-  - **aiogram: 3.28.2** (última estável, lançada em 10/05/2026)
-- **Sincronia obrigatória com o código:** sempre que mexer no bot, **revisar e atualizar quando aplicável**:
-  - `/start` (handler `start_cmd` em `main.py`) — lista de rotas pessoais e inline mode
-  - `/royalajuda` (constante `ROYAL_HELP` em `main.py`) — manual completo de comandos
-  - `/royaltutorial` (`send_tutorial()` + `ROYAL_TUTORIAL_PARTS` em `main.py`)
-    — tutorial didático em 6 partes (cada parte = 1 mensagem, respeitando o
-    limite de 4096 chars do Telegram). `send_tutorial(message)` envia todas as
-    partes em sequência; usado por `/start`, `/royaltutorial`, `/royalajuda`,
-    `/help` e o botão "📖 Tutorial".
-  - `replit.md` — seções de env vars, persistência, doutrina visual, menus
-  - `register_bot_commands()` (BotCommands do menu `/`) — se adicionou comando novo
-  Se a mudança for puramente infra interna (cache, retry, log format), só atualizar `replit.md` (e mencionar no commit que /start/help/tutorial foram auditados e não precisaram mudar).
+> 🧠 **MEMÓRIA PERMANENTE (não reverter):** botões coloridos nativos EXISTEM no Bot API 10 /
+> aiogram 3.28.2 via campo `style`. Já em produção. Se algum agente afirmar "não existe", está
+> errado — ver https://docs.aiogram.dev/en/latest/api/enums/button_style.html
 
-## 🎛️ UI: botões coloridos (Bot API 10) + helpers de UX
+`InlineKeyboardButton` e `KeyboardButton` têm `style=`:
+- `'success'` → verde · `'danger'` → vermelho · `'primary'` → azul · omitido → tema do cliente.
+- ⚠️ **Não existe `'warning'`/amarelo nativo** — pra essa categoria só emoji ⚠️.
 
-> 🧠 **MEMÓRIA PERMANENTE (não esquecer / não reverter):** Botões coloridos nativos EXISTEM no Bot API 10 / aiogram 3.28.2 via campo `style`. Já implementado e em produção. Se algum agente futuro afirmar "não existe", está errado — consultar `https://docs.aiogram.dev/en/latest/api/enums/button_style.html`.
+**Convenção (constantes `main.py:575-584` — usar SEMPRE em par emoji+style):**
 
-### ✅ Bot API 10 SUPORTA botão colorido nativo
-`InlineKeyboardButton` e `KeyboardButton` têm o campo `style=` (aiogram 3.28.2):
-- `'success'` → **verde**
-- `'danger'` → **vermelho**
-- `'primary'` → **azul**
-- omitido → cor padrão do tema do cliente
-
-Doc: https://docs.aiogram.dev/en/latest/api/enums/button_style.html
-
-⚠️ **Não existe `'warning'`/amarelo nativo** — pra essa categoria usamos só emoji ⚠️.
-
-### Convenção (constantes em `main.py:575-584` — usar SEMPRE em par emoji+style)
-
-| Constante emoji | Constante style | Cor | Uso |
+| Emoji | Style | Cor | Uso |
 |---|---|---|---|
 | `BTN_OK` ✅ | `STYLE_OK` `"success"` | verde | confirmar / aplicar / ir |
 | `BTN_NO` ❌ | `STYLE_NO` `"danger"` | vermelho | cancelar / fechar / destrutivo |
@@ -459,71 +356,53 @@ Doc: https://docs.aiogram.dev/en/latest/api/enums/button_style.html
 | `BTN_BACK` ◀️ | — | neutro | voltar |
 | `BTN_GO` ▶️ | — | neutro | avançar |
 
-### Helper `ikb()` em `main.py:587`
-```python
-ikb(f"{BTN_OK} Confirmar", callback_data="x", style=STYLE_OK)
-```
-Atalho que aceita `style=` opcional. Emoji líder mantido como fallback pra clientes antigos + acessibilidade (leitores de tela, modo monocromo).
+**Helper `ikb()` (`main.py:587`):** `ikb(f"{BTN_OK} Confirmar", callback_data="x", style=STYLE_OK)`.
+Emoji líder mantido como fallback p/ clientes antigos + acessibilidade.
 
-### Helpers de UX em `main.py` (usar SEMPRE quando aplicável)
-- `await auto_delete_after(msg, delay=8.0)` — agenda exclusão automática. Ideal para acks efêmeros (rate-limit, "sem pontos", warnings) que poluem chat de grupo.
-- `await react_to(chat_id, message_id, emoji)` — bot reage com emoji ao comando do user (Bot API 7.0+). Feedback instantâneo antes da resposta completa renderizar. Whitelist do Telegram aplica.
-- `await type_then_send(chat_id, text, delay=1.2, action="typing")` — mostra "... digitando" por N segundos antes de enviar. Para fotos: `action="upload_photo"`.
-- `await safe_typing(chat_id, action)` — só dispara chat action, sem delay.
+**Helpers de UX (`main.py` — usar quando aplicável):**
+- `auto_delete_after(msg, delay=8.0)` — agenda exclusão (acks efêmeros que poluem grupo).
+- `react_to(chat_id, message_id, emoji)` — bot reage ao comando (feedback instantâneo).
+- `type_then_send(chat_id, text, delay=1.2, action="typing")` — "digitando" N s antes de enviar
+  (fotos: `action="upload_photo"`).
+- `safe_typing(chat_id, action)` — só dispara chat action, sem delay.
 - `**effect_kw(chat.type, EFFECT_*)` — sparkles/fire/heart em DM 1:1 (Bot API 7.7).
+
+---
 
 ## 🎨 Identidade visual — Retro-futurist dystopian
 
-Tudo que o bot envia segue essa linguagem (texto **e** imagens).
+Tudo que o bot envia (texto **e** imagens) segue essa linguagem.
 
-### Conceito
-- **8-bit retrô** (terminal CRT velho, monospace, ASCII art)
-- **Futurista** (`>>`, `//`, `[BRACKETS]`, `ID#0042`, `v0.1.ALPHA`)
-- **Dark/dystopian** (paleta sempre escura, cores ácidas como acento, sem brilho moderno)
-- **Cores variando por player** — cada `royal_id` recebe uma paleta consistente (TOXIC, AMBER, PLASMA, ARCTIC, BIOLAB, BLOOD)
+**Conceito:**
+- **8-bit retrô** (terminal CRT velho, monospace, ASCII art).
+- **Futurista** (`>>`, `//`, `[BRACKETS]`, `ID#0042`, `v0.1.ALPHA`).
+- **Dark/dystopian** (paleta sempre escura, cores ácidas como acento).
+- **Cor por player** — cada `royal_id` recebe paleta consistente (TOXIC, AMBER, PLASMA, ARCTIC,
+  BIOLAB, BLOOD).
 
-### Quando gerar imagem (caro/lento) vs caption (rápido)
-- **Card 1080×1080:** só pra momentos de destaque (perfil, ranking pódio, casório, boss derrotado).
-- **Caption / texto puro:** padrão pra TODO o resto. Usar `term_block()` e `term_pre()` (em `main.py`).
-- Cards usam `asyncio.to_thread(render_xxx_card, ...)` pra não travar o loop.
+**Imagem (cara/lenta) vs caption (rápida):**
+- Card 1080×1080: só momentos de destaque (perfil, pódio, casório, boss derrotado). Renderizado
+  via `asyncio.to_thread(render_xxx_card, ...)`.
+- Caption / texto puro: padrão p/ todo o resto, via `term_block()` / `term_pre()`.
 
-### Voz padrão (texto puro)
-Use os helpers em `main.py`:
-- `term_block(title, body, status="OK", status_color="ACID|HOT|AMBER|CYAN", stamp=None)` — header `> TITLE.SYS // STATUS` + corpo + stamp opcional
-- `term_pre(rows)` — tabela monospace `KEY :: VALUE` em `<pre>`
+**Voz padrão (helpers em `main.py`):**
+- `term_block(title, body, status="OK", status_color="ACID|HOT|AMBER|CYAN", stamp=None)` — header
+  `> TITLE.SYS // STATUS` + corpo + stamp opcional.
+- `term_pre(rows)` — tabela monospace `KEY :: VALUE` em `<pre>`.
+- Tom: título CAPS `PALAVRA.SYS`; prefixos `>` (saída), `>>` (sub-comando), `//` (comentário),
+  `!!` (alerta); status `OK`/`CONECTADO`/`CONFIG`/`ALERTA`/`OFFLINE`; stamp final em itálico `[…]`.
 
-Convenções de tom:
-- Título em CAPS, formato `PALAVRA.SYS`
-- Prefixos: `>` (saída do terminal), `>>` (sub-comando), `//` (comentário), `!!` (alerta)
-- Status: `OK`, `CONECTADO`, `CONFIG`, `ALERTA`, `OFFLINE`, etc.
-- Stamp final em itálico entre `[ ... ]`
+**HTML do Telegram (usar tudo):** `<b> <i> <u> <s> <code> <pre> <a> <blockquote>
+<blockquote expandable> <tg-spoiler>`. Caption de foto tem **limite de 1024 chars** — sempre
+guardar no código.
 
-### Formatação HTML do Telegram (usar TUDO)
-`<b>` `<i>` `<u>` `<s>` `<code>` `<pre>` `<a>` `<blockquote>` `<blockquote expandable>` `<tg-spoiler>`
+**Efeitos (Bot API 7.7, só DM 1:1 — `effect_kw(chat_type, EFFECT_*)`):** `EFFECT_PARTY` 🎉
+(boas-vindas, ganhar Palavra), `EFFECT_FIRE` 🔥 (dano crítico, golpe final), `EFFECT_HEART` ❤️
+(casório), `EFFECT_THUMBS_UP`, `EFFECT_POO`, `EFFECT_THUMBS_DOWN`.
 
-Caption de foto tem **limite de 1024 chars** — sempre incluir guarda no código.
+**Paleta dystopian (`royal_render.py`):** `BG_DEEP` `#0C0A0E` (vazio), `BG` `#16121A` (painel),
+`INK` `#D2C4A8` (texto bone), `DIM` `#706054` (secundário); acentos rotativos `HOT`, `ACID`,
+`CYAN`, `GOLD`, `RUST`, `PURPLE`, `AMBER`, `MAGENTA`, `NEON_BLUE`, `JADE`.
 
-### Efeitos de mensagem (Bot API 7.7)
-Helper `effect_kw(chat_type, EFFECT_*)` em `main.py`:
-- `EFFECT_PARTY` 🎉 boas-vindas, ganhar Palavra
-- `EFFECT_FIRE` 🔥 dano crítico, golpe final no boss
-- `EFFECT_HEART` ❤️ casório
-- `EFFECT_THUMBS_UP`, `EFFECT_POO`, `EFFECT_THUMBS_DOWN`
-
-⚠️ Só funciona em **DM 1:1** — sempre passar `**effect_kw(message.chat.type, ID)`.
-
-### Chat actions
-Helper `safe_typing(chat_id, "typing" | "upload_photo")` — não exige admin, falha silenciosamente.
-
-### Paleta dystopian (`royal_render.py`)
-- `BG_DEEP` `#0C0A0E` — vazio
-- `BG` `#16121A` — painel
-- `INK` `#D2C4A8` — texto bone
-- `DIM` `#706054` — texto secundário
-- Acentos rotativos: `HOT` (sangue), `ACID` (toxic), `CYAN` (holograma), `GOLD`, `RUST`, `PURPLE`, `AMBER`, `MAGENTA`, `NEON_BLUE`, `JADE`
-
-### Pós-processamento de cards
-Sempre aplicar:
-1. `apply_scanlines(img, every=3, alpha=55)` — CRT
-2. `apply_vignette(img, strength=160)` — distopia
-3. `apply_grain(img, intensity=18)` — TV velha
+**Pós-processamento de cards (sempre):** `apply_scanlines(img, every=3, alpha=55)` (CRT) →
+`apply_vignette(img, strength=160)` (distopia) → `apply_grain(img, intensity=18)` (TV velha).

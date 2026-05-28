@@ -159,7 +159,7 @@
 - **Aceite:** crédito consumido revela letra; sem crédito, avisa. ✅
 
 **M04 · ✅ FEITO — Subscription premium (Stars recorrente)** 🟠🟡
-- **Por quê:** "Royal Plus" — 50⭐/mês = +20% XP, slot extra de casório, badge violeta.
+- **Por quê:** "Royal Plus" — 50⭐/mês = +20% XP + badge violeta. (Intenção original incluía "slot extra de casório", mas ficou **BLOQUEADO** — ver "Perks aplicados" abaixo; a copy de venda **não** menciona slot extra.)
 - **Solução (implementada):** `SUBSCRIPTIONS` + `send_invoice(currency="XTR", subscription_period=2592000)` (30d) via callback `r:sub:royal_plus`. `pre_checkout_handler` aceita prefixo `sub|`; `successful_payment_handler` detecta `subscription_expiration_date` e grava ISO em `royal_plus_until`. Renovações automáticas tratadas igual (idempotente por charge_id). Migration v11.
 - **Aceite:** assinatura ativa grava `royal_plus_until`; renovação mensal atualiza. ✅
 - **Perks aplicados:** ✅ +20% XP (`premium_xp_active` checa `royal_plus_until` nos hot paths) · ✅ badge violeta no card (`ProfileCardData.royal_plus` → tag `[ PLUS+ ]` MAGENTA, coexiste com skin GOLD) · ⛔ slot extra de casório **BLOQUEADO**: não existe limite de slot por user no código (`user_is_available` só checa opt_out+last_seen; `pick_couple` só exclui pares repetidos) — aplicar = criar um limite (nerf nos free) + bypass, decisão de produto, não wiring.
