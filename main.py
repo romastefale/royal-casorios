@@ -30,7 +30,8 @@ from cachetools import TTLCache
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.client.default import DefaultBotProperties
-from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter
+from aiogram.exceptions import (TelegramBadRequest, TelegramNetworkError,
+                                 TelegramRetryAfter, TelegramServerError)
 from aiogram.filters import Command, CommandStart, Filter
 from aiogram.types import (
     BotCommand,
@@ -981,6 +982,36 @@ def effect_kw(chat_type: str | None, effect_id: str) -> dict:
 
 _typing_fail_streak: dict[int, int] = {}
 _TYPING_ALERT_THRESHOLD = 10
+
+
+# F07: wrapper de retry pra chamadas Telegram. Centraliza o pattern
+# `except TelegramRetryAfter: sleep; retry` que estava espalhado em
+# 5+ call sites. Tambem cobre TelegramNetworkError + TelegramServerError
+# (5xx) com backoff exponencial. Uso:
+#     await with_retry(lambda: bot.send_message(chat, text), label="msg")
+# coro_factory eh callable que produz uma NOVA coroutine a cada call
+# (nao da pra reawaitar a mesma).
+async def with_retry(coro_factory, *, attempts: int = 3,
+                     label: str = "tg"):
+    last_exc: Exception | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            return await coro_factory()
+        except TelegramRetryAfter as e:
+            wait = getattr(e, "retry_after", 2) + 1
+            logger.warning("[RETRY] %s flood attempt=%d/%d wait=%ds",
+                           label, attempt, attempts, wait)
+            await asyncio.sleep(wait)
+            last_exc = e
+        except (TelegramNetworkError, TelegramServerError) as e:
+            wait = min(2 ** attempt, 10)
+            logger.warning("[RETRY] %s %s attempt=%d/%d wait=%ds",
+                           label, type(e).__name__, attempt, attempts, wait)
+            await asyncio.sleep(wait)
+            last_exc = e
+    if last_exc:
+        raise last_exc
+    return None  # unreachable: attempts>=1 garante ao menos 1 tentativa
 
 
 async def safe_typing(chat_id: int, action: str = "typing") -> None:
