@@ -100,6 +100,9 @@ STASH_CHAT_ID: int | None = (
     int(_stash_raw) if _stash_raw.lstrip("-").isdigit() else _STASH_DEFAULT
 )
 
+_owner_raw = os.getenv("OWNER_USER_ID", "").strip()
+OWNER_USER_ID: int | None = int(_owner_raw) if _owner_raw.lstrip("-").isdigit() else None
+
 DB_PATH = os.getenv("DATABASE_PATH", "./data/royal_casorios.sqlite3")
 TZ_NAME = os.getenv("TZ", "America/Sao_Paulo")
 AUTO_HOURS = [int(x.strip()) for x in os.getenv("AUTO_HOURS", "9,15,21").split(",") if x.strip()]
@@ -4099,13 +4102,8 @@ async def royal_palavra_test(message: Message):
     if not is_group(message):
         await message.answer(GROUP_ONLY_MSG)
         return
-    if not await is_admin(message):
-        ack = await message.answer(term_block(
-            "PALAVRA", ">> <b>!! ACESSO NEGADO</b>\n"
-            "<i>// só admins podem disparar testes.</i>",
-            status="NEGADO", status_color="HOT"))
-        if ack:
-            await auto_delete_after(ack, delay=8.0)
+    uid = message.from_user.id if message.from_user else 0
+    if OWNER_USER_ID is None or uid != OWNER_USER_ID:
         return
     existing = get_active_challenge(message.chat.id)
     if existing:
@@ -5492,10 +5490,8 @@ async def register_bot_commands():
     # prioridade > AllGroupChats pra admins — entao se mandar so o
     # comando admin, admins PERDEM os 19 comandos normais no menu /.
     # Fix: admin_cmds = group_cmds + extras de admin.
-    admin_extra = [
-        BotCommand(command="royalpalavratest", description="🧪 (admin) Disparar Palavra de teste"),
-    ]
-    admin_cmds = group_cmds + admin_extra
+    # /royalpalavratest eh restrito ao OWNER_USER_ID e NAO aparece no menu.
+    admin_cmds = list(group_cmds)
 
     try:
         await bot.set_my_commands(group_cmds, scope=BotCommandScopeAllGroupChats())
