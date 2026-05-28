@@ -136,6 +136,65 @@ saldo, palavras, configs por usuário, etc).
 - Permitir 2 casórios ativos se Royal Plus ativo (1 default).
 - Render `royal_plus_until > now` como badge violeta no profile card.
 
+## 💡 M03 — Dica paga da PALAVRA
+
+Comando `/royalpaldica` (DM ou grupo). Consome 1 crédito de `prm_hints` (coluna em `players`, populada por compra Stars do item `prm_hint` em M01 — 1⭐ por crédito).
+
+**Fluxo:**
+1. Resolve grupo via `resolve_dm_chat`, lê `get_active_challenge`.
+2. Decrementa `prm_hints` com `UPDATE … WHERE prm_hints>0` (atomic, evita double-spend).
+3. Escolhe posição alfabética aleatória, revela letra.
+4. Envia na DM com `EFFECT_FIRE`; fallback `<tg-spoiler>` no chat atual se DM falhar.
+
+Compra de créditos: `/royalloja` → 💎 Premium → 💡 Dica da Palavra.
+
+## 🎁 M02 — Presentes (gifts de florins)
+
+Comando `/royalpresentear` (grupo-only). Transferencia atomica de florins entre players.
+
+**Uso:**
+- `/royalpresentear @user 100` — explicito
+- Reply na msg do destinatario + `/royalpresentear 100` — implícito
+
+**Limites:** `GIFT_MIN=10`, `GIFT_MAX=5000` (em `main.py`). Bloqueia self-gift, valida saldo, transação atomica com `UPDATE … WHERE gold>=?` pra evitar race.
+
+**Migration v12:** tabela `gifts` (ledger auditavel: from_user, to_user, amount, sent_at).
+
+Conquista `generoso` desbloqueada no 1º presente enviado.
+
+## 🏅 M11 — Conquistas (Achievements)
+
+**11 slugs MVP** em `ACHIEVEMENTS` dict (`main.py`): primeiro_acerto, dez_acertos, cem_acertos, primeiro_boss, lvl_dez/vinte_cinco/cinquenta, primeiro_amor, mecenas, nobreza, generoso.
+
+**API:** `unlock_achievement(chat_id, uid, slug)` — idempotente via PK `(chat_id, user_id, slug)`. Retorna True só na 1ª unlock + dispara notificação DM (`_notify_achievement_dm`) com `EFFECT_PARTY`.
+
+**Triggers wired:**
+- `award_xp_immediate` (level-up) → `check_level_achievements` (lvl 10/25/50)
+- `attempt_word` (PALAVRA win) → `check_palavra_achievements` (1/10/100, count via challenges WHERE status='won')
+- `finalize_boss` → `primeiro_boss` pra cada atacante
+- `assign_couple` → `primeiro_amor` pros 2 noivos
+- `_grant_premium_perk` → `nobreza` (royal_plus) ou `mecenas` (one-shot)
+- `/royalpresentear` → `generoso`
+
+**Comando:** `/royalconquistas` — lista do user no chat ativo, locked com `🔒 <s>tachado</s>`.
+
+**Migration v12:** tabela `achievements` + índice por user_id.
+
+## ⚙️ M19 — Preferências do user (`/royalconfig`)
+
+Flags persistidas em `user_dm_settings.prefs_json` (TEXT JSON; migration v12).
+
+**Flags MVP (`USER_PREFS_DEFAULTS`):**
+| key | default | efeito |
+|---|---|---|
+| `silent_levelup` | False | suprime card de level-up na DM (check em `_schedule_levelup_dm`) |
+| `hide_rank` | False | reservado (wiring no Sprint 5 — filtrar do ranking) |
+| `palavra_ping` | True | reservado (ping de spawn na DM, futuro) |
+
+**API:** `get_user_prefs(uid)` retorna dict merged com defaults; `set_user_pref(uid, key, val)` upsert.
+
+**Comando:** `/royalconfig` — InlineKeyboard com 1 botão por flag (estilo verde=ON, vermelho=OFF). Callback `r:cfg:{key}` toggla e re-renderiza.
+
 ## 🔧 Env vars
 
 - `BOT_TOKEN` (obrigatório) — token do BotFather

@@ -769,6 +769,47 @@ def migrate_to_v11(c: sqlite3.Cursor) -> None:
                 raise
 
 
+def migrate_to_v12(c: sqlite3.Cursor) -> None:
+    """Sprint 3/4: achievements (M11), gifts (M02), user prefs (M19).
+    - achievements: (chat_id, user_id, slug) com unlocked_at; PK composta
+      garante idempotencia (unlock_achievement usa INSERT OR IGNORE).
+    - gifts: ledger auditavel de presentes de florins entre players
+      (M02 — /royalpresentear).
+    - user_dm_settings.prefs_json: blob JSON com flags do user (M19 —
+      /royalconfig). Default NULL = todos os defaults."""
+    c.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS achievements (
+            chat_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            slug TEXT NOT NULL,
+            unlocked_at TEXT NOT NULL,
+            PRIMARY KEY (chat_id, user_id, slug)
+        );
+        CREATE INDEX IF NOT EXISTS idx_ach_user
+            ON achievements(user_id);
+
+        CREATE TABLE IF NOT EXISTS gifts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chat_id INTEGER NOT NULL,
+            from_user INTEGER NOT NULL,
+            to_user INTEGER NOT NULL,
+            amount INTEGER NOT NULL,
+            sent_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_gifts_from
+            ON gifts(from_user, sent_at);
+        CREATE INDEX IF NOT EXISTS idx_gifts_to
+            ON gifts(to_user, sent_at);
+        """
+    )
+    try:
+        c.execute("ALTER TABLE user_dm_settings ADD COLUMN prefs_json TEXT")
+    except sqlite3.OperationalError as e:
+        if "duplicate column" not in str(e).lower():
+            raise
+
+
 def migrate_to_v6(c: sqlite3.Cursor) -> None:
     """Randomiza royal_ids existentes (RYL-0001, 0002... -> RYL-NNNN
     sortidos entre 1000-9999). Pool por chat = 9000, retry on collision.
@@ -821,6 +862,7 @@ MIGRATIONS = [
     (9, migrate_to_v9),
     (10, migrate_to_v10),
     (11, migrate_to_v11),
+    (12, migrate_to_v12),
 ]
 
 
@@ -859,6 +901,150 @@ def set_chat_muted(chat_id: int, muted: bool) -> None:
         "ON CONFLICT(chat_id) DO UPDATE SET muted=excluded.muted, "
         "muted_at=excluded.muted_at",
         (chat_id, 1 if muted else 0, utc_iso() if muted else None))
+    db.commit()
+
+
+# =====================================================================
+# M11 — Conquistas (Achievements)
+# =====================================================================
+
+ACHIEVEMENTS: dict[str, tuple[str, str]] = {
+    "primeiro_acerto":   ("🎯 Primeiro Acerto",   "Acertou sua 1ª PALAVRA."),
+    "dez_acertos":       ("🏹 Caçador de Palavras", "Acertou 10 PALAVRAS."),
+    "cem_acertos":       ("⚡ Mestre das Letras", "Acertou 100 PALAVRAS."),
+    "primeiro_boss":     ("🐉 Matador de Titãs",  "Participou de 1 boss kill."),
+    "lvl_dez":           ("⭐ Veterano",          "Atingiu nível 10."),
+    "lvl_vinte_cinco":   ("🌟 Lendário",          "Atingiu nível 25."),
+    "lvl_cinquenta":     ("👑 Imortal",           "Atingiu nível 50."),
+    "primeiro_amor":     ("💍 Coração da Corte",  "Primeiro casório no reino."),
+    "mecenas":           ("💎 Mecenas",           "Comprou item Premium com Stars."),
+    "nobreza":           ("🌟 Nobreza Plus",      "Assinou Royal Plus."),
+    "generoso":          ("🎁 Generoso",          "Presenteou outro jogador."),
+}
+
+
+def unlock_achievement(chat_id: int, user_id: int, slug: str) -> bool:
+    """Insere conquista (idempotente). Retorna True se foi NOVA unlock.
+    Dispara notificacao DM fire-and-forget na unlock nova."""
+    spec = ACHIEVEMENTS.get(slug)
+    if not spec:
+        return False
+    try:
+        cur.execute(
+            "INSERT OR IGNORE INTO achievements "
+            "(chat_id, user_id, slug, unlocked_at) VALUES (?, ?, ?, ?)",
+            (chat_id, user_id, slug, utc_iso()))
+        is_new = cur.rowcount > 0
+        db.commit()
+    except Exception:
+        logger.exception("unlock_achievement falhou uid=%s slug=%s",
+                         user_id, slug)
+        return False
+    if is_new:
+        logger.info("[ACH] UNLOCKED uid=%s chat=%s slug=%s",
+                    user_id, chat_id, slug)
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(_notify_achievement_dm(user_id, slug))
+        except RuntimeError:
+            pass
+    return is_new
+
+
+async def _notify_achievement_dm(user_id: int, slug: str) -> None:
+    """Notifica conquista na DM (silencioso se user bloqueou)."""
+    if bot is None:
+        return
+    spec = ACHIEVEMENTS.get(slug)
+    if not spec:
+        return
+    title, desc = spec
+    body = (
+        f">> NOVA CONQUISTA DESBLOQUEADA\n"
+        f"// <b>{title}</b>\n"
+        f"// <i>{desc}</i>\n"
+        f"\n<i>Ver todas em /royalconquistas.</i>"
+    )
+    try:
+        await bot.send_message(
+            user_id,
+            term_block("CONQUISTA", body, status="UNLOCK",
+                       status_color="GOLD"),
+            message_effect_id=EFFECT_PARTY,
+        )
+    except Exception:
+        pass
+
+
+def check_level_achievements(chat_id: int, user_id: int,
+                              new_lvl: int) -> None:
+    """Dispara unlocks de level (chamado apos levelup)."""
+    if new_lvl >= 10:
+        unlock_achievement(chat_id, user_id, "lvl_dez")
+    if new_lvl >= 25:
+        unlock_achievement(chat_id, user_id, "lvl_vinte_cinco")
+    if new_lvl >= 50:
+        unlock_achievement(chat_id, user_id, "lvl_cinquenta")
+
+
+def check_palavra_achievements(chat_id: int, user_id: int) -> None:
+    """Dispara unlocks de PALAVRA baseado em count historico de wins."""
+    try:
+        row = cur.execute(
+            "SELECT COUNT(*) AS n FROM challenges "
+            "WHERE chat_id=? AND status='won' AND winner_user_id=?",
+            (chat_id, user_id)).fetchone()
+        n = int(row["n"] if row else 0)
+    except Exception:
+        return
+    if n >= 1:
+        unlock_achievement(chat_id, user_id, "primeiro_acerto")
+    if n >= 10:
+        unlock_achievement(chat_id, user_id, "dez_acertos")
+    if n >= 100:
+        unlock_achievement(chat_id, user_id, "cem_acertos")
+
+
+# =====================================================================
+# M19 — User prefs (flags JSON em user_dm_settings.prefs_json)
+# =====================================================================
+
+USER_PREFS_DEFAULTS: dict[str, bool] = {
+    "silent_levelup": False,   # nao mandar card de levelup na DM
+    "hide_rank":      False,   # esconder do ranking publico
+    "palavra_ping":   True,    # receber DM aviso quando palavra spawn
+}
+
+
+def get_user_prefs(user_id: int) -> dict:
+    """Retorna prefs do user merge com defaults. Sempre retorna dict."""
+    try:
+        row = cur.execute(
+            "SELECT prefs_json FROM user_dm_settings WHERE user_id=?",
+            (user_id,)).fetchone()
+        raw = row["prefs_json"] if row else None
+        loaded = json.loads(raw) if raw else {}
+    except Exception:
+        loaded = {}
+    out = dict(USER_PREFS_DEFAULTS)
+    if isinstance(loaded, dict):
+        for k in USER_PREFS_DEFAULTS:
+            if k in loaded:
+                out[k] = bool(loaded[k])
+    return out
+
+
+def set_user_pref(user_id: int, key: str, value: bool) -> None:
+    """Atualiza 1 pref. Cria row em user_dm_settings se nao existir."""
+    if key not in USER_PREFS_DEFAULTS:
+        return
+    prefs = get_user_prefs(user_id)
+    prefs[key] = bool(value)
+    payload = json.dumps(prefs, separators=(",", ":"))
+    cur.execute(
+        "INSERT INTO user_dm_settings (user_id, prefs_json) VALUES (?, ?) "
+        "ON CONFLICT(user_id) DO UPDATE SET prefs_json=excluded.prefs_json",
+        (user_id, payload))
     db.commit()
 
 
@@ -1862,6 +2048,9 @@ async def send_couple(chat_id: int, source: str = "auto") -> bool:
         (chat_id, u1, u2, source, utc_iso()),
     )
     couple_id = cur.lastrowid
+    # M11: 1º casorio do reino pra cada um dos noivos
+    unlock_achievement(chat_id, u1, "primeiro_amor")
+    unlock_achievement(chat_id, u2, "primeiro_amor")
 
     # XP pros dois pelo casamento formado
     for uid in (u1, u2):
@@ -2577,6 +2766,7 @@ def award_xp_immediate(chat_id: int, user_id: int, amount: int, reason: str = ""
                 amount, user_id, chat_id, reason, old_lvl, new_lvl)
     if new_lvl > old_lvl:
         _schedule_levelup_dm(chat_id, user_id, player, new_lvl)
+        check_level_achievements(chat_id, user_id, new_lvl)
 
 
 def award_xp_message(chat_id: int, user_id: int, is_reply: bool) -> None:
@@ -2621,10 +2811,15 @@ def award_xp_message(chat_id: int, user_id: int, is_reply: bool) -> None:
 
 def _schedule_levelup_dm(chat_id: int, user_id: int,
                           player: dict, new_lvl: int) -> None:
-    """Agenda envio de card de level-up na DM (não bloqueia)."""
+    """Agenda envio de card de level-up na DM (não bloqueia).
+    M19: respeita pref silent_levelup do user."""
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
+        return
+    # M19: user pode silenciar card de levelup via /royalconfig
+    if get_user_prefs(user_id).get("silent_levelup"):
+        logger.info("[M19] levelup DM suprimido por pref uid=%s", user_id)
         return
     royal_id = player.get("royal_id") or ""
     class_id = player.get("class_id")
@@ -3352,6 +3547,8 @@ async def handle_palavra_attempt(message: Message, ch: dict) -> bool:
     cur.execute("UPDATE players SET gold=gold+? WHERE chat_id=? AND user_id=?",
                 (gold_award, chat_id, uid))
     db.commit()
+    # M11: thresholds de PALAVRA (1, 10, 100)
+    check_palavra_achievements(chat_id, uid)
 
     # Atualiza mensagem
     cur.execute("SELECT * FROM challenges WHERE id=?", (ch["id"],))
@@ -3821,6 +4018,8 @@ async def finalize_boss(boss: dict) -> None:
             total_gold_distributed += share
             name = get_anon_name(chat_id, r["user_id"])
             drops_text.append(f"• {html.escape(name)}: {share}🪙 ({r['dmg']} dano)")
+        # M11: 1º boss derrotado pra cada atacante
+        unlock_achievement(chat_id, r["user_id"], "primeiro_boss")
     db.commit()
 
     if drops_text:
@@ -4089,6 +4288,8 @@ async def start_cmd(message: Message):
         "• 🏰 /royalgrupo — trocar grupo ativo\n"
         "• 🔒 /royalprivacidade — controles\n"
         "• 📦 /royaldados — exportar / apagar\n"
+        "• 🏅 /royalconquistas — suas medalhas\n"
+        "• ⚙️ /royalconfig — preferencias (silenciar, esconder)\n"
         "• 📖 /royaltutorial — aprender a jogar\n"
         "• ❓ /royalajuda — manual completo"
         "</blockquote>"
@@ -4195,6 +4396,14 @@ ROYAL_HELP = (
     "• 🥇 Skin Dourada permanente — 100⭐\n"
     "<i>Pagamento via Telegram (sem cartão). Renovação automática "
     "da assinatura — pode cancelar pelo Telegram a qualquer momento.</i>"
+    "</blockquote>\n"
+    "<blockquote expandable>🎁 <b>Presentes & Conquistas</b>\n"
+    "/royalpresentear @user 100 — manda florins pra outro nobre\n"
+    "  <i>(ou: reply na mensagem + /royalpresentear 100)</i>\n"
+    "/royalpaldica — consome 1 crédito 💡 e revela 1 letra da PALAVRA\n"
+    "  <i>(compra crédito em /royalloja → 💎 Premium)</i>\n"
+    "/royalconquistas — vê quais medalhas você já desbloqueou\n"
+    "/royalconfig — preferências (silenciar level-up, etc.)\n"
     "</blockquote>\n"
     "<blockquote expandable>📜 <b>Pessoal (DM ou grupo)</b>\n"
     "/royalinventario — ver seus itens\n"
@@ -6311,6 +6520,12 @@ def _grant_premium_perk(chat_id: int, user_id: int, iid: str,
     if not item:
         return "Item desconhecido."
     perk = item.get("perk")
+    # M11: conquistas premium (Mecenas pra qualquer compra; Nobreza Plus
+    # pra assinatura Royal Plus). Idempotente por slug.
+    if perk == "royal_plus":
+        unlock_achievement(chat_id, user_id, "nobreza")
+    else:
+        unlock_achievement(chat_id, user_id, "mecenas")
     # M04: assinatura Royal Plus — usa subscription_expiration_date do
     # Telegram (renovacoes futuras vem como novos successful_payment).
     if perk == "royal_plus":
@@ -6942,6 +7157,282 @@ async def scheduler():
             logger.exception("scheduler failed")
 
 
+# =====================================================================
+# M02 — /royalpresentear @user X  (gift de florins entre players)
+# M11 — /royalconquistas
+# M19 — /royalconfig
+# =====================================================================
+
+GIFT_MIN = 10
+GIFT_MAX = 5000
+
+
+@dp.message(Command("royalpresentear"))
+async def royal_presentear(message: Message):
+    """M02: presenteia florins a outro jogador (reply ou @user X)."""
+    if not message.from_user:
+        return
+    if not is_group(message):
+        await message.answer(GROUP_ONLY_MSG)
+        return
+    chat_id = message.chat.id
+    sender = message.from_user.id
+
+    target_uid: int | None = None
+    target_name = "?"
+    raw = (message.text or "").strip()
+    parts = raw.split()
+    amount: int | None = None
+
+    # 1) reply -> destinatario eh quem foi respondido; arg eh valor
+    if message.reply_to_message and message.reply_to_message.from_user:
+        target_uid = message.reply_to_message.from_user.id
+        target_name = display_name(message.reply_to_message)
+        if len(parts) >= 2:
+            try:
+                amount = int(parts[1])
+            except ValueError:
+                pass
+    # 2) /royalpresentear @user X
+    elif len(parts) >= 3 and parts[1].startswith("@"):
+        username = parts[1].lstrip("@").lower()
+        try:
+            amount = int(parts[2])
+        except ValueError:
+            amount = None
+        row = cur.execute(
+            "SELECT user_id, display_name FROM users "
+            "WHERE chat_id=? AND LOWER(username)=? LIMIT 1",
+            (chat_id, username)).fetchone()
+        if row:
+            target_uid = int(row["user_id"])
+            target_name = row["display_name"] or username
+
+    if target_uid is None or amount is None:
+        ack = await message.answer(term_block(
+            "PRESENTE",
+            ">> uso: <code>/royalpresentear @user 100</code>\n"
+            ">> ou: reply na msg + <code>/royalpresentear 100</code>",
+            status="USO", status_color="AMBER"))
+        await auto_delete_after(ack, delay=12.0)
+        return
+    if target_uid == sender:
+        ack = await message.answer(term_block(
+            "PRESENTE",
+            ">> nao da pra se presentear, nobre 🙃",
+            status="NEGADO", status_color="HOT"))
+        await auto_delete_after(ack, delay=8.0)
+        return
+    if amount < GIFT_MIN or amount > GIFT_MAX:
+        ack = await message.answer(term_block(
+            "PRESENTE",
+            f">> valor entre <b>{GIFT_MIN}</b> e <b>{GIFT_MAX}</b> florins",
+            status="LIMITE", status_color="AMBER"))
+        await auto_delete_after(ack, delay=8.0)
+        return
+
+    p = ensure_player(chat_id, sender)
+    if int(p["gold"] or 0) < amount:
+        ack = await message.answer(term_block(
+            "PRESENTE",
+            f">> saldo insuficiente. voce tem "
+            f"<b>{int(p['gold'] or 0)}🪙</b>",
+            status="SEM_FUNDOS", status_color="HOT"))
+        await auto_delete_after(ack, delay=10.0)
+        return
+
+    # transacao atomica: -sender, +target, ledger
+    ensure_player(chat_id, target_uid)
+    cur.execute("UPDATE players SET gold=gold-? "
+                "WHERE chat_id=? AND user_id=? AND gold>=?",
+                (amount, chat_id, sender, amount))
+    if cur.rowcount == 0:
+        await message.answer(term_block(
+            "PRESENTE", ">> falha — tente de novo",
+            status="ERRO", status_color="HOT"))
+        return
+    cur.execute("UPDATE players SET gold=gold+? "
+                "WHERE chat_id=? AND user_id=?",
+                (amount, chat_id, target_uid))
+    cur.execute(
+        "INSERT INTO gifts (chat_id, from_user, to_user, amount, sent_at) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (chat_id, sender, target_uid, amount, utc_iso()))
+    db.commit()
+    unlock_achievement(chat_id, sender, "generoso")
+    logger.info("[GIFT] %s -> %s amount=%s chat=%s",
+                sender, target_uid, amount, chat_id)
+
+    sender_name = display_name(message)
+    body = (
+        f">> {mention(sender, sender_name)} presenteou "
+        f"<b>{format_br(amount)}🪙</b>\n"
+        f">> para {mention(target_uid, target_name)}\n"
+        f"<i>// que generosidade real</i>"
+    )
+    await message.answer(
+        term_block("PRESENTE", body, status="ENTREGUE",
+                   status_color="ACID", stamp="🎁"),
+        **effect_kw(message.chat.type, EFFECT_HEART))
+
+
+@dp.message(Command("royalpaldica"))
+async def royal_pal_dica(message: Message):
+    """M03: consome 1 credito de prm_hints (comprado em /royalloja Premium)
+    e revela 1 letra aleatoria da PALAVRA ativa, na DM do user."""
+    if not message.from_user:
+        return
+    uid = message.from_user.id
+    # resolve grupo dono
+    owner_chat = await resolve_dm_chat(message, action_hint="usar dica")
+    if owner_chat is None:
+        return
+    ch = get_active_challenge(owner_chat)
+    if not ch:
+        ack = await message.answer(term_block(
+            "DICA", ">> nao tem PALAVRA ativa agora",
+            status="SEM_ALVO", status_color="AMBER"))
+        await auto_delete_after(ack, delay=10.0)
+        return
+    p = ensure_player(owner_chat, uid)
+    credits = int(p.get("prm_hints") or 0)
+    if credits <= 0:
+        ack = await message.answer(term_block(
+            "DICA",
+            ">> sem creditos de dica\n"
+            ">> compra em /royalloja → 💎 Premium → 💡 Dica",
+            status="SEM_CREDITOS", status_color="HOT"))
+        await auto_delete_after(ack, delay=12.0)
+        return
+    # transacao atomica: decrementa SOMENTE se ainda houver credito
+    cur.execute("UPDATE players SET prm_hints=prm_hints-1 "
+                "WHERE chat_id=? AND user_id=? AND prm_hints>0",
+                (owner_chat, uid))
+    if cur.rowcount == 0:
+        return  # race lost
+    db.commit()
+    word = str(ch["word"]).upper()
+    # escolhe 1 letra (nao espaco) aleatoria
+    indices = [i for i, c in enumerate(word) if c.isalpha()]
+    pos = random.choice(indices) if indices else 0
+    letter = word[pos] if word else "?"
+    revealed_credits = credits - 1
+    body = (
+        f">> dica concedida pra PALAVRA ativa\n"
+        f"// posicao <b>{pos+1}</b> = letra <b><code>{letter}</code></b>\n"
+        f"// creditos restantes: <b>{revealed_credits}</b>\n"
+        f"<i>responde no chat do reino pra marcar.</i>"
+    )
+    # tenta DM; fallback chat atual com spoiler
+    sent = False
+    if bot is not None and is_group(message):
+        try:
+            await bot.send_message(uid, term_block(
+                "DICA", body, status="REVELADO",
+                status_color="ACID", stamp=f"ch#{ch['id']}"),
+                message_effect_id=EFFECT_FIRE)
+            sent = True
+            await react_to(message.chat.id, message.message_id, "💡")
+        except Exception:
+            pass
+    if not sent:
+        await message.answer(term_block(
+            "DICA",
+            f">> posicao <b>{pos+1}</b> = "
+            f"<tg-spoiler><b>{letter}</b></tg-spoiler>\n"
+            f"// creditos restantes: <b>{revealed_credits}</b>",
+            status="REVELADO", status_color="ACID"))
+    logger.info("[M03] hint uid=%s ch=%s pos=%s letter=%s rem=%s",
+                uid, ch["id"], pos, letter, revealed_credits)
+
+
+@dp.message(Command("royalconquistas"))
+async def royal_conquistas(message: Message):
+    """M11: lista conquistas do user (do chat ativo)."""
+    if not message.from_user:
+        return
+    owner_chat = await resolve_dm_chat(message, action_hint="ver conquistas")
+    if owner_chat is None:
+        return
+    uid = message.from_user.id
+    rows = cur.execute(
+        "SELECT slug, unlocked_at FROM achievements "
+        "WHERE chat_id=? AND user_id=? ORDER BY unlocked_at DESC",
+        (owner_chat, uid)).fetchall()
+    unlocked = {r["slug"]: r["unlocked_at"] for r in rows}
+    lines = []
+    total = len(ACHIEVEMENTS)
+    got = len(unlocked)
+    lines.append(f">> <b>{got}/{total}</b> conquistas desbloqueadas")
+    lines.append("")
+    for slug, (title, desc) in ACHIEVEMENTS.items():
+        if slug in unlocked:
+            try:
+                d = datetime.fromisoformat(unlocked[slug]).astimezone(
+                    ZoneInfo(TZ_NAME)).strftime("%d/%m/%y")
+            except Exception:
+                d = unlocked[slug][:10]
+            lines.append(f"✅ <b>{title}</b>")
+            lines.append(f"   <i>{desc}</i> · <code>{d}</code>")
+        else:
+            lines.append(f"🔒 <s>{title}</s>")
+            lines.append(f"   <i>{desc}</i>")
+    await message.answer(
+        term_block("CONQUISTAS", "\n".join(lines),
+                   status=f"{got}/{total}", status_color="GOLD"))
+
+
+def _config_kb(prefs: dict) -> InlineKeyboardMarkup:
+    rows = []
+    labels = {
+        "silent_levelup": "🔕 Silenciar card de level-up (DM)",
+        "hide_rank":      "👻 Esconder do ranking publico",
+        "palavra_ping":   "🔔 Receber ping de PALAVRA na DM",
+    }
+    for key, label in labels.items():
+        state = "ON" if prefs.get(key) else "OFF"
+        style = STYLE_OK if prefs.get(key) else STYLE_NO
+        rows.append([ikb(f"{label} [{state}]",
+                         callback_data=f"r:cfg:{key}", style=style)])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+@dp.message(Command("royalconfig"))
+async def royal_config(message: Message):
+    """M19: toggles de preferencias do user (persiste em prefs_json)."""
+    if not message.from_user:
+        return
+    uid = message.from_user.id
+    prefs = get_user_prefs(uid)
+    body = (
+        ">> AJUSTES PESSOAIS\n"
+        "// toca pra alternar cada flag.\n"
+        "<i>preferencias salvas no perfil, valem em todos os reinos.</i>"
+    )
+    await message.answer(
+        term_block("CONFIG", body, status="OPEN", status_color="CYAN"),
+        reply_markup=_config_kb(prefs))
+
+
+@dp.callback_query(F.data.startswith("r:cfg:"))
+async def cfg_cb(cb: CallbackQuery):
+    if not cb.data or not cb.from_user or not cb.message:
+        return
+    key = cb.data.split(":", 2)[2]
+    if key not in USER_PREFS_DEFAULTS:
+        await cb.answer()
+        return
+    prefs = get_user_prefs(cb.from_user.id)
+    new_val = not prefs.get(key)
+    set_user_pref(cb.from_user.id, key, new_val)
+    prefs[key] = new_val
+    try:
+        await cb.message.edit_reply_markup(reply_markup=_config_kb(prefs))
+    except Exception:
+        pass
+    await cb.answer(f"{key} = {'ON' if new_val else 'OFF'}")
+
+
 async def healthcheck():
     while True:
         await asyncio.sleep(300)
@@ -6977,6 +7468,9 @@ async def register_bot_commands():
         BotCommand(command="royalmeuscasorios", description="📊 Meus casórios"),
         BotCommand(command="royalencalhar",     description="🚫 Sair dos casórios"),
         BotCommand(command="royaldesencalhar",  description="💘 Voltar pros casórios"),
+        BotCommand(command="royalpresentear",   description="🎁 Presentear florins"),
+        BotCommand(command="royalpaldica",      description="💡 Usar dica de PALAVRA"),
+        BotCommand(command="royalconquistas",   description="🏅 Conquistas"),
         BotCommand(command="royalcasar",        description="💍 (admin) Forçar casório"),
         BotCommand(command="royalativar",       description="🔧 (admin) Ativar bot"),
         BotCommand(command="royaltutorial",     description="📖 Como jogar"),
@@ -6991,6 +7485,8 @@ async def register_bot_commands():
         BotCommand(command="royalinventario",   description="🎒 Inventário"),
         BotCommand(command="royalsaldo",        description="💰 Saldo"),
         BotCommand(command="royalmeuscasorios", description="📊 Meus casórios"),
+        BotCommand(command="royalconquistas",   description="🏅 Conquistas"),
+        BotCommand(command="royalconfig",       description="⚙️ Preferências"),
         BotCommand(command="royalgrupo",        description="🏰 Trocar grupo ativo"),
         BotCommand(command="royaltutorial",     description="📖 Como jogar"),
         BotCommand(command="royalajuda",        description="❓ Ajuda"),
