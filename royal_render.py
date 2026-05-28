@@ -19,6 +19,8 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
+import royal_avatars
+
 logger = logging.getLogger(__name__)
 
 CARD_SIZE = 1080
@@ -585,6 +587,7 @@ class ProfileCardData:
     gold: int
     msg_count: int
     joined_str: str
+    avatar_slug: str | None = None
 
 
 def _draw_label_value(draw, *, x, y, label, value,
@@ -625,6 +628,7 @@ def render_profile_card(data: ProfileCardData,
         data.pts_available, data.rank, data.total_players,
         data.palavras_won, data.casorios, data.gold,
         data.msg_count, data.joined_str,
+        data.avatar_slug,
         # Hash da foto: invalida cache se o player trocar a foto no Telegram
         hashlib.md5(avatar_bytes).hexdigest() if avatar_bytes else None,
     )
@@ -676,21 +680,28 @@ def render_profile_card(data: ProfileCardData,
         pixel_rect(draw, (header_box[2] - 14, header_box[3] - 18,
                           header_box[2] - 8, header_box[3] - 10), HOT)
 
-        # ===== Avatar híbrido: SIGILO 8-bit principal + foto real no canto =====
+        # ===== Avatar híbrido: PORTRAIT 256x256 principal + foto real no canto =====
         avatar_size = 296
         ax = OUT_PAD + 60
         ay = OUT_PAD + 130
 
-        # 1) Sigilo procedural (brasão do player — determinístico por royal_id)
-        sigil_inner = avatar_size - 12
-        sigil = procedural_sigil(data.royal_id, sigil_inner, pal)
+        # 1) Avatar escolhido pelo player (ou default deterministico por royal_id).
+        #    Fallback pro sigilo procedural se PNG sumir.
+        inner_size = avatar_size - 12
+        resolved_slug = royal_avatars.resolve_slug(
+            data.avatar_slug, data.royal_id)
+        portrait = royal_avatars.load_avatar(resolved_slug, inner_size)
         # Moldura do quadro principal
         pixel_rect(draw, (ax, ay, ax + avatar_size, ay + avatar_size), BLACK)
         pixel_rect(draw, (ax + 4, ay + 4,
                           ax + avatar_size - 4, ay + avatar_size - 4), GOLD_DIM)
         pixel_rect(draw, (ax + 6, ay + 6,
                           ax + avatar_size - 6, ay + avatar_size - 6), BLACK)
-        img.paste(sigil, (ax + 6, ay + 6))
+        if portrait is not None:
+            img.paste(portrait, (ax + 6, ay + 6), portrait)
+        else:
+            sigil = procedural_sigil(data.royal_id, inner_size, pal)
+            img.paste(sigil, (ax + 6, ay + 6))
 
         # 2) Thumbnail da foto real no canto inferior direito (vestígio)
         if avatar_bytes:
@@ -905,6 +916,7 @@ class RankingEntry:
     name: str
     season_xp: int
     level: int
+    avatar_slug: str | None = None
 
 
 def render_ranking_card(season_label: str,
@@ -913,7 +925,8 @@ def render_ranking_card(season_label: str,
     if not entries:
         return None
     cache_key = ("ranking", season_label,
-                 tuple((e.rank, e.royal_id, e.name, e.season_xp, e.level)
+                 tuple((e.rank, e.royal_id, e.name, e.season_xp, e.level,
+                        e.avatar_slug)
                        for e in entries[:3]))
     cached = cache_get(cache_key)
     if cached:
@@ -992,6 +1005,26 @@ def render_ranking_card(season_label: str,
             pixel_rect(draw, (cx0, box_top, cx1, box_top + 4),
                        medal_colors[rank])
             if e:
+                # Portrait do top — 120x120 centrado acima da caixa do nome.
+                # Tamanho varia conforme rank pra reforcar hierarquia.
+                port_size = {1: 140, 2: 120, 3: 110}[rank]
+                resolved = royal_avatars.resolve_slug(
+                    e.avatar_slug, e.royal_id)
+                portrait = royal_avatars.load_avatar(resolved, port_size)
+                if portrait is not None:
+                    pxc = cx0 + (col_w - port_size) // 2
+                    pyc = box_top - port_size - 14
+                    # Moldura medal-color em volta do portrait
+                    pixel_rect(draw,
+                               (pxc - 4, pyc - 4,
+                                pxc + port_size + 4, pyc + port_size + 4),
+                               BLACK)
+                    pixel_rect(draw,
+                               (pxc - 2, pyc - 2,
+                                pxc + port_size + 2, pyc + port_size + 2),
+                               medal_colors[rank])
+                    img.paste(portrait, (pxc, pyc), portrait)
+
                 medal_txt = {1: "1ST", 2: "2ND", 3: "3RD"}[rank]
                 mt_font = load_font(16, mono=True, bold=True)
                 mw, _ = text_size(draw, medal_txt, mt_font)
@@ -1072,13 +1105,19 @@ def render_ranking_card(season_label: str,
 # =====================================================================
 
 def render_levelup_card(royal_id: str, name: str,
-                        new_level: int, class_name: str = "") -> bytes | None:
+                        new_level: int, class_name: str = "",
+                        avatar_slug: str | None = None) -> bytes | None:
     """Card menor (1080x540) pra anunciar level-up. Sem cache (evento único)."""
     try:
         pal = pick_palette(royal_id)
         W, H = CARD_SIZE, 540
         img = Image.new("RGB", (W, H), BG_DEEP)
         draw = ImageDraw.Draw(img)
+
+        # Portrait do avatar (top-left dentro do painel) — decora sem
+        # atrapalhar o conteudo centralizado existente.
+        resolved = royal_avatars.resolve_slug(avatar_slug, royal_id)
+        portrait = royal_avatars.load_avatar(resolved, 128)
 
         # estatica
         rng = random.Random(hash(royal_id) & 0xFFFF)
@@ -1093,6 +1132,22 @@ def render_levelup_card(royal_id: str, name: str,
         chunky_border(draw, panel_box, outer=BLACK, inner=pal["header"], thick=8)
 
         center_x = W // 2
+
+        # Portrait do avatar nos dois cantos inferiores (espelho decorativo)
+        if portrait is not None:
+            psz = 128
+            py = H - OUT_PAD - psz - 24
+            # canto esquerdo
+            pxL = OUT_PAD + 28
+            pixel_rect(draw, (pxL - 3, py - 3,
+                              pxL + psz + 3, py + psz + 3), pal["header"])
+            img.paste(portrait, (pxL, py), portrait)
+            # canto direito (flip horizontal — efeito espelho retro)
+            mirror = portrait.transpose(Image.FLIP_LEFT_RIGHT)
+            pxR = W - OUT_PAD - psz - 28
+            pixel_rect(draw, (pxR - 3, py - 3,
+                              pxR + psz + 3, py + psz + 3), pal["header"])
+            img.paste(mirror, (pxR, py), mirror)
 
         # Header alerta (topo)
         alert_font = load_font(18, mono=True, bold=True)

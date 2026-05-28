@@ -27,7 +27,7 @@ from zoneinfo import ZoneInfo
 from aiogram import Bot, Dispatcher, F
 from aiogram.client.default import DefaultBotProperties
 from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter
-from aiogram.filters import Command, CommandStart
+from aiogram.filters import Command, CommandStart, Filter
 from aiogram.types import (
     BotCommand,
     BotCommandScopeAllGroupChats,
@@ -43,6 +43,7 @@ from aiogram.types import (
     ReplyKeyboardMarkup,
 )
 
+import royal_avatars
 from royal_words import PALAVRAS, CHARADAS
 from royal_render import (
     ProfileCardData,
@@ -323,9 +324,27 @@ def migrate_to_v2(c: sqlite3.Cursor) -> None:
     )
 
 
+def migrate_to_v3(c: sqlite3.Cursor) -> None:
+    """Avatar do player (escolhido via /royalavatar). avatar_slug eh o
+    identificador do PNG em assets/avatars/. avatar_season grava a label
+    da temporada em que foi escolhido (pra enforce 1x por temporada).
+    Ambos NULL = usa default deterministico por royal_id."""
+    # ADD COLUMN eh idempotente apenas se nao existe — guard com try/except
+    for col, ddl in (
+        ("avatar_slug",   "ALTER TABLE players ADD COLUMN avatar_slug TEXT"),
+        ("avatar_season", "ALTER TABLE players ADD COLUMN avatar_season TEXT"),
+    ):
+        try:
+            c.execute(ddl)
+        except sqlite3.OperationalError as e:
+            if "duplicate column" not in str(e).lower():
+                raise
+
+
 MIGRATIONS = [
     (1, migrate_to_v1),
     (2, migrate_to_v2),
+    (3, migrate_to_v3),
 ]
 
 
@@ -1282,12 +1301,15 @@ def _schedule_levelup_dm(chat_id: int, user_id: int,
     name = anonize(get_name(chat_id, user_id), royal_id)
     # Card PNG não renderiza fontes "fancy" Unicode → cai pro @username.
     name = card_safe_name(chat_id, user_id, name, royal_id)
+    avatar_slug = royal_avatars.resolve_slug(
+        player.get("avatar_slug"), royal_id)
     loop.create_task(notify_level_up_dm(
-        user_id, royal_id, name, new_lvl, class_id))
+        user_id, royal_id, name, new_lvl, class_id, avatar_slug))
 
 
 async def notify_level_up_dm(user_id: int, royal_id: str, name: str,
-                              new_level: int, class_id: str | None) -> None:
+                              new_level: int, class_id: str | None,
+                              avatar_slug: str | None = None) -> None:
     """Tenta enviar card de level-up na DM. Silencioso se user bloqueou ou
     nunca falou com o bot em privado."""
     if bot is None or not royal_id:
@@ -1297,7 +1319,8 @@ async def notify_level_up_dm(user_id: int, royal_id: str, name: str,
         if class_id and class_id in CLASSES:
             class_name = CLASSES[class_id].get("name", "")
         png = await asyncio.to_thread(
-            render_levelup_card, royal_id, name, new_level, class_name)
+            render_levelup_card, royal_id, name, new_level, class_name,
+            avatar_slug)
         caption = term_block(
             "LEVEL_UP",
             f"<b>NÍVEL {new_level:02d} ATINGIDO</b>\n"
@@ -1495,6 +1518,8 @@ def build_profile_card_data(chat_id: int, user_id: int) -> ProfileCardData:
         gold=p.get("gold", 0),
         msg_count=p.get("rpg_message_count", 0),
         joined_str=joined_str,
+        avatar_slug=royal_avatars.resolve_slug(
+            p.get("avatar_slug"), royal_id),
     )
 
 
@@ -2594,6 +2619,166 @@ async def royal_perfil(message: Message):
         await send_profile_card(message.chat.id, owner_chat, message.from_user.id)
 
 
+# === /royalavatar ===
+
+AVATAR_MOSAIC_MARKER = "AVATAR.SYS"
+
+
+class AvatarReplyFilter(Filter):
+    """Matcheia apenas mensagens que sao reply ao mosaico do /royalavatar
+    contendo um numero 1..36. Retorna False (cai pro proximo handler) caso
+    contrario, pra nao engolir mensagens normais."""
+
+    async def __call__(self, message: Message) -> bool:
+        rep = message.reply_to_message
+        if rep is None or rep.from_user is None or not rep.from_user.is_bot:
+            return False
+        cap = rep.caption or rep.text or ""
+        if AVATAR_MOSAIC_MARKER not in cap or "ESCOLHA SEU AVATAR" not in cap:
+            return False
+        txt = (message.text or "").strip()
+        if not txt.isdigit():
+            return False
+        n = int(txt)
+        return 1 <= n <= len(royal_avatars.SLUGS)
+
+
+@dp.message(Command("royalavatar"))
+async def royal_avatar_cmd(message: Message):
+    if not message.from_user:
+        return
+    await react_to(message.chat.id, message.message_id, "👀")
+    # Resolve em qual chat-dono este user tem perfil RPG
+    if is_group(message):
+        owner_chat = message.chat.id
+        ensure_chat(message.chat.id, message.chat.title)
+        ensure_player(message.chat.id, message.from_user.id)
+        db.commit()
+    else:
+        owner_chat = resolve_owner_chat(message.from_user.id)
+        if owner_chat is None:
+            await message.answer(
+                "😶 Você ainda não tem perfil no Reino.\n"
+                "Envie uma mensagem no grupo Royal para começar!")
+            return
+
+    p = get_player(owner_chat, message.from_user.id)
+    if not p:
+        await message.answer("😶 Você ainda não tem perfil no Reino.")
+        return
+
+    season = current_season_label()
+    royal_id = p.get("royal_id") or ""
+    cur_slug = royal_avatars.resolve_slug(p.get("avatar_slug"), royal_id)
+    cur_num = royal_avatars.number_of(cur_slug)
+    cur_name = royal_avatars.display_name(cur_slug)
+    is_default = not p.get("avatar_slug")
+
+    # Bloqueio: ja escolheu nesta temporada
+    if p.get("avatar_slug") and p.get("avatar_season") == season:
+        msg = await message.answer(term_block(
+            "AVATAR.SYS",
+            (f"<b>!! Voce ja escolheu seu avatar nesta temporada.</b>\n"
+             f"<i>Atual: #{cur_num:02d} {cur_name}</i>\n"
+             f"// Proxima troca disponivel na proxima temporada."),
+            status="BLOQUEADO", status_color="HOT",
+            stamp=season,
+        ))
+        await auto_delete_after(msg, delay=15.0)
+        return
+
+    await safe_typing(message.chat.id, "upload_photo")
+    png = royal_avatars.mosaic_bytes()
+    if not png:
+        await message.answer("⚠️ Mosaico de avatares indisponivel.")
+        return
+
+    atual_label = (f"<i>Atual (default): #{cur_num:02d} {cur_name}</i>"
+                   if is_default else
+                   f"<i>Atual: #{cur_num:02d} {cur_name}</i>")
+    caption = term_block(
+        AVATAR_MOSAIC_MARKER,
+        (f"<b>👑 ESCOLHA SEU AVATAR</b>\n"
+         f"{atual_label}\n\n"
+         f"<b>&gt;&gt; Responda esta mensagem com um numero de 1 a 36.</b>\n"
+         f"⚠️ A escolha vale por toda a temporada (so podera trocar na proxima)."),
+        status="ESCOLHA", status_color="ACID",
+        stamp=season,
+    )
+    await message.answer_photo(
+        BufferedInputFile(png, filename="royal_avatares_mosaico.png"),
+        caption=caption,
+    )
+
+
+@dp.message(AvatarReplyFilter())
+async def handle_avatar_reply(message: Message):
+    if not message.from_user:
+        return
+    n = int((message.text or "").strip())
+    slug = royal_avatars.slug_at(n)
+    if slug is None:
+        return  # filtro ja validou range, defensivo
+
+    # Resolve chat-dono
+    if is_group(message):
+        owner_chat = message.chat.id
+    else:
+        owner_chat = resolve_owner_chat(message.from_user.id)
+        if owner_chat is None:
+            return
+
+    p = get_player(owner_chat, message.from_user.id)
+    if not p:
+        ack = await message.reply("😶 Voce ainda nao tem perfil no Reino.")
+        await auto_delete_after(ack, delay=8.0)
+        return
+
+    season = current_season_label()
+    if p.get("avatar_slug") and p.get("avatar_season") == season:
+        cur_slug = p["avatar_slug"]
+        ack = await message.reply(
+            f"❌ Voce ja escolheu seu avatar nesta temporada "
+            f"(#{royal_avatars.number_of(cur_slug):02d} "
+            f"{royal_avatars.display_name(cur_slug)}). "
+            f"Proxima troca disponivel na proxima temporada."
+        )
+        await auto_delete_after(ack, delay=12.0)
+        return
+
+    cur.execute(
+        "UPDATE players SET avatar_slug=?, avatar_season=? "
+        "WHERE chat_id=? AND user_id=?",
+        (slug, season, owner_chat, message.from_user.id),
+    )
+    db.commit()
+    # Invalida o card cacheado (proximo /royalperfil re-renderiza com o novo avatar)
+
+    name = royal_avatars.display_name(slug)
+    royal_id = p.get("royal_id") or ""
+    caption = term_block(
+        AVATAR_MOSAIC_MARKER,
+        (f"<b>✅ Avatar atualizado: #{n:02d} {name}</b>\n"
+         f"<i>Esta escolha vale por toda a temporada {season}.</i>\n"
+         f"// Use /royalperfil para ver o novo card."),
+        status="OK", status_color="ACID",
+        stamp=royal_id,
+    )
+    fp = os.path.join(os.path.dirname(__file__),
+                      "assets", "avatars", f"{slug}.png")
+    try:
+        with open(fp, "rb") as f:
+            png = f.read()
+        await message.reply_photo(
+            BufferedInputFile(png, filename=f"avatar-{slug}.png"),
+            caption=caption,
+            **effect_kw(message.chat.type, EFFECT_PARTY),
+        )
+    except Exception:
+        await message.reply(
+            caption, **effect_kw(message.chat.type, EFFECT_PARTY))
+
+
 # === /royalup ===
 
 @dp.message(Command("royalup"))
@@ -2791,7 +2976,8 @@ async def royal_ranking(message: Message):
 async def send_ranking(source_chat_id: int, *, target_chat_id: int) -> None:
     """Envia ranking: card pódio (top 3) + caption com top 10."""
     cur.execute(
-        "SELECT royal_id, user_id, season_xp, total_xp FROM players "
+        "SELECT royal_id, user_id, season_xp, total_xp, avatar_slug "
+        "FROM players "
         "WHERE chat_id=? AND season_xp > 0 AND privacy_hide_ranking=0 "
         "ORDER BY season_xp DESC LIMIT 10", (source_chat_id,))
     rows = cur.fetchall()
@@ -2823,7 +3009,9 @@ async def send_ranking(source_chat_id: int, *, target_chat_id: int) -> None:
         )
         entries.append(RankingEntry(
             rank=i, royal_id=r["royal_id"], name=card_name,
-            season_xp=int(r["season_xp"]), level=int(full_lvl)))
+            season_xp=int(r["season_xp"]), level=int(full_lvl),
+            avatar_slug=royal_avatars.resolve_slug(
+                r["avatar_slug"], r["royal_id"])))
 
     body = "\n".join(lines)
     caption = term_block("RANKING", body,
@@ -3792,6 +3980,7 @@ async def register_bot_commands():
         BotCommand(command="royal",             description="👑 Menu principal"),
         BotCommand(command="royalperfil",       description="📜 Ver perfil"),
         BotCommand(command="royalficha",        description="📜 Ver ficha"),
+        BotCommand(command="royalavatar",       description="👑 Escolher avatar"),
         BotCommand(command="royalup",           description="⬆️ Distribuir pontos"),
         BotCommand(command="royalclasse",       description="🎭 Escolher classe"),
         BotCommand(command="royalinventario",   description="🎒 Ver inventário"),
@@ -3812,6 +4001,7 @@ async def register_bot_commands():
     private_cmds = [
         BotCommand(command="royal",             description="👑 Menu principal"),
         BotCommand(command="royalperfil",       description="📜 Meu perfil"),
+        BotCommand(command="royalavatar",       description="👑 Escolher avatar"),
         BotCommand(command="royaltutorial",     description="📖 Como jogar"),
         BotCommand(command="royalajuda",        description="❓ Ajuda"),
         BotCommand(command="royalprivacidade",  description="🔒 Privacidade"),
