@@ -98,7 +98,7 @@
 - **Solução:** helper `cap1024(s)` aplicado em todo send_photo. Adicionar test.
 - **Aceite:** caption longa renderiza com `...` em vez de errar.
 
-**F17 · `inline_query` sem `cache_time` configurado** 🟢🟢
+**F17 · ✅ FEITO — `inline_query` sem `cache_time` configurado** 🟢🟢
 - **Diagnóstico:** Telegram default = 300s; pra perfil que muda raramente podia ser 3600. Reduz custo do bot.
 - **Solução:** `answer(results, cache_time=3600, is_personal=True)`.
 - **Aceite:** mesma query repetida não dispara handler.
@@ -113,7 +113,7 @@
 - **Solução:** cache em disco (`/data/avatar_cache/{uid}.jpg`) com TTL 7d + LRU eviction.
 - **Aceite:** segundo render do mesmo perfil < 100ms.
 
-**F20 · `_ensure_db_persistence` não valida integridade do seed** 🟢🟢
+**F20 · ✅ FEITO — `_ensure_db_persistence` não valida integridade do seed** 🟢🟢
 - **Diagnóstico:** Se seed corrompido no repo, bota DB ruim no volume — sem retorno.
 - **Solução:** `PRAGMA integrity_check` antes do copy; fallback pra DB vazio + log fatal.
 - **Aceite:** seed propositalmente corrompido detectado no boot.

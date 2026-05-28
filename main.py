@@ -208,6 +208,22 @@ DB_DIR = os.path.dirname(DB_PATH) or "."
 os.makedirs(DB_DIR, exist_ok=True)
 
 
+def _sqlite_integrity_ok(path: str) -> tuple[bool, str]:
+    """F20: PRAGMA integrity_check. Retorna (ok, detail).
+    'ok' eh a unica resposta valida pro SQLite. Qualquer outra coisa
+    significa corrupcao (pages erradas, indexes batidos, etc)."""
+    try:
+        conn = sqlite3.connect(path)
+        try:
+            row = conn.execute("PRAGMA integrity_check").fetchone()
+            detail = (row[0] if row else "no-result")
+            return (detail == "ok", str(detail))
+        finally:
+            conn.close()
+    except Exception as e:
+        return (False, f"open-failed: {type(e).__name__}: {e}")
+
+
 def _ensure_db_persistence() -> None:
     """
     Garante persistencia do DB entre deploys.
@@ -215,7 +231,10 @@ def _ensure_db_persistence() -> None:
     - Loga path absoluto + tamanho atual do arquivo.
     - Se DB_PATH aponta pra lugar vazio (1a boot apos volume novo no
       Railway) e existe um seed no repo em ./data/royal_casorios.sqlite3,
-      copia ele pra la (one-time bootstrap).
+      valida integridade do seed e copia (one-time bootstrap). Se o seed
+      estiver corrompido, cria DB vazio + log fatal.
+    - F20: roda integrity_check no DB final pra detectar corrupcao em
+      uso (volume com problema, etc). Loga warning, nao crasha.
     - Avisa em CAPS se DB_PATH eh relativo (provavelmente efemero em
       container sem volume mountado).
     """
@@ -228,12 +247,21 @@ def _ensure_db_persistence() -> None:
         logger.info("[DB] usando %s (%d KB)", target, size_kb)
     else:
         if os.path.exists(repo_seed) and repo_seed != target:
-            shutil.copy2(repo_seed, target)
-            size_kb = os.path.getsize(target) // 1024
-            logger.warning(
-                "[DB] BOOTSTRAP: copiei seed do repo %s -> %s (%d KB)",
-                repo_seed, target, size_kb,
-            )
+            # F20: valida seed ANTES de copiar pro volume. Se quebrado,
+            # nao bota lixo dentro do volume — boota com DB vazio.
+            seed_ok, seed_detail = _sqlite_integrity_ok(repo_seed)
+            if not seed_ok:
+                logger.error(
+                    "[DB] !! SEED CORROMPIDO em %s (%s) — pulando copy, "
+                    "vou criar DB vazio em %s",
+                    repo_seed, seed_detail, target)
+            else:
+                shutil.copy2(repo_seed, target)
+                size_kb = os.path.getsize(target) // 1024
+                logger.warning(
+                    "[DB] BOOTSTRAP: copiei seed do repo %s -> %s (%d KB)",
+                    repo_seed, target, size_kb,
+                )
         else:
             logger.warning("[DB] criando NOVO arquivo vazio em %s", target)
 
@@ -245,6 +273,16 @@ def _ensure_db_persistence() -> None:
             "DATABASE_PATH=/data/royal_casorios.sqlite3",
             DB_PATH,
         )
+
+    # F20: integrity check do DB em uso. Falha NAO crasha (bot pode
+    # responder commands manuais mesmo com corrupcao parcial — melhor
+    # ver no log do que tomar restart loop).
+    if os.path.exists(target):
+        ok, detail = _sqlite_integrity_ok(target)
+        if ok:
+            logger.info("[DB] integrity_check ok")
+        else:
+            logger.error("[DB] !! INTEGRITY_CHECK FALHOU: %s", detail)
 
 
 _ensure_db_persistence()
@@ -4635,6 +4673,9 @@ async def inline_profile(iq: InlineQuery):
         identity_fid = _get_identity_card_file_id(owner_chat, uid)
 
     if identity_fid:
+        # F17: cache_time alto (1h) — identity card so muda quando o
+        # sweep regenera (raro). Reduz handler calls em ~99% pra mesma
+        # query repetida. is_personal=True garante isolamento por user.
         await iq.answer(
             results=[InlineQueryResultCachedPhoto(
                 id=f"identity-{owner_chat}-{uid}",
@@ -4642,7 +4683,7 @@ async def inline_profile(iq: InlineQuery):
                 caption=f"<b>{html.escape(royal_id)}</b> // Jogador do Reino",
                 parse_mode="HTML",
             )],
-            cache_time=30,
+            cache_time=3600,
             is_personal=True,
         )
         return
