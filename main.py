@@ -15,6 +15,7 @@ Roda como worker (sem frontend) em Railway com volume SQLite alocado.
 import asyncio
 import html
 import io
+import json
 import logging
 import os
 import random
@@ -100,18 +101,62 @@ import hashlib
 # CONFIG & LOGGING
 # =====================================================================
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+# F12: logs estruturados (JSON) opt-in via env. Default mantem o formato
+# legivel pra DM/gist. Em produção (Railway) ative LOG_JSON=1 pra ingest
+# em Logtail/Better Stack/Grafana Loki/etc. Ring buffer sempre usa o
+# formato legivel (humano le /royallog na DM).
+LOG_JSON = os.getenv("LOG_JSON", "0") == "1"
+_HUMAN_FMT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
+
+
+class _JsonFormatter(logging.Formatter):
+    """Formatter compacto: 1 linha JSON por record. Compativel com
+    qualquer log aggregator. Inclui exception info quando houver."""
+    def format(self, record: logging.LogRecord) -> str:
+        payload: dict = {
+            "ts": self.formatTime(record, "%Y-%m-%dT%H:%M:%S"),
+            "lvl": record.levelname,
+            "logger": record.name,
+            "msg": record.getMessage(),
+        }
+        if record.exc_info:
+            payload["exc"] = self.formatException(record.exc_info)
+        # Permite logger.info("...", extra={"uid": 123, ...}) → vira top-level.
+        for k, v in record.__dict__.items():
+            if k in ("args", "asctime", "created", "exc_info", "exc_text",
+                     "filename", "funcName", "levelname", "levelno",
+                     "lineno", "message", "module", "msecs", "msg",
+                     "name", "pathname", "process", "processName",
+                     "relativeCreated", "stack_info", "thread",
+                     "threadName", "taskName"):
+                continue
+            try:
+                json.dumps(v)
+                payload[k] = v
+            except Exception:
+                payload[k] = repr(v)
+        try:
+            return json.dumps(payload, ensure_ascii=False)
+        except Exception:
+            return f'{{"lvl":"{record.levelname}","msg":"<unserializable>"}}'
+
+
+_root_handler = logging.StreamHandler()
+_root_handler.setFormatter(_JsonFormatter() if LOG_JSON
+                            else logging.Formatter(_HUMAN_FMT))
+logging.basicConfig(level=logging.INFO, handlers=[_root_handler], force=True)
 logger = logging.getLogger("royal-casorios")
 
 
 # Ring buffer dos ultimos N log records. Alimenta /royallog e log_dump_job.
 class _LogRingBuffer(logging.Handler):
-    """Handler que mantem em memoria as ultimas N linhas formatadas."""
+    """Handler que mantem em memoria as ultimas N linhas formatadas
+    (sempre no formato humano, mesmo com LOG_JSON ligado — o ring eh
+    consumido por humanos via /royallog na DM)."""
     def __init__(self, maxlen: int = 5000) -> None:
         super().__init__(level=logging.INFO)
         self.buffer: deque[str] = deque(maxlen=maxlen)
-        self.setFormatter(logging.Formatter(
-            "%(asctime)s %(levelname)s %(name)s: %(message)s"))
+        self.setFormatter(logging.Formatter(_HUMAN_FMT))
 
     def emit(self, record: logging.LogRecord) -> None:
         try:
@@ -2538,19 +2583,67 @@ async def get_user_photo_file_id(user_id: int) -> str | None:
     return None
 
 
+_AVATAR_CACHE_DIR = os.path.join(
+    os.path.dirname(os.path.abspath(DB_PATH)) or ".", "avatar_cache")
+_AVATAR_CACHE_MAX_BYTES = 512 * 1024  # cap defensivo por arquivo
+
+
+def _avatar_cache_paths(user_id: int) -> tuple[str, str]:
+    base = os.path.join(_AVATAR_CACHE_DIR, str(user_id))
+    return base + ".bin", base + ".meta"
+
+
 async def get_user_photo_bytes(user_id: int) -> bytes | None:
-    """Baixa os bytes da foto de perfil pra renderizar dentro de cards."""
+    """Baixa os bytes da foto de perfil pra renderizar dentro de cards.
+    F19: cache em disco por user_id, invalidado quando o file_id muda.
+    Mora junto do DB (volume persistido no Railway). Custo zero quando
+    o avatar nao muda — economia grande no render path do profile card
+    (que hoje baixa os bytes a cada /royalperfil)."""
     assert bot is not None
     file_id = await get_user_photo_file_id(user_id)
     if not file_id:
         return None
+    bin_path, meta_path = _avatar_cache_paths(user_id)
+    try:
+        if (os.path.exists(bin_path) and os.path.exists(meta_path)
+                and os.path.getsize(bin_path) <= _AVATAR_CACHE_MAX_BYTES):
+            with open(meta_path, "r", encoding="utf-8") as f:
+                if f.read().strip() == file_id:
+                    with open(bin_path, "rb") as bf:
+                        return bf.read()
+    except Exception:
+        logger.warning("[F19] avatar disk cache read fail uid=%d",
+                       user_id, exc_info=True)
     try:
         buf = io.BytesIO()
         await bot.download(file_id, destination=buf)
-        return buf.getvalue()
+        data = buf.getvalue()
     except Exception:
-        logger.warning("download avatar bytes failed uid=%d", user_id, exc_info=True)
+        logger.warning("download avatar bytes failed uid=%d", user_id,
+                       exc_info=True)
         return None
+    try:
+        os.makedirs(_AVATAR_CACHE_DIR, exist_ok=True)
+        if len(data) <= _AVATAR_CACHE_MAX_BYTES:
+            # F19: writes atomicos (tmp + os.replace) pra evitar
+            # bin truncado + meta valido se o processo morrer durante
+            # write — cenario do Railway com SIGKILL em redeploy.
+            tmp_bin = bin_path + ".tmp"
+            tmp_meta = meta_path + ".tmp"
+            with open(tmp_bin, "wb") as bf:
+                bf.write(data)
+                bf.flush()
+                os.fsync(bf.fileno())
+            os.replace(tmp_bin, bin_path)
+            with open(tmp_meta, "w", encoding="utf-8") as f:
+                f.write(file_id)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_meta, meta_path)
+    except Exception:
+        logger.warning("[F19] avatar disk cache write fail uid=%d",
+                       user_id, exc_info=True)
+    return data
 
 
 # =====================================================================
