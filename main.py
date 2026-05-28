@@ -4430,24 +4430,34 @@ async def dados_cb(cb: CallbackQuery):
 
 def _extract_text_mentioned_users(message: Message) -> list[tuple[int, str]]:
     """Retorna [(user_id, display_name), ...] de text_mentions em
-    entities + caption_entities (audio/voice tem caption_entities)."""
+    entities + caption_entities (audio/voice tem caption_entities).
+    Loga entity-a-entity pra debug do music bot bridge."""
     out: list[tuple[int, str]] = []
     seen: set[int] = set()
-    sources = []
+    sources: list[tuple[str, list]] = []
     if message.entities:
-        sources.append(message.entities)
+        sources.append(("entities", message.entities))
     if message.caption_entities:
-        sources.append(message.caption_entities)
-    for entlist in sources:
-        for ent in entlist:
-            if ent.type != "text_mention" or not ent.user:
+        sources.append(("caption_entities", message.caption_entities))
+    for label, entlist in sources:
+        for i, ent in enumerate(entlist):
+            u = getattr(ent, "user", None)
+            uid = getattr(u, "id", None) if u else None
+            is_bot = getattr(u, "is_bot", None) if u else None
+            logger.info(
+                "[MUSIC_BOT] ent[%s#%d] type=%s offset=%s length=%s user_id=%s is_bot=%s",
+                label, i, ent.type, ent.offset, ent.length, uid, is_bot,
+            )
+            if ent.type != "text_mention":
                 continue
-            u = ent.user
-            if u.is_bot or u.id in seen:
+            if not u or uid is None:
+                logger.warning("[MUSIC_BOT] text_mention sem User populado — entity ignorada")
                 continue
-            seen.add(u.id)
-            nm = (u.full_name or u.username or f"user{u.id}")
-            out.append((u.id, nm))
+            if is_bot or uid in seen:
+                continue
+            seen.add(uid)
+            nm = (u.full_name or u.username or f"user{uid}")
+            out.append((uid, nm))
     return out
 
 
@@ -4461,6 +4471,16 @@ async def handle_music_bot_post(message: Message):
     if MUSIC_BOT_ID == 0:
         return
     chat_id = message.chat.id
+    sc = message.sender_chat
+    logger.info(
+        "[MUSIC_BOT] recebido chat=%d mid=%d ctype=%s from_user_id=%s sender_chat_id=%s "
+        "has_text=%s has_caption=%s entities=%d caption_entities=%d",
+        chat_id, message.message_id, message.content_type,
+        (message.from_user.id if message.from_user else None),
+        (sc.id if sc else None),
+        bool(message.text), bool(message.caption),
+        len(message.entities or []), len(message.caption_entities or []),
+    )
     try:
         ensure_chat(chat_id, message.chat.title)
     except Exception:
@@ -4468,7 +4488,7 @@ async def handle_music_bot_post(message: Message):
 
     mentioned = _extract_text_mentioned_users(message)
     if not mentioned:
-        logger.info("music bot post sem text_mention chat=%d mid=%d",
+        logger.info("[MUSIC_BOT] nenhum text_mention valido chat=%d mid=%d",
                     chat_id, message.message_id)
         return
 
