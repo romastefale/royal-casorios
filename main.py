@@ -101,7 +101,7 @@ XP_COOLDOWN_REPLY_SECONDS = 30
 # enxergar mensagens deste bot no grupo.
 MUSIC_BOT_ID = 8589834936
 MUSIC_BOT_XP_MULTIPLIER = 3
-MUSIC_BOT_REACTION = "✨"
+MUSIC_BOT_REACTION = "🔥"  # whitelist oficial do Telegram (✨ NAO esta na lista → REACTION_INVALID)
 XP_PALAVRA_MIN = 30
 XP_PALAVRA_MAX = 75
 XP_PALAVRA_WIN_BONUS = 150
