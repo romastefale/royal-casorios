@@ -1280,6 +1280,8 @@ def _schedule_levelup_dm(chat_id: int, user_id: int,
     royal_id = player.get("royal_id") or ""
     class_id = player.get("class_id")
     name = anonize(get_name(chat_id, user_id), royal_id)
+    # Card PNG não renderiza fontes "fancy" Unicode → cai pro @username.
+    name = card_safe_name(chat_id, user_id, name, royal_id)
     loop.create_task(notify_level_up_dm(
         user_id, royal_id, name, new_lvl, class_id))
 
