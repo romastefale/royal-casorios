@@ -471,6 +471,20 @@ def migrate_to_v7(c: sqlite3.Cursor) -> None:
         ")")
 
 
+def migrate_to_v8(c: sqlite3.Cursor) -> None:
+    """Mute per-chat: /royalmudo (owner) silencia auto-posts no grupo
+    durante deploys/manutencao. Comandos manuais continuam respondendo."""
+    for col, ddl in (
+        ("muted",    "ALTER TABLE chats_rpg ADD COLUMN muted INTEGER DEFAULT 0"),
+        ("muted_at", "ALTER TABLE chats_rpg ADD COLUMN muted_at TEXT"),
+    ):
+        try:
+            c.execute(ddl)
+        except sqlite3.OperationalError as e:
+            if "duplicate column" not in str(e).lower():
+                raise
+
+
 def migrate_to_v6(c: sqlite3.Cursor) -> None:
     """Randomiza royal_ids existentes (RYL-0001, 0002... -> RYL-NNNN
     sortidos entre 1000-9999). Pool por chat = 9000, retry on collision.
@@ -519,6 +533,7 @@ MIGRATIONS = [
     (5, migrate_to_v5),
     (6, migrate_to_v6),
     (7, migrate_to_v7),
+    (8, migrate_to_v8),
 ]
 
 
@@ -537,6 +552,26 @@ def bot_meta_set(key: str, value: str) -> None:
         "ON CONFLICT(key) DO UPDATE SET value=excluded.value, "
         "updated_at=excluded.updated_at",
         (key, value, utc_iso()))
+    db.commit()
+
+
+def is_chat_muted(chat_id: int) -> bool:
+    """True se /royalmudo ON pra esse chat. Falha-segura: False em erro."""
+    try:
+        row = cur.execute(
+            "SELECT muted FROM chats_rpg WHERE chat_id=?", (chat_id,)).fetchone()
+        return bool(row and row["muted"])
+    except Exception:
+        return False
+
+
+def set_chat_muted(chat_id: int, muted: bool) -> None:
+    """Liga/desliga mute do chat. Cria row em chats_rpg se nao existir."""
+    cur.execute(
+        "INSERT INTO chats_rpg (chat_id, muted, muted_at) VALUES (?, ?, ?) "
+        "ON CONFLICT(chat_id) DO UPDATE SET muted=excluded.muted, "
+        "muted_at=excluded.muted_at",
+        (chat_id, 1 if muted else 0, utc_iso() if muted else None))
     db.commit()
 
 
@@ -3089,6 +3124,8 @@ async def spawn_boss_if_due() -> None:
     cur.execute("SELECT chat_id FROM chats WHERE enabled=1")
     chats = [r["chat_id"] for r in cur.fetchall()]
     for chat_id in chats:
+        if is_chat_muted(chat_id):
+            continue  # mute: adia spawn ate desmutar (tick seguinte tenta)
         # ja spawnou esta semana?
         cur.execute(
             "SELECT 1 FROM bosses WHERE chat_id=? AND week_marker=? LIMIT 1",
@@ -4116,6 +4153,40 @@ async def royal_palavra_test(message: Message):
         return
     await safe_typing(message.chat.id, "upload_photo")
     await spawn_palavra(message.chat.id)
+
+
+# === /royalmudo (owner) — silencia auto-posts no grupo durante deploy ===
+
+@dp.message(Command("royalmudo"))
+async def royal_mudo(message: Message):
+    """Toggle mute do chat. Owner-only, group-only, NAO aparece no menu.
+    Quando ON: bot pula auto-casorios, auto-palavra, auto-boss, auto-chest
+    e anuncios one-shot. Comandos manuais continuam respondendo."""
+    if not is_group(message):
+        return
+    uid = message.from_user.id if message.from_user else 0
+    if OWNER_USER_ID is None or uid != OWNER_USER_ID:
+        return
+    chat_id = message.chat.id
+    new_state = not is_chat_muted(chat_id)
+    set_chat_muted(chat_id, new_state)
+    logger.info("[MUDO] chat=%d new_state=%s actor=%d",
+                chat_id, "ON" if new_state else "OFF", uid)
+    if new_state:
+        body = (">> <b>SILENCIADO</b>\n"
+                "<i>// auto-posts pausados (casorio/palavra/boss/chest/anuncios).</i>\n"
+                "<i>// comandos manuais continuam ativos.</i>\n"
+                "<i>// /royalmudo de novo pra desligar.</i>")
+        status, color = "MUDO", "AMBER"
+    else:
+        body = (">> <b>NORMALIZADO</b>\n"
+                "<i>// auto-posts religados.</i>\n"
+                "<i>// proxima palavra/casorio segue o agendamento normal.</i>")
+        status, color = "ON-AIR", "ACID"
+    ack = await message.answer(term_block("MUDO.SYS", body,
+                                          status=status, status_color=color))
+    if ack:
+        await auto_delete_after(ack, delay=12.0)
 
 
 # === /royalpalavra ===
@@ -5375,6 +5446,8 @@ async def scheduler():
                 for row in cur.fetchall():
                     if row["last_auto_post"] == marker:
                         continue
+                    if is_chat_muted(row["chat_id"]):
+                        continue
                     ok = await send_couple(row["chat_id"], source="auto")
                     if ok:
                         cur.execute("UPDATE chats SET last_auto_post=? WHERE chat_id=?",
@@ -5396,6 +5469,10 @@ async def scheduler():
                     schedule_next_palavra(chat_id)
                     continue
                 if now_local >= nxt:
+                    # Mute: nao spawna nem reagenda — fica pendente ate
+                    # desmutar (entao spawn vira na proxima tick).
+                    if is_chat_muted(chat_id):
+                        continue
                     # Spawna se nao tem um ativo
                     if not get_active_challenge(chat_id):
                         await spawn_palavra(chat_id)
@@ -5413,6 +5490,8 @@ async def scheduler():
                 )
                 pending = [dict(r) for r in cur.fetchall()]
                 for ch in pending:
+                    if is_chat_muted(ch["chat_id"]):
+                        continue  # adia spawn ate desmutar
                     await spawn_chest(ch["chat_id"], ch["id"])
                 await expire_old_chests()
             except Exception:
@@ -5532,6 +5611,9 @@ async def announce_typewriter_feature() -> None:
     for chat_id, n_players in chats:
         if TEST_CHAT_IDS and chat_id in TEST_CHAT_IDS:
             # Pula grupos de teste — anuncio so em prod
+            continue
+        if is_chat_muted(chat_id):
+            # /royalmudo ON — pula anuncio neste grupo
             continue
         try:
             cur.execute(
