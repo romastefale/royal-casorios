@@ -195,6 +195,50 @@ Flags persistidas em `user_dm_settings.prefs_json` (TEXT JSON; migration v12).
 
 **Comando:** `/royalconfig` — InlineKeyboard com 1 botão por flag (estilo verde=ON, vermelho=OFF). Callback `r:cfg:{key}` toggla e re-renderiza.
 
+## 🗺️ M05 — Quests diárias (`/royalmissoes`)
+
+4 missões diárias em `DAILY_QUESTS` (`main.py`), reset automático por dia (chave `today_key()`):
+| id | evento | target | recompensa |
+|---|---|---|---|
+| `msgs` 💬 | message | 20 msgs | +60 XP +30🪙 |
+| `palavra` 🎯 | palavra_win | 1 acerto | +80 XP +50🪙 |
+| `boss` 🐉 | boss_hit | 3 hits | +50 XP +40🪙 |
+| `social` 👍 | reaction | 5 reactions | +30 XP +20🪙 |
+
+**API:** `quest_bump(chat_id, uid, event, n=1)` incrementa progresso (cap no target, atomic via `MIN(progress+?, ?)`). Só roda em grupo (`chat_id<0`). `get_quest_state(chat_id, uid)` retorna lista com progress/done/claimed.
+
+**Triggers wired:** `track()` (message) · `attempt_word` win (palavra_win) · `boss_attack` (boss_hit) · `on_message_reaction` (reaction).
+
+**Comando:** `/royalmissoes` (DM/grupo via `resolve_dm_chat`) — barra de progresso + botão **Resgatar** (verde) por missão concluída. Callback `r:quest:{id}` faz claim atômico (`UPDATE … WHERE progress>=target AND claimed=0`), concede XP+gold.
+
+**Migration v13:** tabela `quest_progress` (PK `chat_id,user_id,day,quest_id`).
+
+## 👍 M06 — Reactions = XP
+
+Reagir com emoji a qualquer mensagem de grupo dá `REACTION_XP=3` XP, cap diário `REACTION_XP_DAILY_CAP=10` por user/chat.
+
+**Handler:** `@dp.message_reaction` (`on_message_reaction`) — só premia quando ADICIONA reaction (`len(new) > len(old)`), respeita mute, conta no cap (`reaction_xp_daily`), concede XP via `award_xp_immediate` + bump da quest `social`.
+
+⚠️ **Requer `allowed_updates` com `message_reaction`** — resolvido automaticamente em `main()` via `dp.resolve_used_update_types()` passado pro `start_polling`.
+
+**Migration v13:** tabela `reaction_xp_daily` (PK `chat_id,user_id,day`).
+
+## 🎉 M09 — Eventos sazonais (boost de XP) — `/royalevento`
+
+Boost de XP global por data, sem DB — pura lógica em `SEASONAL_EVENTS` (`main.py`):
+| evento | data | mult |
+|---|---|---|
+| 🎆 Reveillon Real | 31/12–01/01 | 2.0× |
+| 🎄 Natal dos Nobres | 24–25/12 | 2.0× |
+| 🔥 Festa Junina Real | 23–24/06 | 1.5× |
+| 🎃 Noite Sombria | 31/10 | 1.5× |
+| ❤️ Dia dos Namorados | 12/06 | 1.5× |
+| 🍻 Fim de Semana Real | sáb/dom (fallback) | 1.5× |
+
+**API:** `active_seasonal_event(d=None)` (datas especiais > FDS) · `event_xp_mult()` retorna float. Aplicado em `award_xp_immediate` e `award_xp_message` (depois dos bônus de classe/casamento).
+
+**Comando:** `/royalevento` — mostra evento ativo (ON-AIR/OFFLINE).
+
 ## 🔧 Env vars
 
 - `BOT_TOKEN` (obrigatório) — token do BotFather

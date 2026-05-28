@@ -52,6 +52,7 @@ from aiogram.types import (
     KeyboardButton,
     LabeledPrice,
     Message,
+    MessageReactionUpdated,
     PreCheckoutQuery,
     ReactionTypeEmoji,
     ReplyKeyboardMarkup,
@@ -240,6 +241,42 @@ STARTING_GOLD = 50
 GOLD_PALAVRA_WIN = 50
 GOLD_BOSS_KILL_TOTAL = 500
 COUPLE_XP_BUFF = 0.10  # +10% XP enquanto casado
+
+# M06 — Reactions = XP (cap diario anti-abuso)
+REACTION_XP = 3
+REACTION_XP_DAILY_CAP = 10
+
+# M05 — Quests diarias (reset automatico por dia via today_key())
+DAILY_QUESTS = [
+    {"id": "msgs", "icon": "💬",
+     "desc": "Mande 20 mensagens no reino",
+     "target": 20, "xp": 60, "gold": 30, "event": "message"},
+    {"id": "palavra", "icon": "🎯",
+     "desc": "Acerte 1 PALAVRA da Hora",
+     "target": 1, "xp": 80, "gold": 50, "event": "palavra_win"},
+    {"id": "boss", "icon": "🐉",
+     "desc": "Acerte o Boss da Semana 3x",
+     "target": 3, "xp": 50, "gold": 40, "event": "boss_hit"},
+    {"id": "social", "icon": "👍",
+     "desc": "Reaja a 5 mensagens",
+     "target": 5, "xp": 30, "gold": 20, "event": "reaction"},
+]
+DAILY_QUESTS_BY_ID = {q["id"]: q for q in DAILY_QUESTS}
+
+# M09 — Eventos sazonais (boost de XP global por data). Ranges (mes, dia);
+# start>end cruza a virada de ano. Fim de semana tem boost fallback.
+SEASONAL_EVENTS = [
+    {"id": "reveillon", "label": "🎆 Reveillon Real",
+     "start": (12, 31), "end": (1, 1), "xp_mult": 2.0},
+    {"id": "natal", "label": "🎄 Natal dos Nobres",
+     "start": (12, 24), "end": (12, 25), "xp_mult": 2.0},
+    {"id": "sao_joao", "label": "🔥 Festa Junina Real",
+     "start": (6, 23), "end": (6, 24), "xp_mult": 1.5},
+    {"id": "halloween", "label": "🎃 Noite Sombria",
+     "start": (10, 31), "end": (10, 31), "xp_mult": 1.5},
+    {"id": "dia_namorados", "label": "❤️ Dia dos Namorados",
+     "start": (6, 12), "end": (6, 12), "xp_mult": 1.5},
+]
 
 # Atributos
 ATTR_START = 5
@@ -810,6 +847,36 @@ def migrate_to_v12(c: sqlite3.Cursor) -> None:
             raise
 
 
+def migrate_to_v13(c: sqlite3.Cursor) -> None:
+    """Sprint 4: M05 quests diarias + M06 reactions XP (cap diario).
+    - quest_progress: progresso por (chat, user, dia, quest); PK composta
+      garante 1 linha por missao/dia. claimed=1 trava double-claim.
+    - reaction_xp_daily: contador de reactions premiadas por user/dia
+      (cap anti-abuso em REACTION_XP_DAILY_CAP)."""
+    c.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS quest_progress (
+            chat_id  INTEGER NOT NULL,
+            user_id  INTEGER NOT NULL,
+            day      TEXT    NOT NULL,
+            quest_id TEXT    NOT NULL,
+            progress INTEGER NOT NULL DEFAULT 0,
+            claimed  INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (chat_id, user_id, day, quest_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_quest_day ON quest_progress(day);
+
+        CREATE TABLE IF NOT EXISTS reaction_xp_daily (
+            chat_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            day     TEXT    NOT NULL,
+            count   INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (chat_id, user_id, day)
+        );
+        """
+    )
+
+
 def migrate_to_v6(c: sqlite3.Cursor) -> None:
     """Randomiza royal_ids existentes (RYL-0001, 0002... -> RYL-NNNN
     sortidos entre 1000-9999). Pool por chat = 9000, retry on collision.
@@ -863,6 +930,7 @@ MIGRATIONS = [
     (10, migrate_to_v10),
     (11, migrate_to_v11),
     (12, migrate_to_v12),
+    (13, migrate_to_v13),
 ]
 
 
@@ -1262,6 +1330,82 @@ def current_season_label() -> str:
     mapping = {"primavera": "🌸 Primavera", "verao": "☀️ Verão",
                "outono": "🍂 Outono", "inverno": "❄️ Inverno"}
     return f"{mapping[name]} {year}"
+
+
+# =====================================================================
+# M09 — Eventos sazonais (boost de XP por data)
+# =====================================================================
+
+def active_seasonal_event(d: date | None = None) -> dict | None:
+    """Retorna o evento sazonal ativo hoje (ou boost de fim de semana),
+    ou None se nao houver. Datas especiais tem prioridade sobre o FDS."""
+    if d is None:
+        d = local_now().date()
+    md = (d.month, d.day)
+    for ev in SEASONAL_EVENTS:
+        s, e = ev["start"], ev["end"]
+        if s <= e:
+            if s <= md <= e:
+                return ev
+        else:  # cruza a virada de ano (ex.: 31/12 -> 01/01)
+            if md >= s or md <= e:
+                return ev
+    if d.weekday() >= 5:  # sabado(5)/domingo(6)
+        return {"id": "fds", "label": "🍻 Fim de Semana Real",
+                "xp_mult": 1.5}
+    return None
+
+
+def event_xp_mult() -> float:
+    """Multiplicador de XP do evento ativo (1.0 se nenhum)."""
+    ev = active_seasonal_event()
+    return float(ev["xp_mult"]) if ev else 1.0
+
+
+# =====================================================================
+# M05 — Quests diarias (progresso + claim)
+# =====================================================================
+
+def quest_bump(chat_id: int, user_id: int, event: str, n: int = 1) -> None:
+    """Incrementa o progresso das missoes diarias ligadas a `event`,
+    cap no target. No-op se ja claimed (claimed nao volta a contar mas
+    tambem nao quebra). Idempotente por (chat,user,dia,quest)."""
+    if chat_id >= 0:  # so em grupo
+        return
+    day = today_key()
+    try:
+        for q in DAILY_QUESTS:
+            if q["event"] != event:
+                continue
+            cur.execute(
+                "INSERT INTO quest_progress "
+                "(chat_id, user_id, day, quest_id, progress) "
+                "VALUES (?, ?, ?, ?, ?) "
+                "ON CONFLICT(chat_id, user_id, day, quest_id) "
+                "DO UPDATE SET progress=MIN(progress + ?, ?)",
+                (chat_id, user_id, day, q["id"], min(n, q["target"]),
+                 n, q["target"]))
+        db.commit()
+    except Exception:
+        logger.exception("quest_bump failed chat=%s uid=%s ev=%s",
+                         chat_id, user_id, event)
+
+
+def get_quest_state(chat_id: int, user_id: int) -> list[dict]:
+    """Estado das missoes do dia pro user: progress + claimed por quest."""
+    day = today_key()
+    rows = cur.execute(
+        "SELECT quest_id, progress, claimed FROM quest_progress "
+        "WHERE chat_id=? AND user_id=? AND day=?",
+        (chat_id, user_id, day)).fetchall()
+    state = {r["quest_id"]: (r["progress"], r["claimed"]) for r in rows}
+    out = []
+    for q in DAILY_QUESTS:
+        progress, claimed = state.get(q["id"], (0, 0))
+        out.append({**q, "progress": progress,
+                    "done": progress >= q["target"],
+                    "claimed": bool(claimed)})
+    return out
 
 
 def current_week_marker(d: datetime | None = None) -> str:
@@ -2749,6 +2893,10 @@ def award_xp_immediate(chat_id: int, user_id: int, amount: int, reason: str = ""
     # bonus de casamento ativo (+10%)
     if player_has_active_couple(chat_id, user_id):
         amount = int(amount * (1 + COUPLE_XP_BUFF))
+    # M09: boost de evento sazonal global
+    mult = event_xp_mult()
+    if mult != 1.0:
+        amount = int(amount * mult)
     if amount <= 0:
         return
     old_xp = player["total_xp"]
@@ -2794,6 +2942,10 @@ def award_xp_message(chat_id: int, user_id: int, is_reply: bool) -> None:
         real_amount = int(real_amount * 1.10)
     if player_has_active_couple(chat_id, user_id):
         real_amount = int(real_amount * (1 + COUPLE_XP_BUFF))
+    # M09: boost de evento sazonal global
+    _ev_mult = event_xp_mult()
+    if _ev_mult != 1.0:
+        real_amount = int(real_amount * _ev_mult)
     old_xp = player["total_xp"]
     new_xp = old_xp + real_amount
     old_lvl, *_ = level_progress(old_xp)
@@ -3549,6 +3701,8 @@ async def handle_palavra_attempt(message: Message, ch: dict) -> bool:
     db.commit()
     # M11: thresholds de PALAVRA (1, 10, 100)
     check_palavra_achievements(chat_id, uid)
+    # M05: quest diaria de PALAVRA
+    quest_bump(chat_id, uid, "palavra_win")
 
     # Atualiza mensagem
     cur.execute("SELECT * FROM challenges WHERE id=?", (ch["id"],))
@@ -3979,6 +4133,8 @@ async def handle_boss_attack(cb: CallbackQuery, boss_id: int) -> None:
         (boss_id, uid, damage, utc_iso()))
     db.commit()
     award_xp_immediate(chat_id, uid, XP_BOSS_HIT * damage // 2 + 5, reason="boss_hit")
+    # M05: quest diaria de boss
+    quest_bump(chat_id, uid, "boss_hit")
 
     await cb.answer(f"⚔️ Você causou {damage} de dano!", show_alert=False)
 
@@ -4248,7 +4404,16 @@ ROYAL_TUTORIAL = (
     "</blockquote>"
 
     "<blockquote expandable>"
-    "<b>>> PASSO 10 · TEMPORADAS</b>\n"
+    "<b>>> PASSO 10 · MISSOES &amp; EVENTOS</b>\n"
+    "<code>/royalmissoes</code> — missões diárias (manda msgs, "
+    "acerta PALAVRA, bate no boss, reage) → resgata <b>XP + 🪙</b>.\n"
+    "<code>/royalevento</code> — datas especiais e fins de semana "
+    "dão <b>boost de XP</b> em tudo.\n"
+    "<i>// reagir com emoji nas mensagens também dá XP (até 10/dia).</i>"
+    "</blockquote>"
+
+    "<blockquote expandable>"
+    "<b>>> PASSO 11 · TEMPORADAS</b>\n"
     "O reino segue as estações do ano. Cada temporada zera o "
     "ranking, mas <b>seu nível total fica.</b>\n"
     ">> <code>/royalranking</code> pra ver o top 10 atual."
@@ -4288,6 +4453,8 @@ async def start_cmd(message: Message):
         "• 🏰 /royalgrupo — trocar grupo ativo\n"
         "• 🔒 /royalprivacidade — controles\n"
         "• 📦 /royaldados — exportar / apagar\n"
+        "• 🗺️ /royalmissoes — missoes diarias (XP + florins)\n"
+        "• 🎉 /royalevento — evento de XP ativo agora\n"
         "• 🏅 /royalconquistas — suas medalhas\n"
         "• ⚙️ /royalconfig — preferencias (silenciar, esconder)\n"
         "• 📖 /royaltutorial — aprender a jogar\n"
@@ -4404,6 +4571,13 @@ ROYAL_HELP = (
     "  <i>(compra crédito em /royalloja → 💎 Premium)</i>\n"
     "/royalconquistas — vê quais medalhas você já desbloqueou\n"
     "/royalconfig — preferências (silenciar level-up, etc.)\n"
+    "</blockquote>\n"
+    "<blockquote expandable>🗺️ <b>Missões & Eventos</b>\n"
+    "/royalmissoes — missões diárias (manda msgs, acerta PALAVRA, "
+    "bate no boss, reage) → resgata XP + florins\n"
+    "/royalevento — vê o boost de XP ativo agora "
+    "<i>(datas especiais + fim de semana +50%)</i>\n"
+    "<i>💡 Reagir a mensagens (emoji) também dá XP — até 10/dia.</i>\n"
     "</blockquote>\n"
     "<blockquote expandable>📜 <b>Pessoal (DM ou grupo)</b>\n"
     "/royalinventario — ver seus itens\n"
@@ -6925,6 +7099,8 @@ async def track(message: Message):
             and message.reply_to_message.from_user.id != uid
         )
         award_xp_message(chat_id, uid, is_reply=is_reply)
+        # M05: quest diaria de mensagens
+        quest_bump(chat_id, uid, "message")
     except Exception:
         logger.exception("RPG XP failed")
 
@@ -7276,6 +7452,50 @@ async def royal_presentear(message: Message):
         **effect_kw(message.chat.type, EFFECT_HEART))
 
 
+# =====================================================================
+# M06 — Reactions = XP (cap diario anti-abuso)
+# =====================================================================
+
+@dp.message_reaction()
+async def on_message_reaction(event: MessageReactionUpdated):
+    """Premia XP quando o user ADICIONA uma reaction numa msg de grupo.
+    Cap diario REACTION_XP_DAILY_CAP por user/chat. Conta tambem pra
+    quest 'social' (M05)."""
+    try:
+        if event.chat.type not in {"group", "supergroup"}:
+            return
+        user = event.user
+        if not user or user.is_bot:
+            return
+        # so premia quando ADICIONA reaction (new > old)
+        if len(event.new_reaction or []) <= len(event.old_reaction or []):
+            return
+        chat_id = event.chat.id
+        uid = user.id
+        if is_chat_muted(chat_id):
+            return
+        day = today_key()
+        row = cur.execute(
+            "SELECT count FROM reaction_xp_daily "
+            "WHERE chat_id=? AND user_id=? AND day=?",
+            (chat_id, uid, day)).fetchone()
+        cnt = row["count"] if row else 0
+        if cnt >= REACTION_XP_DAILY_CAP:
+            return
+        ensure_player(chat_id, uid)
+        cur.execute(
+            "INSERT INTO reaction_xp_daily (chat_id, user_id, day, count) "
+            "VALUES (?, ?, ?, 1) "
+            "ON CONFLICT(chat_id, user_id, day) "
+            "DO UPDATE SET count=count+1",
+            (chat_id, uid, day))
+        db.commit()
+        award_xp_immediate(chat_id, uid, REACTION_XP, reason="reaction")
+        quest_bump(chat_id, uid, "reaction")
+    except Exception:
+        logger.exception("on_message_reaction failed")
+
+
 @dp.message(Command("royalpaldica"))
 async def royal_pal_dica(message: Message):
     """M03: consome 1 credito de prm_hints (comprado em /royalloja Premium)
@@ -7433,6 +7653,131 @@ async def cfg_cb(cb: CallbackQuery):
     await cb.answer(f"{key} = {'ON' if new_val else 'OFF'}")
 
 
+# =====================================================================
+# M05 — /royalmissoes  (quests diarias) + M09 — /royalevento
+# =====================================================================
+
+def _quests_render(chat_id: int, uid: int) -> tuple[str, InlineKeyboardMarkup | None]:
+    quests = get_quest_state(chat_id, uid)
+    lines = []
+    claimable = []
+    for q in quests:
+        bar = progress_bar(q["progress"], q["target"])
+        cnt = f"{min(q['progress'], q['target'])}/{q['target']}"
+        if q["claimed"]:
+            tag = "✅ <s>resgatada</s>"
+        elif q["done"]:
+            tag = "🎁 <b>pronta!</b>"
+            claimable.append(q)
+        else:
+            tag = ""
+        lines.append(
+            f"{q['icon']} <b>{html.escape(q['desc'])}</b> {tag}\n"
+            f"   <code>{bar}</code> {cnt} · "
+            f"+{q['xp']}XP +{q['gold']}🪙")
+    body = "\n".join(lines)
+    kb = None
+    if claimable:
+        rows = [[ikb(f"{BTN_OK} Resgatar {q['icon']}",
+                     callback_data=f"r:quest:{q['id']}", style=STYLE_OK)]
+                for q in claimable]
+        kb = InlineKeyboardMarkup(inline_keyboard=rows)
+    return body, kb
+
+
+@dp.message(Command("royalmissoes"))
+async def royal_missoes(message: Message):
+    """M05: lista as missoes diarias do user no chat ativo + claim."""
+    if not message.from_user:
+        return
+    owner_chat = await resolve_dm_chat(message, action_hint="ver missoes")
+    if owner_chat is None:
+        return
+    uid = message.from_user.id
+    body, kb = _quests_render(owner_chat, uid)
+    await message.answer(
+        term_block("MISSOES", body, status="DIARIAS",
+                   status_color="CYAN",
+                   stamp="reset 00:00 " + TZ_NAME),
+        reply_markup=kb)
+
+
+@dp.callback_query(F.data.startswith("r:quest:"))
+async def quest_claim_cb(cb: CallbackQuery):
+    if not cb.data or not cb.from_user or not cb.message:
+        return
+    qid = cb.data.split(":", 2)[2]
+    q = DAILY_QUESTS_BY_ID.get(qid)
+    if not q:
+        await cb.answer()
+        return
+    # resolve grupo dono da mensagem (DM ou grupo)
+    if cb.message.chat.type in {"group", "supergroup"}:
+        chat_id = cb.message.chat.id
+    else:
+        chat_id = get_dm_active_chat(cb.from_user.id) or 0
+    if not chat_id:
+        await cb.answer("Sem reino ativo.", show_alert=True)
+        return
+    uid = cb.from_user.id
+    day = today_key()
+    # garante linha em players antes de creditar gold (evita UPDATE no-op)
+    ensure_player(chat_id, uid)
+    # claim atomico: so se progress>=target E ainda nao claimed
+    cur.execute(
+        "UPDATE quest_progress SET claimed=1 "
+        "WHERE chat_id=? AND user_id=? AND day=? AND quest_id=? "
+        "AND progress>=? AND claimed=0",
+        (chat_id, uid, day, qid, q["target"]))
+    if cur.rowcount == 0:
+        db.commit()
+        await cb.answer("Missao nao concluida ou ja resgatada.",
+                        show_alert=True)
+        return
+    cur.execute("UPDATE players SET gold=gold+? WHERE chat_id=? AND user_id=?",
+                (q["gold"], chat_id, uid))
+    db.commit()
+    award_xp_immediate(chat_id, uid, q["xp"], reason="quest")
+    logger.info("[M05] claim uid=%s chat=%s quest=%s +%sXP +%s gold",
+                uid, chat_id, qid, q["xp"], q["gold"])
+    body, kb = _quests_render(chat_id, uid)
+    try:
+        await cb.message.edit_text(
+            term_block("MISSOES", body, status="DIARIAS",
+                       status_color="CYAN",
+                       stamp="reset 00:00 " + TZ_NAME),
+            reply_markup=kb)
+    except Exception:
+        pass
+    await cb.answer(f"🎁 +{q['xp']}XP +{q['gold']}🪙!", show_alert=False)
+
+
+@dp.message(Command("royalevento"))
+async def royal_evento(message: Message):
+    """M09: mostra o evento sazonal ativo (boost de XP) ou avisa que nao
+    ha nenhum no momento."""
+    ev = active_seasonal_event()
+    if ev:
+        pct = int(round((ev["xp_mult"] - 1.0) * 100))
+        body = (
+            f">> {ev['label']}\n"
+            f"// boost de <b>+{pct}% XP</b> em TODO o reino agora\n"
+            f"<i>vale pra mensagem, PALAVRA, boss, casorio e reactions.</i>"
+        )
+        await message.answer(term_block(
+            "EVENTO", body, status="ON-AIR", status_color="ACID",
+            stamp=current_season_label()))
+    else:
+        body = (
+            ">> nenhum evento ativo agora\n"
+            "// fins de semana tem <b>+50% XP</b> automatico\n"
+            "<i>fica de olho em datas especiais do reino.</i>"
+        )
+        await message.answer(term_block(
+            "EVENTO", body, status="OFFLINE", status_color="AMBER",
+            stamp=current_season_label()))
+
+
 async def healthcheck():
     while True:
         await asyncio.sleep(300)
@@ -7470,6 +7815,8 @@ async def register_bot_commands():
         BotCommand(command="royaldesencalhar",  description="💘 Voltar pros casórios"),
         BotCommand(command="royalpresentear",   description="🎁 Presentear florins"),
         BotCommand(command="royalpaldica",      description="💡 Usar dica de PALAVRA"),
+        BotCommand(command="royalmissoes",      description="🗺️ Missões diárias"),
+        BotCommand(command="royalevento",       description="🎉 Evento ativo"),
         BotCommand(command="royalconquistas",   description="🏅 Conquistas"),
         BotCommand(command="royalcasar",        description="💍 (admin) Forçar casório"),
         BotCommand(command="royalativar",       description="🔧 (admin) Ativar bot"),
@@ -7485,6 +7832,8 @@ async def register_bot_commands():
         BotCommand(command="royalinventario",   description="🎒 Inventário"),
         BotCommand(command="royalsaldo",        description="💰 Saldo"),
         BotCommand(command="royalmeuscasorios", description="📊 Meus casórios"),
+        BotCommand(command="royalmissoes",      description="🗺️ Missões diárias"),
+        BotCommand(command="royalevento",       description="🎉 Evento ativo"),
         BotCommand(command="royalconquistas",   description="🏅 Conquistas"),
         BotCommand(command="royalconfig",       description="⚙️ Preferências"),
         BotCommand(command="royalgrupo",        description="🏰 Trocar grupo ativo"),
@@ -7589,7 +7938,11 @@ async def main():
     asyncio.create_task(identity_card_sweep_job())
     asyncio.create_task(announce_typewriter_feature())
     asyncio.create_task(log_dump_job())
-    await dp.start_polling(bot)
+    # allowed_updates resolvido dos handlers registrados — inclui
+    # automaticamente "message_reaction" (M06) pq ha @dp.message_reaction.
+    allowed = dp.resolve_used_update_types()
+    logger.info("polling allowed_updates=%s", allowed)
+    await dp.start_polling(bot, allowed_updates=allowed)
 
 
 if __name__ == "__main__":
