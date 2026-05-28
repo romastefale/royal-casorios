@@ -94,6 +94,14 @@ XP_PER_MESSAGE = 2
 XP_PER_REPLY = 5
 XP_COOLDOWN_MSG_SECONDS = 60
 XP_COOLDOWN_REPLY_SECONDS = 30
+
+# Bot de musica externo: quando publica uma faixa marcando um user via
+# text_mention, pontuamos o user marcado com 3x o XP de mensagem normal.
+# 0 desativa o recurso. Privacy mode do bot RPG precisa estar OFF pra
+# enxergar mensagens deste bot no grupo.
+MUSIC_BOT_ID = 8589834936
+MUSIC_BOT_XP_MULTIPLIER = 3
+MUSIC_BOT_REACTION = "✨"
 XP_PALAVRA_MIN = 30
 XP_PALAVRA_MAX = 75
 XP_PALAVRA_WIN_BONUS = 150
@@ -4389,6 +4397,76 @@ async def dados_cb(cb: CallbackQuery):
 # TRACK — handler universal de mensagens em grupo
 # (deve ser o ULTIMO @dp.message pra nao capturar comandos)
 # =====================================================================
+
+# =====================================================================
+# MUSIC BOT BRIDGE — pontua user marcado em publicacao do bot de musica
+# externo (MUSIC_BOT_ID). Privacy mode do RPG precisa estar OFF.
+# =====================================================================
+
+def _extract_text_mentioned_users(message: Message) -> list[tuple[int, str]]:
+    """Retorna [(user_id, display_name), ...] de text_mentions em
+    entities + caption_entities (audio/voice tem caption_entities)."""
+    out: list[tuple[int, str]] = []
+    seen: set[int] = set()
+    sources = []
+    if message.entities:
+        sources.append(message.entities)
+    if message.caption_entities:
+        sources.append(message.caption_entities)
+    for entlist in sources:
+        for ent in entlist:
+            if ent.type != "text_mention" or not ent.user:
+                continue
+            u = ent.user
+            if u.is_bot or u.id in seen:
+                continue
+            seen.add(u.id)
+            nm = (u.full_name or u.username or f"user{u.id}")
+            out.append((u.id, nm))
+    return out
+
+
+@dp.message(
+    F.chat.type.in_({"group", "supergroup"}),
+    F.from_user.id == MUSIC_BOT_ID,
+)
+async def handle_music_bot_post(message: Message):
+    """Bot de musica publicou faixa marcando um user → pontua o user
+    marcado com 3x XP_PER_MESSAGE e reage ✨ na publicacao."""
+    if MUSIC_BOT_ID == 0:
+        return
+    chat_id = message.chat.id
+    try:
+        ensure_chat(chat_id, message.chat.title)
+    except Exception:
+        logger.exception("ensure_chat failed for music bot post chat=%d", chat_id)
+
+    mentioned = _extract_text_mentioned_users(message)
+    if not mentioned:
+        logger.info("music bot post sem text_mention chat=%d mid=%d",
+                    chat_id, message.message_id)
+        return
+
+    xp_amount = XP_PER_MESSAGE * MUSIC_BOT_XP_MULTIPLIER
+    success_count = 0
+    for uid, name in mentioned:
+        try:
+            upsert_user(chat_id, uid, name, None)
+            ensure_player(chat_id, uid)
+            award_xp_immediate(chat_id, uid, xp_amount, reason="music_mention")
+            success_count += 1
+            logger.info("music_mention xp+%d uid=%d chat=%d mid=%d",
+                        xp_amount, uid, chat_id, message.message_id)
+        except Exception:
+            logger.exception("music_mention award failed uid=%d chat=%d", uid, chat_id)
+
+    if success_count > 0:
+        try:
+            await react_to(chat_id, message.message_id, MUSIC_BOT_REACTION)
+        except Exception:
+            logger.exception("music_mention reaction failed chat=%d mid=%d",
+                             chat_id, message.message_id)
+
 
 @dp.message(F.chat.type.in_({"group", "supergroup"}))
 async def track(message: Message):
