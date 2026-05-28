@@ -742,6 +742,80 @@ async def auto_delete_after(msg: Message, delay: float = 8.0) -> None:
     asyncio.create_task(_task())
 
 
+# =====================================================================
+# OWNER LOCK — menus interativos ficam restritos a quem mandou o comando
+# =====================================================================
+# Mapeia (chat_id, message_id) -> user_id do dono original do menu.
+# Cap em memoria com poda simples; cleared on bot restart (degradacao
+# graciosa: menus orfãos viram livres pra todos no proximo restart).
+_msg_owners: dict[tuple[int, int], int] = {}
+_MSG_OWNERS_MAX = 4000
+
+
+def register_owner(msg: Message | None, uid: int,
+                   auto_delete_secs: float = 60.0) -> None:
+    """Tranca um menu pro dono uid + agenda auto-delete em N segundos.
+    Use ao postar qualquer mensagem com reply_markup que so faca sentido
+    pro usuario que disparou o comando (classe/loja/inv/up etc).
+    auto_delete_secs=0 desliga o auto-delete (so trava ownership)."""
+    if msg is None or uid is None:
+        return
+    key = (msg.chat.id, msg.message_id)
+    if len(_msg_owners) >= _MSG_OWNERS_MAX:
+        # Poda 25% mais antigos (FIFO de insercao do dict)
+        prune = _MSG_OWNERS_MAX // 4
+        for k in list(_msg_owners.keys())[:prune]:
+            _msg_owners.pop(k, None)
+    _msg_owners[key] = uid
+    if auto_delete_secs > 0:
+        asyncio.create_task(_auto_delete_owned(key, auto_delete_secs))
+
+
+async def _auto_delete_owned(key: tuple[int, int], delay: float) -> None:
+    try:
+        await asyncio.sleep(delay)
+        if bot is not None:
+            try:
+                await bot.delete_message(key[0], key[1])
+            except Exception:
+                pass
+    finally:
+        _msg_owners.pop(key, None)
+
+
+async def assert_owner(cb: CallbackQuery,
+                       deny_msg: str = "❌ Esse comando não é seu. "
+                                       "Use o seu próprio /royal..."
+                       ) -> bool:
+    """Retorna True se o cb.from_user.id pode interagir com cb.message.
+    Mensagens nao-trancadas (sem entrada em _msg_owners) sao liberadas
+    pra todos — assim hub/boss/chest/ship_vote continuam coletivos.
+    Em caso de negacao, mostra toast nao-bloqueante e retorna False."""
+    if not cb.message or not cb.from_user:
+        return True
+    key = (cb.message.chat.id, cb.message.message_id)
+    owner = _msg_owners.get(key)
+    if owner is None or owner == cb.from_user.id:
+        return True
+    try:
+        await cb.answer(deny_msg, show_alert=False)
+    except Exception:
+        pass
+    return False
+
+
+async def delete_msg_safe(msg: Message | None) -> None:
+    """Deleta msg ignorando erros (já apagada, sem permissao, etc).
+    Tambem libera a entrada de owner lock."""
+    if msg is None or bot is None:
+        return
+    _msg_owners.pop((msg.chat.id, msg.message_id), None)
+    try:
+        await bot.delete_message(msg.chat.id, msg.message_id)
+    except Exception:
+        pass
+
+
 async def react_to(chat_id: int, message_id: int, emoji: str,
                    big: bool = False) -> None:
     """Bot reage com emoji a uma mensagem do usuario (setMessageReaction,
@@ -3546,10 +3620,11 @@ async def royal_up(message: Message):
         f"<b>{p['pts_available']}</b> ponto(s) para distribuir.\n"
         f"<i>Escolha um atributo abaixo:</i>"
     )
-    await message.answer(
+    sent = await message.answer(
         term_block("ATRIBUTOS", body, status="READY"),
         reply_markup=up_keyboard(),
     )
+    register_owner(sent, message.from_user.id, auto_delete_secs=60.0)
 
 
 def up_keyboard() -> InlineKeyboardMarkup:
@@ -3589,9 +3664,10 @@ async def royal_classe(message: Message):
     for cid, info in CLASSES.items():
         lines.append(f"{info['emoji']} <b>{info['name']}</b> — <i>{info['bonus']}</i>")
     body = "<i>Escolha sua identidade no reino:</i>\n\n" + "\n".join(lines)
-    await message.answer(
+    sent = await message.answer(
         term_block("CLASSE", body, status="SELECAO", status_color="CYAN"),
         reply_markup=classe_keyboard())
+    register_owner(sent, message.from_user.id, auto_delete_secs=60.0)
 
 
 # === /royalinventario ===
@@ -3627,9 +3703,10 @@ async def royal_inv(message: Message):
             f"<code>x{r['qty']}</code>\n   <i>{item['desc']}</i>"
         )
     body = "\n\n".join(parts)
-    await message.answer(
+    sent = await message.answer(
         term_block("INVENTARIO", body, status="LOADED"),
         reply_markup=inv_keyboard(chat_id, uid))
+    register_owner(sent, uid, auto_delete_secs=60.0)
 
 
 def inv_keyboard(chat_id: int, uid: int) -> InlineKeyboardMarkup:
@@ -3674,9 +3751,10 @@ async def royal_loja(message: Message):
             f"— <code>{item['price']}</code>🪙\n   <i>{item['desc']}</i>"
         )
     body = "\n\n".join(parts)
-    await message.answer(
+    sent = await message.answer(
         term_block("LOJA", body, status="OPEN", status_color="ACID"),
         reply_markup=loja_keyboard())
+    register_owner(sent, message.from_user.id, auto_delete_secs=60.0)
 
 
 def loja_keyboard() -> InlineKeyboardMarkup:
@@ -4389,10 +4467,11 @@ async def hub_cb(cb: CallbackQuery):
                 parts_b.append(
                     f"{item['emoji']} <b>{item['name']}</b> "
                     f"— <code>{item['price']}</code>🪙\n   <i>{item['desc']}</i>")
-            await cb.message.answer(
+            sent = await cb.message.answer(
                 term_block("LOJA", "\n\n".join(parts_b),
                            status="OPEN", status_color="ACID"),
                 reply_markup=loja_keyboard())
+            register_owner(sent, cb.from_user.id, auto_delete_secs=60.0)
             await cb.answer()
             return
 
@@ -4419,10 +4498,11 @@ async def hub_cb(cb: CallbackQuery):
                     parts_b.append(
                         f"{eq}{it['emoji']} <b>{it['name']}</b> "
                         f"<code>x{r['qty']}</code>\n   <i>{it['desc']}</i>")
-                await cb.message.answer(
+                sent = await cb.message.answer(
                     term_block("INVENTARIO", "\n\n".join(parts_b),
                                status="LOADED"),
                     reply_markup=inv_keyboard(chat_id, cb.from_user.id))
+                register_owner(sent, cb.from_user.id, auto_delete_secs=60.0)
             await cb.answer()
             return
 
@@ -4457,17 +4537,20 @@ async def hub_cb(cb: CallbackQuery):
             if sub == "menu":
                 p = ensure_player(chat_id, cb.from_user.id)
                 db.commit()
-                await cb.message.answer(
+                sent = await cb.message.answer(
                     term_block("ATRIBUTOS",
                                f"<b>{p['pts_available']}</b> ponto(s) disponíveis.\n"
                                f"<i>Escolha um atributo abaixo:</i>",
                                status="READY"),
                     reply_markup=up_keyboard())
+                register_owner(sent, cb.from_user.id, auto_delete_secs=60.0)
                 await cb.answer()
                 return
             attr = sub
             if attr not in {"for", "des", "vit", "car"}:
                 await cb.answer()
+                return
+            if not await assert_owner(cb):
                 return
             p = ensure_player(chat_id, cb.from_user.id)
             if p["pts_available"] <= 0:
@@ -4490,18 +4573,21 @@ async def hub_cb(cb: CallbackQuery):
                     lines.append(
                         f"{info['emoji']} <b>{info['name']}</b> — "
                         f"<i>{info['bonus']}</i>")
-                await cb.message.answer(
+                sent = await cb.message.answer(
                     term_block("CLASSE",
                                "<i>Escolha sua identidade no reino:</i>\n\n"
                                + "\n".join(lines),
                                status="SELECAO", status_color="CYAN"),
                     reply_markup=classe_keyboard())
+                register_owner(sent, cb.from_user.id, auto_delete_secs=60.0)
                 await cb.answer()
                 return
             if sub == "set" and len(parts) > 3:
                 cid = parts[3]
                 if cid not in CLASSES:
                     await cb.answer()
+                    return
+                if not await assert_owner(cb):
                     return
                 p = ensure_player(chat_id, cb.from_user.id)
                 # Detecta se eh a PRIMEIRA escolha (sem class_id ainda) — so
@@ -4547,6 +4633,8 @@ async def hub_cb(cb: CallbackQuery):
                             )
                     except Exception:
                         logger.exception("render_classe_card path failed")
+                # Acao terminal: deleta o menu de classes (poluicao zero)
+                await delete_msg_safe(cb.message)
                 return
             await cb.answer()
             return
@@ -4554,6 +4642,8 @@ async def hub_cb(cb: CallbackQuery):
         if action == "buy":
             if len(parts) < 3:
                 await cb.answer()
+                return
+            if not await assert_owner(cb):
                 return
             iid = parts[2]
             item = ITEMS.get(iid)
@@ -4648,6 +4738,8 @@ async def inv_cb(cb: CallbackQuery):
     parts = cb.data.split(":")
     if len(parts) < 4:
         await cb.answer()
+        return
+    if not await assert_owner(cb):
         return
     sub = parts[2]
     iid = parts[3]
