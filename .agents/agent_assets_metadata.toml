@@ -251,3 +251,9 @@ id = "OCBDsLdyVfmZmpzwFdL_c"
 uri = "file://assets/avatars_mosaic_preview.png"
 type = "image"
 title = "Mosaico final 6×6 — 36 avatares completos"
+
+[[outputs]]
+id = "1A9BOekqgKjonMAUQgTIs"
+uri = "file://assets/avatars/k01-rei.png"
+type = "image"
+title = "👑 O Rei — foto de perfil do bot (1024×1024, pixel-art)"
