@@ -2213,17 +2213,22 @@ async def handle_palavra_attempt(message: Message, ch: dict) -> bool:
         return False
     uid = message.from_user.id
     chat_id = message.chat.id
+    logger.info("[PALAVRA] tentativa ch=%s uid=%d mid=%d text=%r",
+                ch["id"], uid, message.message_id, (message.text or "")[:120])
 
     # cooldown anti-spam
     now_ts = utc_now().timestamp()
     cd_key = (ch["id"], uid)
     last = attempt_cooldowns.get(cd_key, 0)
     if now_ts - last < PALAVRA_ATTEMPT_COOLDOWN_SEC:
+        logger.info("[PALAVRA] cooldown ch=%s uid=%d (%.1fs<%ss)",
+                    ch["id"], uid, now_ts - last, PALAVRA_ATTEMPT_COOLDOWN_SEC)
         return False
     attempt_cooldowns[cd_key] = now_ts
 
     # Limite generoso: aceita frases curtas tipo "acho que é gato" (3-5 palavras)
     if message.text and len(message.text) > 120:
+        logger.info("[PALAVRA] text>120 chars ignorado ch=%s uid=%d", ch["id"], uid)
         return False
 
     target = ch["word"]
@@ -2236,6 +2241,8 @@ async def handle_palavra_attempt(message: Message, ch: dict) -> bool:
     if not norm_tokens:
         return False
     correct = target in norm_tokens
+    logger.info("[PALAVRA] match ch=%s uid=%d target=%r tokens=%r correct=%s",
+                ch["id"], uid, target, norm_tokens, correct)
 
     cur.execute(
         "UPDATE challenges SET attempts_count=attempts_count+1 WHERE id=?",
@@ -2259,9 +2266,11 @@ async def handle_palavra_attempt(message: Message, ch: dict) -> bool:
     )
     if cur.rowcount == 0:
         # outro jogador ganhou antes; ainda dá XP de consolo
+        logger.info("[PALAVRA] consolacao ch=%s uid=%d (outro ja venceu)", ch["id"], uid)
         award_xp_immediate(chat_id, uid, XP_PALAVRA_CONSOLATION, reason="palavra_consolation")
         db.commit()
         return False
+    logger.info("[PALAVRA] VENCEDOR ch=%s uid=%d mid=%d", ch["id"], uid, message.message_id)
     db.commit()
 
     # XP + gold

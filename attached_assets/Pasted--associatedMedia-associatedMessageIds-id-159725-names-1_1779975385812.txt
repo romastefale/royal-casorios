@@ -1,0 +1,603 @@
+{
+  "associatedMedia" : {
+
+  },
+  "associatedMessageIds" : [
+    {
+      "id" : 159725,
+      "namespace" : 0,
+      "peerId" : {
+        "id" : {
+          "rawValue" : 5204880504
+        },
+        "namespace" : {
+          "rawValue" : 1
+        }
+      }
+    }
+  ],
+  "associatedMessages" : {
+    "items" : [
+      {
+        ".0" : {
+          "id" : 159725,
+          "namespace" : 0,
+          "peerId" : {
+            "id" : {
+              "rawValue" : 5204880504
+            },
+            "namespace" : {
+              "rawValue" : 1
+            }
+          }
+        },
+        ".1" : {
+          "associatedMedia" : {
+
+          },
+          "associatedMessageIds" : [
+
+          ],
+          "associatedMessages" : {
+            "items" : [
+
+            ]
+          },
+          "associatedStories" : {
+
+          },
+          "attributes" : [
+            {
+              "associatedMessageIds" : [
+
+              ]
+            },
+            {
+              "entities" : [
+                {
+                  "range" : {
+                    "lowerBound" : 0,
+                    "upperBound" : 13
+                  },
+                  "type" : "Code"
+                },
+                {
+                  "range" : {
+                    "lowerBound" : 18,
+                    "upperBound" : 30
+                  },
+                  "type" : "Italic"
+                },
+                {
+                  "range" : {
+                    "lowerBound" : 34,
+                    "upperBound" : 49
+                  },
+                  "type" : "Bold"
+                },
+                {
+                  "range" : {
+                    "lowerBound" : 50,
+                    "upperBound" : 103
+                  },
+                  "type" : "Italic"
+                },
+                {
+                  "range" : {
+                    "lowerBound" : 107,
+                    "upperBound" : 112
+                  },
+                  "type" : "Code"
+                },
+                {
+                  "range" : {
+                    "lowerBound" : 120,
+                    "upperBound" : 121
+                  },
+                  "type" : "Code"
+                },
+                {
+                  "range" : {
+                    "lowerBound" : 147,
+                    "upperBound" : 160
+                  },
+                  "type" : "Bold"
+                },
+                {
+                  "range" : {
+                    "lowerBound" : 161,
+                    "upperBound" : 220
+                  },
+                  "type" : "Italic"
+                }
+              ]
+            }
+          ],
+          "author" : {
+            "accessHash" : {
+              "personal" : 1518312638982660227
+            },
+            "botInfo" : {
+              "flags" : {
+                "rawValue" : 35
+              },
+              "inlinePlaceholder" : "…"
+            },
+            "firstName" : "RPG Royal para Geeks",
+            "flags" : {
+              "rawValue" : 0
+            },
+            "id" : {
+              "id" : {
+                "rawValue" : 8846613568
+              },
+              "namespace" : {
+                "rawValue" : 0
+              }
+            },
+            "photo" : [
+              {
+                "dimensions" : {
+                  "height" : 80,
+                  "width" : 80
+                },
+                "hasVideo" : false,
+                "immediateThumbnailData" : "",
+                "isPersonal" : false,
+                "progressiveSizes" : [
+
+                ],
+                "resource" : {
+                  "datacenterId" : 1,
+                  "photoId" : 4956631820434869223,
+                  "sizeSpec" : "small"
+                },
+                "typeHint" : "generic"
+              },
+              {
+                "dimensions" : {
+                  "height" : 640,
+                  "width" : 640
+                },
+                "hasVideo" : false,
+                "immediateThumbnailData" : "",
+                "isPersonal" : false,
+                "progressiveSizes" : [
+
+                ],
+                "resource" : {
+                  "datacenterId" : 1,
+                  "photoId" : 4956631820434869223,
+                  "sizeSpec" : "fullSize"
+                },
+                "typeHint" : "generic"
+              }
+            ],
+            "storiesHidden" : false,
+            "username" : "RoyalRPGbot",
+            "usernames" : [
+
+            ]
+          },
+          "customTags" : [
+
+          ],
+          "flags" : {
+            "rawValue" : 68
+          },
+          "globalTags" : {
+            "rawValue" : 0
+          },
+          "id" : {
+            "id" : 159725,
+            "namespace" : 0,
+            "peerId" : {
+              "id" : {
+                "rawValue" : 5204880504
+              },
+              "namespace" : {
+                "rawValue" : 1
+              }
+            }
+          },
+          "localTags" : {
+            "rawValue" : 0
+          },
+          "media" : [
+            {
+              "flags" : {
+                "rawValue" : 0
+              },
+              "imageId" : {
+                "id" : 4954138411530914899,
+                "namespace" : 0
+              },
+              "immediateThumbnailData" : "",
+              "peerIds" : [
+
+              ],
+              "reference" : {
+                "cloud" : {
+                  "accessHash" : 3737543822678266670,
+                  "fileReference" : "",
+                  "imageId" : 4954138411530914899
+                }
+              },
+              "representations" : [
+                {
+                  "dimensions" : {
+                    "height" : 320,
+                    "width" : 320
+                  },
+                  "hasVideo" : false,
+                  "isPersonal" : false,
+                  "progressiveSizes" : [
+
+                  ],
+                  "resource" : {
+                    "accessHash" : 3737543822678266670,
+                    "datacenterId" : 1,
+                    "fileReference" : "",
+                    "photoId" : 4954138411530914899,
+                    "size" : 20222,
+                    "sizeSpec" : "m"
+                  },
+                  "typeHint" : "generic"
+                },
+                {
+                  "dimensions" : {
+                    "height" : 800,
+                    "width" : 800
+                  },
+                  "hasVideo" : false,
+                  "isPersonal" : false,
+                  "progressiveSizes" : [
+
+                  ],
+                  "resource" : {
+                    "accessHash" : 3737543822678266670,
+                    "datacenterId" : 1,
+                    "fileReference" : "",
+                    "photoId" : 4954138411530914899,
+                    "size" : 121168,
+                    "sizeSpec" : "x"
+                  },
+                  "typeHint" : "generic"
+                },
+                {
+                  "dimensions" : {
+                    "height" : 1080,
+                    "width" : 1080
+                  },
+                  "hasVideo" : false,
+                  "isPersonal" : false,
+                  "progressiveSizes" : [
+                    11755,
+                    28151,
+                    49846,
+                    101276,
+                    218265
+                  ],
+                  "resource" : {
+                    "accessHash" : 3737543822678266670,
+                    "datacenterId" : 1,
+                    "fileReference" : "",
+                    "photoId" : 4954138411530914899,
+                    "size" : 218265,
+                    "sizeSpec" : "y"
+                  },
+                  "typeHint" : "generic"
+                }
+              ],
+              "videoRepresentations" : [
+
+              ]
+            }
+          ],
+          "peers" : {
+            "items" : [
+              {
+                ".0" : {
+                  "id" : {
+                    "rawValue" : 5204880504
+                  },
+                  "namespace" : {
+                    "rawValue" : 1
+                  }
+                },
+                ".1" : {
+                  "creationDate" : 1779971244,
+                  "defaultBannedRights" : {
+                    "flags" : {
+                      "rawValue" : 67108864
+                    },
+                    "untilDate" : 2147483647
+                  },
+                  "flags" : {
+                    "rawValue" : 0
+                  },
+                  "id" : {
+                    "id" : {
+                      "rawValue" : 5204880504
+                    },
+                    "namespace" : {
+                      "rawValue" : 1
+                    }
+                  },
+                  "membership" : "Member",
+                  "participantCount" : 5,
+                  "photo" : [
+                    {
+                      "dimensions" : {
+                        "height" : 80,
+                        "width" : 80
+                      },
+                      "hasVideo" : false,
+                      "immediateThumbnailData" : "",
+                      "isPersonal" : false,
+                      "progressiveSizes" : [
+
+                      ],
+                      "resource" : {
+                        "datacenterId" : 1,
+                        "photoId" : 4956499806025092130,
+                        "sizeSpec" : "small"
+                      },
+                      "typeHint" : "generic"
+                    },
+                    {
+                      "dimensions" : {
+                        "height" : 640,
+                        "width" : 640
+                      },
+                      "hasVideo" : false,
+                      "immediateThumbnailData" : "",
+                      "isPersonal" : false,
+                      "progressiveSizes" : [
+
+                      ],
+                      "resource" : {
+                        "datacenterId" : 1,
+                        "photoId" : 4956499806025092130,
+                        "sizeSpec" : "fullSize"
+                      },
+                      "typeHint" : "generic"
+                    }
+                  ],
+                  "role" : {
+                    "creator" : {
+
+                    }
+                  },
+                  "title" : "RPG",
+                  "version" : 8
+                }
+              }
+            ]
+          },
+          "stableId" : 86208,
+          "stableVersion" : 0,
+          "tags" : {
+            "rawValue" : 257
+          },
+          "text" : "> PALAVRA.SYS  🟢 TRANSMITINDO\n>> 🖼️ SPOILER_IMG\n// palavra oculta na imagem acima — toque pra revelar\n⏱️ ~9min  ·  💬 0 tentativas\n⚡ recompensa: 150 XP + 50🪙\nResponda no chat pra tentar (acento/case/palavra extra OK).",
+          "timestamp" : 1779975351
+        }
+      }
+    ]
+  },
+  "associatedStories" : {
+
+  },
+  "attributes" : [
+    {
+      "isQuote" : false,
+      "messageId" : {
+        "id" : 159725,
+        "namespace" : 0,
+        "peerId" : {
+          "id" : {
+            "rawValue" : 5204880504
+          },
+          "namespace" : {
+            "rawValue" : 1
+          }
+        }
+      }
+    },
+    {
+      "entities" : [
+
+      ]
+    }
+  ],
+  "author" : {
+    "accessHash" : {
+      "personal" : -7313672228197054523
+    },
+    "emojiStatus" : {
+      "content" : {
+        "emoji" : {
+          "fileId" : 5323743114513373152
+        }
+      }
+    },
+    "firstName" : "Lu",
+    "flags" : {
+      "rawValue" : 144
+    },
+    "id" : {
+      "id" : {
+        "rawValue" : 1759115970
+      },
+      "namespace" : {
+        "rawValue" : 0
+      }
+    },
+    "nameColor" : {
+      "preset" : "green"
+    },
+    "phone" : "5577992064189",
+    "photo" : [
+      {
+        "dimensions" : {
+          "height" : 80,
+          "width" : 80
+        },
+        "hasVideo" : false,
+        "immediateThumbnailData" : "",
+        "isPersonal" : false,
+        "progressiveSizes" : [
+
+        ],
+        "resource" : {
+          "datacenterId" : 1,
+          "photoId" : 4927168293244702349,
+          "sizeSpec" : "small"
+        },
+        "typeHint" : "generic"
+      },
+      {
+        "dimensions" : {
+          "height" : 640,
+          "width" : 640
+        },
+        "hasVideo" : false,
+        "immediateThumbnailData" : "",
+        "isPersonal" : false,
+        "progressiveSizes" : [
+
+        ],
+        "resource" : {
+          "datacenterId" : 1,
+          "photoId" : 4927168293244702349,
+          "sizeSpec" : "fullSize"
+        },
+        "typeHint" : "generic"
+      }
+    ],
+    "profileColor" : {
+      "other" : 15
+    },
+    "storiesHidden" : false,
+    "username" : "sprklucas",
+    "usernames" : [
+
+    ]
+  },
+  "customTags" : [
+
+  ],
+  "flags" : {
+    "rawValue" : 68
+  },
+  "globalTags" : {
+    "rawValue" : 0
+  },
+  "id" : {
+    "id" : 159728,
+    "namespace" : 0,
+    "peerId" : {
+      "id" : {
+        "rawValue" : 5204880504
+      },
+      "namespace" : {
+        "rawValue" : 1
+      }
+    }
+  },
+  "localTags" : {
+    "rawValue" : 0
+  },
+  "media" : [
+
+  ],
+  "peers" : {
+    "items" : [
+      {
+        ".0" : {
+          "id" : {
+            "rawValue" : 5204880504
+          },
+          "namespace" : {
+            "rawValue" : 1
+          }
+        },
+        ".1" : {
+          "creationDate" : 1779971244,
+          "defaultBannedRights" : {
+            "flags" : {
+              "rawValue" : 67108864
+            },
+            "untilDate" : 2147483647
+          },
+          "flags" : {
+            "rawValue" : 0
+          },
+          "id" : {
+            "id" : {
+              "rawValue" : 5204880504
+            },
+            "namespace" : {
+              "rawValue" : 1
+            }
+          },
+          "membership" : "Member",
+          "participantCount" : 5,
+          "photo" : [
+            {
+              "dimensions" : {
+                "height" : 80,
+                "width" : 80
+              },
+              "hasVideo" : false,
+              "immediateThumbnailData" : "",
+              "isPersonal" : false,
+              "progressiveSizes" : [
+
+              ],
+              "resource" : {
+                "datacenterId" : 1,
+                "photoId" : 4956499806025092130,
+                "sizeSpec" : "small"
+              },
+              "typeHint" : "generic"
+            },
+            {
+              "dimensions" : {
+                "height" : 640,
+                "width" : 640
+              },
+              "hasVideo" : false,
+              "immediateThumbnailData" : "",
+              "isPersonal" : false,
+              "progressiveSizes" : [
+
+              ],
+              "resource" : {
+                "datacenterId" : 1,
+                "photoId" : 4956499806025092130,
+                "sizeSpec" : "fullSize"
+              },
+              "typeHint" : "generic"
+            }
+          ],
+          "role" : {
+            "creator" : {
+
+            }
+          },
+          "title" : "RPG",
+          "version" : 8
+        }
+      }
+    ]
+  },
+  "stableId" : 86211,
+  "stableVersion" : 0,
+  "tags" : {
+    "rawValue" : 0
+  },
+  "text" : "Escada",
+  "timestamp" : 1779975358
+}
