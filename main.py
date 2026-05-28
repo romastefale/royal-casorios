@@ -871,8 +871,18 @@ async def react_to(chat_id: int, message_id: int, emoji: str,
             is_big=big,
         )
     except Exception as e:
-        logger.warning("react_to falhou chat=%s mid=%s emoji=%r: %s",
-                       chat_id, message_id, emoji, e)
+        # Casos esperados (msg deletada / reaction invalida no client) —
+        # rebaixa pra DEBUG pra nao poluir o log. Erros reais (rate
+        # limit, network, etc) continuam WARNING.
+        es = str(e)
+        if ("MESSAGE_ID_INVALID" in es
+                or "message to react not found" in es.lower()
+                or "REACTION_INVALID" in es):
+            logger.debug("react_to skip chat=%s mid=%s emoji=%r: %s",
+                         chat_id, message_id, emoji, e)
+        else:
+            logger.warning("react_to falhou chat=%s mid=%s emoji=%r: %s",
+                           chat_id, message_id, emoji, e)
 
 
 async def type_then_send(chat_id: int, text: str, delay: float = 1.2,
