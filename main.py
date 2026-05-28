@@ -689,6 +689,32 @@ def anonize(name: str, royal_id: str | None) -> str:
     return name
 
 
+def get_anon_name(chat_id: int, user_id: int) -> str:
+    """Versao segura de get_name: ja aplica anonize() consultando o royal_id
+    do mesmo player numa unica query. Usar SEMPRE que o nome for renderizado
+    em qualquer caption, mensagem, hall da fama ou registro publico.
+    """
+    cur.execute(
+        """
+        SELECT u.display_name AS dn, p.royal_id AS rid
+        FROM users u
+        LEFT JOIN players p
+          ON p.chat_id = u.chat_id AND p.user_id = u.user_id
+        WHERE u.chat_id = ? AND u.user_id = ?
+        """,
+        (chat_id, user_id),
+    )
+    row = cur.fetchone()
+    if not row:
+        # Sem registro em users — fallback puro pra royal_id (se houver)
+        cur.execute(
+            "SELECT royal_id FROM players WHERE chat_id=? AND user_id=?",
+            (chat_id, user_id))
+        prow = cur.fetchone()
+        return anonize(str(user_id), prow["royal_id"] if prow else None)
+    return anonize(row["dn"] or str(user_id), row["rid"])
+
+
 # =====================================================================
 # SHIPPER (legado, preservado)
 # =====================================================================
@@ -772,8 +798,8 @@ async def send_couple(chat_id: int, source: str = "auto") -> bool:
         return False
 
     u1, u2 = pair
-    n1 = get_name(chat_id, u1)
-    n2 = get_name(chat_id, u2)
+    n1 = get_anon_name(chat_id, u1)
+    n2 = get_anon_name(chat_id, u2)
 
     cur.execute(
         "INSERT INTO couples (chat_id, user1, user2, source, created_at) VALUES (?, ?, ?, ?, ?)",
@@ -2067,7 +2093,7 @@ async def finalize_boss(boss: dict) -> None:
         if share > 0:
             cur.execute("UPDATE players SET gold=gold+? WHERE chat_id=? AND user_id=?",
                         (share, chat_id, r["user_id"]))
-            name = get_name(chat_id, r["user_id"])
+            name = get_anon_name(chat_id, r["user_id"])
             drops_text.append(f"• {html.escape(name)}: {share}🪙 ({r['dmg']} dano)")
     db.commit()
 
@@ -2118,7 +2144,9 @@ async def close_season(chat_id: int, old_code: str | None, new_code: str) -> Non
             lines = []
             medals = ["🥇", "🥈", "🥉"] + ["🏅"] * 7
             for i, r in enumerate(top, 1):
-                name = get_name(chat_id, r["user_id"])
+                # Hall da Fama eh persistido — anonimizar usando o royal_id
+                # do proprio row pra evitar query extra
+                name = anonize(get_name(chat_id, r["user_id"]), r["royal_id"])
                 cur.execute(
                     "INSERT OR REPLACE INTO season_hall "
                     "(chat_id, season_code, rank, royal_id, user_id, display_name, season_xp, snapshot_at) "
@@ -2591,7 +2619,8 @@ async def send_ranking(source_chat_id: int, *, target_chat_id: int) -> None:
     lines = []
     entries = []
     for i, r in enumerate(rows, 1):
-        name = get_name(source_chat_id, r["user_id"])
+        # Ranking publico — usa royal_id do row direto pra anonimizar
+        name = anonize(get_name(source_chat_id, r["user_id"]), r["royal_id"])
         full_lvl, *_ = level_progress(r["total_xp"] or 0)
         lines.append(
             f"{medals[i-1]} <b>{i}.</b> {html.escape(name)} "
@@ -2838,7 +2867,7 @@ async def royal_meus(message: Message):
     body = f"<i>Você já participou de <b>{total}</b> casórios. 😳</i>"
     if rows:
         body += "\n\n<b>>> TOP PARES</b>\n" + "\n".join(
-            f"• {html.escape(get_name(chat_id, row['partner']))} — "
+            f"• {html.escape(get_anon_name(chat_id, row['partner']))} — "
             f"<code>{row['total']}x</code>"
             for row in rows
         )
@@ -2866,8 +2895,8 @@ async def royal_casorios(message: Message):
     for i, row in enumerate(rows, start=1):
         lines.append(
             f"{medals[i-1]} <b>{i}.</b> "
-            f"{html.escape(get_name(chat_id, row['user1']))} ❤️ "
-            f"{html.escape(get_name(chat_id, row['user2']))} — "
+            f"{html.escape(get_anon_name(chat_id, row['user1']))} ❤️ "
+            f"{html.escape(get_anon_name(chat_id, row['user2']))} — "
             f"<code>{row['total']}x</code>")
     await message.answer(term_block(
         "CASORIOS", "\n".join(lines),
@@ -3095,8 +3124,8 @@ async def hub_cb(cb: CallbackQuery):
                 for i, r in enumerate(rows, 1):
                     lines.append(
                         f"{medals[i-1]} <b>{i}.</b> "
-                        f"{html.escape(get_name(chat_id, r['user1']))} ❤️ "
-                        f"{html.escape(get_name(chat_id, r['user2']))} — "
+                        f"{html.escape(get_anon_name(chat_id, r['user1']))} ❤️ "
+                        f"{html.escape(get_anon_name(chat_id, r['user2']))} — "
                         f"<code>{r['total']}x</code>")
                 await cb.message.answer(term_block(
                     "CASORIOS", "\n".join(lines),
