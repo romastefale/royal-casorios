@@ -718,8 +718,9 @@ async def react_to(chat_id: int, message_id: int, emoji: str,
             reaction=[ReactionTypeEmoji(emoji=emoji)],
             is_big=big,
         )
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("react_to falhou chat=%s mid=%s emoji=%r: %s",
+                       chat_id, message_id, emoji, e)
 
 
 async def type_then_send(chat_id: int, text: str, delay: float = 1.2,
