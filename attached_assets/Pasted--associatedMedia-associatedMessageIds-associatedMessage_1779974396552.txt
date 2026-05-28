@@ -1,0 +1,461 @@
+{
+  "associatedMedia" : {
+
+  },
+  "associatedMessageIds" : [
+
+  ],
+  "associatedMessages" : {
+    "items" : [
+
+    ]
+  },
+  "associatedStories" : {
+
+  },
+  "attributes" : [
+    {
+      "entities" : [
+        {
+          "range" : {
+            "lowerBound" : 0,
+            "upperBound" : 4
+          },
+          "type" : {
+            "TextMention" : {
+              "peerId" : {
+                "id" : {
+                  "rawValue" : 8505890439
+                },
+                "namespace" : {
+                  "rawValue" : 0
+                }
+              }
+            }
+          }
+        },
+        {
+          "range" : {
+            "lowerBound" : 0,
+            "upperBound" : 4
+          },
+          "type" : "Bold"
+        },
+        {
+          "range" : {
+            "lowerBound" : 9,
+            "upperBound" : 12
+          },
+          "type" : "Code"
+        },
+        {
+          "range" : {
+            "lowerBound" : 16,
+            "upperBound" : 17
+          },
+          "type" : "Code"
+        },
+        {
+          "range" : {
+            "lowerBound" : 20,
+            "upperBound" : 28
+          },
+          "type" : {
+            "TextUrl" : {
+              "url" : "https://open.spotify.com/track/554PnB96IltLzVlbinBstw"
+            }
+          }
+        },
+        {
+          "range" : {
+            "lowerBound" : 20,
+            "upperBound" : 28
+          },
+          "type" : "Bold"
+        },
+        {
+          "range" : {
+            "lowerBound" : 31,
+            "upperBound" : 40
+          },
+          "type" : "Italic"
+        }
+      ]
+    },
+    {
+      "consumed" : true,
+      "pending" : false
+    },
+    {
+      "flags" : {
+        "rawValue" : 2
+      }
+    }
+  ],
+  "author" : {
+    "accessHash" : {
+      "personal" : 6938279129597016683
+    },
+    "botInfo" : {
+      "flags" : {
+        "rawValue" : 1123
+      },
+      "inlinePlaceholder" : "..."
+    },
+    "firstName" : "𝙩𝙞𝙜𝙧𝙖𝙤𝙍𝘼𝘿𝙄𝙊",
+    "flags" : {
+      "rawValue" : 0
+    },
+    "id" : {
+      "id" : {
+        "rawValue" : 8589834936
+      },
+      "namespace" : {
+        "rawValue" : 0
+      }
+    },
+    "photo" : [
+      {
+        "dimensions" : {
+          "height" : 80,
+          "width" : 80
+        },
+        "hasVideo" : false,
+        "immediateThumbnailData" : "",
+        "isPersonal" : false,
+        "progressiveSizes" : [
+
+        ],
+        "resource" : {
+          "datacenterId" : 1,
+          "photoId" : 5181419306217049047,
+          "sizeSpec" : "small"
+        },
+        "typeHint" : "generic"
+      },
+      {
+        "dimensions" : {
+          "height" : 640,
+          "width" : 640
+        },
+        "hasVideo" : false,
+        "immediateThumbnailData" : "",
+        "isPersonal" : false,
+        "progressiveSizes" : [
+
+        ],
+        "resource" : {
+          "datacenterId" : 1,
+          "photoId" : 5181419306217049047,
+          "sizeSpec" : "fullSize"
+        },
+        "typeHint" : "generic"
+      }
+    ],
+    "storiesHidden" : false,
+    "username" : "tigraoRADIObot",
+    "usernames" : [
+
+    ]
+  },
+  "customTags" : [
+
+  ],
+  "flags" : {
+    "rawValue" : 68
+  },
+  "globalTags" : {
+    "rawValue" : 0
+  },
+  "id" : {
+    "id" : 159704,
+    "namespace" : 0,
+    "peerId" : {
+      "id" : {
+        "rawValue" : 5204880504
+      },
+      "namespace" : {
+        "rawValue" : 1
+      }
+    }
+  },
+  "localTags" : {
+    "rawValue" : 0
+  },
+  "media" : [
+    {
+      "flags" : {
+        "rawValue" : 0
+      },
+      "imageId" : {
+        "id" : 5975399776734259854,
+        "namespace" : 0
+      },
+      "immediateThumbnailData" : "",
+      "peerIds" : [
+
+      ],
+      "reference" : {
+        "cloud" : {
+          "accessHash" : -1342729785309194790,
+          "fileReference" : "",
+          "imageId" : 5975399776734259854
+        }
+      },
+      "representations" : [
+        {
+          "dimensions" : {
+            "height" : 320,
+            "width" : 320
+          },
+          "hasVideo" : false,
+          "isPersonal" : false,
+          "progressiveSizes" : [
+
+          ],
+          "resource" : {
+            "accessHash" : -1342729785309194790,
+            "datacenterId" : 4,
+            "fileReference" : "",
+            "photoId" : 5975399776734259854,
+            "size" : 10827,
+            "sizeSpec" : "m"
+          },
+          "typeHint" : "generic"
+        },
+        {
+          "dimensions" : {
+            "height" : 640,
+            "width" : 640
+          },
+          "hasVideo" : false,
+          "isPersonal" : false,
+          "progressiveSizes" : [
+
+          ],
+          "resource" : {
+            "accessHash" : -1342729785309194790,
+            "datacenterId" : 4,
+            "fileReference" : "",
+            "photoId" : 5975399776734259854,
+            "size" : 44023,
+            "sizeSpec" : "x"
+          },
+          "typeHint" : "generic"
+        }
+      ],
+      "videoRepresentations" : [
+
+      ]
+    }
+  ],
+  "peers" : {
+    "items" : [
+      {
+        ".0" : {
+          "id" : {
+            "rawValue" : 5204880504
+          },
+          "namespace" : {
+            "rawValue" : 1
+          }
+        },
+        ".1" : {
+          "creationDate" : 1779971244,
+          "defaultBannedRights" : {
+            "flags" : {
+              "rawValue" : 67108864
+            },
+            "untilDate" : 2147483647
+          },
+          "flags" : {
+            "rawValue" : 0
+          },
+          "id" : {
+            "id" : {
+              "rawValue" : 5204880504
+            },
+            "namespace" : {
+              "rawValue" : 1
+            }
+          },
+          "membership" : "Member",
+          "participantCount" : 5,
+          "photo" : [
+            {
+              "dimensions" : {
+                "height" : 80,
+                "width" : 80
+              },
+              "hasVideo" : false,
+              "immediateThumbnailData" : "",
+              "isPersonal" : false,
+              "progressiveSizes" : [
+
+              ],
+              "resource" : {
+                "datacenterId" : 1,
+                "photoId" : 4956499806025092130,
+                "sizeSpec" : "small"
+              },
+              "typeHint" : "generic"
+            },
+            {
+              "dimensions" : {
+                "height" : 640,
+                "width" : 640
+              },
+              "hasVideo" : false,
+              "immediateThumbnailData" : "",
+              "isPersonal" : false,
+              "progressiveSizes" : [
+
+              ],
+              "resource" : {
+                "datacenterId" : 1,
+                "photoId" : 4956499806025092130,
+                "sizeSpec" : "fullSize"
+              },
+              "typeHint" : "generic"
+            }
+          ],
+          "role" : {
+            "creator" : {
+
+            }
+          },
+          "title" : "RPG",
+          "version" : 8
+        }
+      },
+      {
+        ".0" : {
+          "id" : {
+            "rawValue" : 8505890439
+          },
+          "namespace" : {
+            "rawValue" : 0
+          }
+        },
+        ".1" : {
+          "accessHash" : {
+            "personal" : 7758984675319085456
+          },
+          "backgroundEmojiId" : 5400365786340540921,
+          "emojiStatus" : {
+            "content" : {
+              "starGift" : {
+                "fileId" : 5463155253270577883,
+                "id" : 6032826173380101525,
+                "innerColor" : 5004643,
+                "outerColor" : 3095362,
+                "patternColor" : 264202,
+                "patternFileId" : 5721951724621529107,
+                "slug" : "VictoryMedal-61341",
+                "textColor" : 11978188,
+                "title" : "Victory Medal #61341"
+              }
+            }
+          },
+          "firstName" : "𝐏𝐈",
+          "flags" : {
+            "rawValue" : 16
+          },
+          "id" : {
+            "id" : {
+              "rawValue" : 8505890439
+            },
+            "namespace" : {
+              "rawValue" : 0
+            }
+          },
+          "nameColor" : {
+            "preset" : {
+              "other" : 19
+            }
+          },
+          "phone" : "5511988956754",
+          "photo" : [
+            {
+              "dimensions" : {
+                "height" : 80,
+                "width" : 80
+              },
+              "hasVideo" : false,
+              "immediateThumbnailData" : "",
+              "isPersonal" : false,
+              "progressiveSizes" : [
+
+              ],
+              "resource" : {
+                "datacenterId" : 1,
+                "photoId" : 4943027588834200995,
+                "sizeSpec" : "small"
+              },
+              "typeHint" : "generic"
+            },
+            {
+              "dimensions" : {
+                "height" : 640,
+                "width" : 640
+              },
+              "hasVideo" : false,
+              "immediateThumbnailData" : "",
+              "isPersonal" : false,
+              "progressiveSizes" : [
+
+              ],
+              "resource" : {
+                "datacenterId" : 1,
+                "photoId" : 4943027588834200995,
+                "sizeSpec" : "fullSize"
+              },
+              "typeHint" : "generic"
+            }
+          ],
+          "profileColor" : "blue",
+          "storiesHidden" : false,
+          "usernames" : [
+            {
+              "flags" : {
+                "rawValue" : 2
+              },
+              "username" : "tigrao"
+            },
+            {
+              "flags" : {
+                "rawValue" : 3
+              },
+              "username" : "santepho"
+            },
+            {
+              "flags" : {
+                "rawValue" : 2
+              },
+              "username" : "magnifically"
+            },
+            {
+              "flags" : {
+                "rawValue" : 2
+              },
+              "username" : "nuapp"
+            },
+            {
+              "flags" : {
+                "rawValue" : 2
+              },
+              "username" : "lncorporated"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "stableId" : 85943,
+  "stableVersion" : 3,
+  "tags" : {
+    "rawValue" : 265
+  },
+  "text" : "𝐏𝐈 · ♥ 105\n\n♫ 4 · Hey Girl — Lady Gaga",
+  "timestamp" : 1779974374
+}
