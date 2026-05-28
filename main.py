@@ -1564,35 +1564,27 @@ def build_profile_caption(chat_id: int, user_id: int) -> str:
         f"<i>{class_html} · {html.escape(season)}</i>"
     )
 
-    # Ficha completa em blockquote expandable (clica pra abrir)
-    # com <pre> pros atributos em grade monospace
-    stats_grid = (
-        f"FORÇA     {f_:>2}    DESTREZA  {d_:>2}\n"
-        f"VITAL     {v_:>2}    CARISMA   {c_:>2}"
-    )
+    # Ficha em blockquote expandable. NÃO usar <pre> aqui: em mobile com
+    # nome/temporada longos, <pre> estoura largura do chat e gera scroll
+    # horizontal sobrepondo UI do Telegram. Layout inline com emojis cabe
+    # em qualquer tela.
     ficha = (
         f"<blockquote expandable>"
         f"<b>📜 Ficha do nobre</b>\n"
-        f"⭐ <b>Nível {lvl}</b> — {_br(in_lvl)}/{_br(needed)} XP{pts_extra}\n"
+        f"⭐ <b>Nv {lvl}</b> · {_br(in_lvl)}/{_br(needed)} XP{pts_extra}\n"
         f"🩸 HP <b>{hp}</b>/{hp}\n"
         f"\n"
-        f"<pre>{stats_grid}</pre>"
-        f"🏆 <b>#{rank}</b> de {total_players}   ·   🎯 {palavras_won} palavras\n"
-        f"💍 {casorios} casórios   ·   🪙 <code>{_br(p['gold'])}</code> florins\n"
-        f"<i>💬 {_br(p.get('rpg_message_count', 0))} mensagens desde {joined_str}</i>"
+        f"⚔️ <b>{f_}</b> FOR · 🏹 <b>{d_}</b> DES\n"
+        f"🛡️ <b>{v_}</b> VIT · 💎 <b>{c_}</b> CAR\n"
+        f"\n"
+        f"🏆 <b>#{rank}</b>/{total_players} · 🎯 {palavras_won} pal · 💍 {casorios}\n"
+        f"🪙 <code>{_br(p['gold'])}</code> florins\n"
+        f"<i>💬 {_br(p.get('rpg_message_count', 0))} msgs desde {joined_str}</i>"
         f"</blockquote>"
     )
 
-    # Spoiler discreto com o ID em code (pra copiar/colar facil)
-    footer = (
-        f'<tg-spoiler>🪪 toque pra revelar ID — <code>{html.escape(royal_id)}</code></tg-spoiler>'
-    )
-
-    full = f"{header}\n\n{ficha}\n{footer}"
+    full = f"{header}\n\n{ficha}"
     # Guarda do limite de caption do Telegram (1024 chars).
-    # Se estourar (nomes/temporadas muito longos), corta o footer/spoiler.
-    if len(full) > 1024:
-        full = f"{header}\n\n{ficha}"
     if len(full) > 1024:
         full = f"{header}\n\n{ficha[: max(0, 1024 - len(header) - 2 - len('</blockquote>'))]}</blockquote>"
     if len(full) > 1024:
