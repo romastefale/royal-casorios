@@ -61,6 +61,21 @@ saldo, palavras, configs por usuário, etc).
 > precisa ser removido com `git rm --cached data/royal_casorios.sqlite3`
 > (ação destrutiva — pedir ao usuário ou rodar via project task).
 
+## 📜 Log dump — `/royallog` + auto 5min
+
+- **Ring buffer in-memory:** `_LogRingBuffer` (maxlen 5000) anexado ao root logger em `main.py:107` — captura logs do bot + aiogram.
+- **`/royallog`** (owner-only, off-menu, qualquer chat): manda snapshot agora pro DM do owner como `.log` file + atualiza gist (se `GH_TOKEN` setado). Ack auto-deletado em 12s no grupo.
+- **Job automático `log_dump_job()`** roda a cada `LOG_DUMP_INTERVAL_SEC` (default 300s = 5min):
+  - Envia file pro DM do `OWNER_USER_ID` (silent, sem notificação)
+  - Faz PATCH no secret gist (cria 1x na 1ª chamada, salva `gist_id` em `bot_meta`)
+- **Gist é secret** (`public: false`) — só com URL acessível, não indexável.
+- Cap de 500KB no conteúdo enviado pro gist (limite seguro abaixo dos 1MB).
+- Failsafe: DM falha (bot bloqueado / sem DM iniciada) → loga + segue. Gist sem token → no-op silencioso.
+
+**Como ativar gist no Railway:** Variables → adicionar `GH_TOKEN` com PAT do GitHub (scope: `gist`). Sem isso, só DM funciona.
+
+**Como desligar tudo:** `LOG_DUMP_ENABLED=0` no Railway.
+
 ## 🔧 Env vars
 
 - `BOT_TOKEN` (obrigatório) — token do BotFather
@@ -72,6 +87,10 @@ saldo, palavras, configs por usuário, etc).
 - **`TEST_CHAT_IDS`** (opcional, comma-separated) — chat_ids de grupos de
   teste. Esses grupos **não** aparecem no picker de DM nem no fallback
   do inline mode. Ex.: `TEST_CHAT_IDS="-1001234567890,-1009876543210"`
+- **`OWNER_USER_ID`** (recomendado) — user_id do dono. Habilita `/royallog`, `/royalmudo`, `/royalpalavratest`. Sem isso, comandos owner-only ficam inacessíveis (modo seguro).
+- **`GH_TOKEN`** (opcional) — Personal Access Token do GitHub com scope `gist`. Habilita upload automático dos logs pro gist secreto a cada 5min. Sem isso, só DM do owner recebe.
+- **`LOG_DUMP_INTERVAL_SEC`** (opcional, default `300`) — intervalo entre dumps automáticos.
+- **`LOG_DUMP_ENABLED`** (opcional, default `1`) — `0` desliga o job de auto-dump (mantém `/royallog` manual).
 - **`STASH_CHAT_ID`** (opcional, override) — chat_id de canal privado
   pra upload silencioso do **identity card**. **Hardcoded** em
   `main.py` como `-1003941532741` (canal privado só do dono +

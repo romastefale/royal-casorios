@@ -81,6 +81,29 @@ import hashlib
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("royal-casorios")
 
+
+# Ring buffer dos ultimos N log records. Alimenta /royallog e log_dump_job.
+class _LogRingBuffer(logging.Handler):
+    """Handler que mantem em memoria as ultimas N linhas formatadas."""
+    def __init__(self, maxlen: int = 5000) -> None:
+        super().__init__(level=logging.INFO)
+        self.buffer: deque[str] = deque(maxlen=maxlen)
+        self.setFormatter(logging.Formatter(
+            "%(asctime)s %(levelname)s %(name)s: %(message)s"))
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            self.buffer.append(self.format(record))
+        except Exception:
+            pass
+
+    def snapshot(self) -> str:
+        return "\n".join(self.buffer)
+
+
+_log_ring = _LogRingBuffer(maxlen=5000)
+logging.getLogger().addHandler(_log_ring)  # root: captura aiogram + nosso
+
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 # Grupos de teste — separados por virgula. Esses chat_ids NAO aparecem
 # na lista de grupos do picker em DM nem na lista de inline mode.
@@ -102,6 +125,14 @@ STASH_CHAT_ID: int | None = (
 
 _owner_raw = os.getenv("OWNER_USER_ID", "").strip()
 OWNER_USER_ID: int | None = int(_owner_raw) if _owner_raw.lstrip("-").isdigit() else None
+
+# Log dump (/royallog + job periodico). DM owner sempre que possivel;
+# Gist do GitHub quando GH_TOKEN/GITHUB_TOKEN setado no Railway.
+LOG_DUMP_INTERVAL_SEC = int(os.getenv("LOG_DUMP_INTERVAL_SEC", "300"))
+LOG_DUMP_ENABLED = os.getenv("LOG_DUMP_ENABLED", "1").strip() not in ("0", "false", "False")
+GH_LOG_TOKEN = (os.getenv("GH_TOKEN", "").strip()
+                or os.getenv("GITHUB_TOKEN", "").strip())
+LOG_GIST_ID_KEY = "log_dump_gist_id"
 
 DB_PATH = os.getenv("DATABASE_PATH", "./data/royal_casorios.sqlite3")
 TZ_NAME = os.getenv("TZ", "America/Sao_Paulo")
@@ -4155,6 +4186,139 @@ async def royal_palavra_test(message: Message):
     await spawn_palavra(message.chat.id)
 
 
+# === /royallog (owner) — dump dos logs pro DM + gist GitHub ===
+
+async def dump_logs_to_owner_dm() -> bool:
+    """Envia snapshot do _log_ring como file pro DM do OWNER_USER_ID.
+    Falha-segura: retorna False sem crashar se DM nao iniciada ou bot bloqueado."""
+    if not OWNER_USER_ID or bot is None:
+        return False
+    content = _log_ring.snapshot()
+    if not content:
+        return False
+    try:
+        ts = datetime.now(ZoneInfo(TZ_NAME)).strftime("%Y%m%d-%H%M%S")
+        fname = f"royal-rpg-{ts}.log"
+        doc = BufferedInputFile(content.encode("utf-8"), filename=fname)
+        await bot.send_document(
+            OWNER_USER_ID, doc,
+            caption=f"<code>log dump {len(_log_ring.buffer)} linhas</code>",
+            disable_notification=True)
+        return True
+    except Exception:
+        logger.exception("[LOGS] dump_logs_to_owner_dm falhou")
+        return False
+
+
+async def dump_logs_to_gist() -> str | None:
+    """Cria/atualiza secret gist com snapshot. Retorna html_url ou None.
+    Persiste gist_id em bot_meta. No-op se GH_LOG_TOKEN nao setado."""
+    if not GH_LOG_TOKEN:
+        return None
+    content = _log_ring.snapshot()
+    if not content:
+        return None
+    # Cap 500KB pra ficar bem dentro do limite de gist (1MB).
+    content = content[-500_000:]
+    try:
+        import aiohttp
+    except Exception:
+        logger.warning("[LOGS] aiohttp indisponivel — pulando gist")
+        return None
+    headers = {
+        "Authorization": f"token {GH_LOG_TOKEN}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    payload = {
+        "description": "RPG Royal para Geeks - log dump (auto, 5min)",
+        "public": False,
+        "files": {"royal-rpg.log": {"content": content}},
+    }
+    gist_id = bot_meta_get(LOG_GIST_ID_KEY)
+    try:
+        async with aiohttp.ClientSession() as sess:
+            if gist_id:
+                async with sess.patch(
+                    f"https://api.github.com/gists/{gist_id}",
+                    headers=headers, json=payload, timeout=aiohttp.ClientTimeout(total=20)) as r:
+                    if r.status == 200:
+                        return (await r.json()).get("html_url")
+                    if r.status == 404:
+                        gist_id = None  # apagado externamente, recria abaixo
+                    else:
+                        logger.warning("[LOGS] gist PATCH %d", r.status)
+            if not gist_id:
+                async with sess.post(
+                    "https://api.github.com/gists",
+                    headers=headers, json=payload, timeout=aiohttp.ClientTimeout(total=20)) as r:
+                    if r.status == 201:
+                        data = await r.json()
+                        bot_meta_set(LOG_GIST_ID_KEY, data["id"])
+                        logger.info("[LOGS] gist criado id=%s", data["id"])
+                        return data.get("html_url")
+                    body = (await r.text())[:200]
+                    logger.warning("[LOGS] gist POST %d: %s", r.status, body)
+    except Exception:
+        logger.exception("[LOGS] dump_logs_to_gist falhou")
+    return None
+
+
+async def log_dump_job() -> None:
+    """Background: dump dos logs a cada LOG_DUMP_INTERVAL_SEC."""
+    if not LOG_DUMP_ENABLED:
+        logger.info("[LOGS] dump job desabilitado (LOG_DUMP_ENABLED=0)")
+        return
+    await asyncio.sleep(LOG_DUMP_INTERVAL_SEC)  # 1a janela espera intervalo
+    while True:
+        try:
+            dm_ok = await dump_logs_to_owner_dm()
+            gist_url = await dump_logs_to_gist()
+            if dm_ok or gist_url:
+                logger.info("[LOGS] tick dm=%s gist=%s",
+                            "ok" if dm_ok else "-",
+                            "ok" if gist_url else "-")
+        except Exception:
+            logger.exception("[LOGS] tick failed")
+        await asyncio.sleep(LOG_DUMP_INTERVAL_SEC)
+
+
+@dp.message(Command("royallog"))
+async def royal_log(message: Message):
+    """Dump imediato dos logs. Owner-only, qualquer chat, off-menu.
+    Manda pro DM do owner como file + atualiza gist se GH_TOKEN setado."""
+    uid = message.from_user.id if message.from_user else 0
+    if OWNER_USER_ID is None or uid != OWNER_USER_ID:
+        return
+    dm_ok = await dump_logs_to_owner_dm()
+    gist_url = await dump_logs_to_gist()
+    in_group = is_group(message)
+    lines = [
+        f">> dm: <b>{'enviado' if dm_ok else 'falhou/sem-dm'}</b>",
+        f">> gist: <b>{'ok' if gist_url else 'off (sem GH_TOKEN)'}</b>",
+        f"// buffer: {len(_log_ring.buffer)} linhas",
+    ]
+    # NUNCA expor URL do gist em grupo (blast radius — qualquer membro veria
+    # o link nos 12s antes do auto-delete). URL só no DM 1:1 do owner.
+    if gist_url and not in_group:
+        lines.append(f'// <a href="{gist_url}">abrir gist</a>')
+    ack = await message.answer(term_block(
+        "LOG.SYS", "\n".join(lines), status="DUMP", status_color="CYAN"))
+    if ack and in_group:
+        await auto_delete_after(ack, delay=12.0)
+        # Manda URL privadamente pro owner pra ele acessar sem expor no grupo.
+        if gist_url and bot is not None:
+            try:
+                await bot.send_message(
+                    OWNER_USER_ID,
+                    term_block("LOG.SYS",
+                               f'// <a href="{gist_url}">abrir gist</a>',
+                               status="LINK", status_color="CYAN"),
+                    disable_notification=True)
+            except Exception:
+                logger.exception("[LOGS] envio do gist url pro DM falhou")
+
+
 # === /royalmudo (owner) — silencia auto-posts no grupo durante deploy ===
 
 @dp.message(Command("royalmudo"))
@@ -5659,6 +5823,7 @@ async def main():
     asyncio.create_task(healthcheck())
     asyncio.create_task(identity_card_sweep_job())
     asyncio.create_task(announce_typewriter_feature())
+    asyncio.create_task(log_dump_job())
     await dp.start_polling(bot)
 
 
