@@ -1,4 +1,7 @@
-# Royal Casorios → Royal RPG
+# Royal Casorios → RPG - Royal para Geeks
+
+> **Nome oficial do jogo do bot:** **RPG - Royal para Geeks** (usar este nome em UI/comunicação pública daqui pra frente).
+
 
 Telegram bot construído com aiogram (Python 3.12). Roda como worker (sem frontend), persistindo dados em SQLite local.
 
