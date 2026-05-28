@@ -653,6 +653,25 @@ def migrate_to_v8(c: sqlite3.Cursor) -> None:
                 raise
 
 
+def migrate_to_v9(c: sqlite3.Cursor) -> None:
+    """F09: persiste file_id do profile card no DB (sobrevive restart).
+    Hash invalida quando dados mudam (level/xp/gold/hp/...). TTL 24h
+    cobre mudancas externas (foto do Telegram trocada etc)."""
+    for col, ddl in (
+        ("profile_card_file_id",
+         "ALTER TABLE players ADD COLUMN profile_card_file_id TEXT"),
+        ("profile_card_hash",
+         "ALTER TABLE players ADD COLUMN profile_card_hash TEXT"),
+        ("profile_card_at",
+         "ALTER TABLE players ADD COLUMN profile_card_at TEXT"),
+    ):
+        try:
+            c.execute(ddl)
+        except sqlite3.OperationalError as e:
+            if "duplicate column" not in str(e).lower():
+                raise
+
+
 def migrate_to_v6(c: sqlite3.Cursor) -> None:
     """Randomiza royal_ids existentes (RYL-0001, 0002... -> RYL-NNNN
     sortidos entre 1000-9999). Pool por chat = 9000, retry on collision.
@@ -702,6 +721,7 @@ MIGRATIONS = [
     (6, migrate_to_v6),
     (7, migrate_to_v7),
     (8, migrate_to_v8),
+    (9, migrate_to_v9),
 ]
 
 
@@ -1946,6 +1966,70 @@ def get_cached_profile_file_id(owner_chat: int, owner_uid: int) -> str | None:
     return _profile_file_id_cache.get((owner_chat, owner_uid))
 
 
+# F09: persistencia em DB do profile card file_id (sobrevive restart).
+# Hash discrimina por estado do player; TTL 24h cobre mudancas externas
+# (foto trocada no Telegram, etc). Memoria continua como L1 cache rapido.
+_PROFILE_CARD_TTL_SEC = 24 * 3600
+
+
+def _profile_card_data_hash(data, photo_fid: str | None = None) -> str:
+    """sha1 dos campos visuais do ProfileCardData (mesmo conjunto que
+    a cache_key de render_profile_card). Invalida ao primeiro pixel
+    diferente. Inclui photo_fid pra invalidar quando o user troca a
+    foto do Telegram (paridade com cache_key do renderer que usa
+    md5(avatar_bytes))."""
+    payload = "|".join(str(x) for x in (
+        data.royal_id, data.name, data.class_name, data.season,
+        data.level, data.xp_in_level, data.xp_needed,
+        data.hp_cur, data.hp_max,
+        data.attr_for, data.attr_des, data.attr_vit, data.attr_car,
+        data.pts_available, data.rank, data.total_players,
+        data.palavras_won, data.casorios, data.gold,
+        data.msg_count, data.joined_str,
+        data.avatar_slug, photo_fid or "",
+    ))
+    return hashlib.sha1(payload.encode("utf-8")).hexdigest()[:16]
+
+
+def get_persisted_profile_fid(chat_id: int, user_id: int,
+                              want_hash: str) -> str | None:
+    """Retorna file_id persistido se hash bate E age <= TTL."""
+    try:
+        row = cur.execute(
+            "SELECT profile_card_file_id AS fid, profile_card_hash AS h, "
+            "       profile_card_at AS ts "
+            "FROM players WHERE chat_id=? AND user_id=?",
+            (chat_id, user_id)).fetchone()
+        if not row or not row["fid"] or row["h"] != want_hash:
+            return None
+        if not row["ts"]:
+            return None  # fail-closed: sem timestamp eh estado invalido
+        try:
+            age = (utc_now() - datetime.fromisoformat(row["ts"])
+                   ).total_seconds()
+        except Exception:
+            return None  # fail-closed: ts malformado/naive => invalida
+        if age > _PROFILE_CARD_TTL_SEC:
+            return None
+        return row["fid"]
+    except Exception:
+        logger.exception("[F09] get_persisted_profile_fid failed")
+        return None
+
+
+def save_persisted_profile_fid(chat_id: int, user_id: int,
+                               hash_: str, file_id: str) -> None:
+    try:
+        cur.execute(
+            "UPDATE players SET profile_card_file_id=?, "
+            "profile_card_hash=?, profile_card_at=? "
+            "WHERE chat_id=? AND user_id=?",
+            (file_id, hash_, utc_now().isoformat(), chat_id, user_id))
+        db.commit()
+    except Exception:
+        logger.exception("[F09] save_persisted_profile_fid failed")
+
+
 # =====================================================================
 # IDENTITY CARD — file_id persistido no SQL, gerado 1x por player
 # e regenerado APENAS quando (nome, avatar_slug) muda (sweep diario).
@@ -2621,6 +2705,40 @@ async def send_profile_card(chat_id_to: int, owner_chat: int, owner_uid: int):
     # Tenta render do card primeiro
     try:
         data = build_profile_card_data(owner_chat, owner_uid)
+        photo_fid = await get_user_photo_file_id(owner_uid)
+        # F09: fast path — se o hash atual bate com file_id persistido
+        # (e TTL nao expirou), reenviar por file_id sem re-render.
+        data_hash = None
+        try:
+            data_hash = _profile_card_data_hash(data, photo_fid)
+            persisted_fid = get_persisted_profile_fid(
+                owner_chat, owner_uid, data_hash)
+            if persisted_fid:
+                caption = build_profile_caption(owner_chat, owner_uid)
+                try:
+                    await bot.send_photo(
+                        chat_id_to,
+                        photo=persisted_fid,
+                        caption=cap1024(caption))
+                    cache_profile_file_id(
+                        owner_chat, owner_uid, persisted_fid)
+                    return
+                except TelegramBadRequest as e:
+                    # So invalida se o erro for de file_id invalido /
+                    # CDN expirado — outros 400 (caption/entity/chat)
+                    # nao devem limpar o cache.
+                    msg = str(e).lower()
+                    if ("file" in msg and (
+                            "invalid" in msg or "not found" in msg
+                            or "wrong" in msg or "reuse" in msg)):
+                        save_persisted_profile_fid(
+                            owner_chat, owner_uid, "", "")
+                    else:
+                        raise
+        except TelegramBadRequest:
+            raise
+        except Exception:
+            logger.exception("[F09] fast-path skip; renderizando do zero")
         avatar_bytes = await get_user_photo_bytes(owner_uid)
         card = await asyncio.to_thread(render_profile_card, data, avatar_bytes)
         if card:
@@ -2630,11 +2748,17 @@ async def send_profile_card(chat_id_to: int, owner_chat: int, owner_uid: int):
                 photo=BufferedInputFile(card, filename=f"perfil-{data.royal_id}.jpg"),
                 caption=cap1024(caption),
             )
-            # Cacheia file_id pro inline mode reaproveitar sem re-renderizar
+            # Cacheia file_id (memoria + DB) pra proximos /royalperfil e
+            # pra sobreviver ao restart do bot. Hash discrimina por dados
+            # + foto atual.
             try:
                 if sent and sent.photo:
-                    cache_profile_file_id(
-                        owner_chat, owner_uid, sent.photo[-1].file_id)
+                    fid = sent.photo[-1].file_id
+                    cache_profile_file_id(owner_chat, owner_uid, fid)
+                    save_persisted_profile_fid(
+                        owner_chat, owner_uid,
+                        data_hash or _profile_card_data_hash(data, photo_fid),
+                        fid)
             except Exception:
                 pass
             return
