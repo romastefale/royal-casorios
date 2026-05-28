@@ -143,3 +143,18 @@ def test_premium_xp_active_vazio_ou_lixo():
     assert main.premium_xp_active({}) is False
     assert main.premium_xp_active({"xp_boost_until": "nao-eh-data"}) is False
     assert main.premium_xp_active({"xp_boost_until": None}) is False
+
+
+# --------------------------------------------------- _royal_plus_active (M04)
+def test_royal_plus_active_vigente():
+    fut = (main.utc_now() + timedelta(days=10)).isoformat()
+    assert main._royal_plus_active({"royal_plus_until": fut}) is True
+
+
+def test_royal_plus_active_expirado_ou_vazio():
+    past = (main.utc_now() - timedelta(days=1)).isoformat()
+    assert main._royal_plus_active({"royal_plus_until": past}) is False
+    assert main._royal_plus_active({}) is False
+    # boost do M01 NAO conta como Royal Plus (badge violeta e so da assinatura)
+    fut = (main.utc_now() + timedelta(hours=1)).isoformat()
+    assert main._royal_plus_active({"xp_boost_until": fut}) is False

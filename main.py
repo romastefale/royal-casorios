@@ -2589,7 +2589,7 @@ def _profile_card_data_hash(data, photo_fid: str | None = None) -> str:
         data.palavras_won, data.casorios, data.gold,
         data.msg_count, data.joined_str,
         data.avatar_slug, photo_fid or "",
-        int(data.skin_gold),
+        int(data.skin_gold), int(data.royal_plus),
     ))
     return hashlib.sha1(payload.encode("utf-8")).hexdigest()[:16]
 
@@ -2915,21 +2915,29 @@ def player_has_active_couple(chat_id: int, user_id: int) -> bool:
     return cur.fetchone() is not None
 
 
+def _perk_until_active(player: dict, col: str) -> bool:
+    """True se player[col] (ISO UTC tz-aware, gravado por _grant_premium_perk)
+    ainda esta no futuro. Tolera None/lixo (retorna False)."""
+    raw = player.get(col)
+    if not raw:
+        return False
+    try:
+        return datetime.fromisoformat(raw) > utc_now()
+    except Exception:
+        return False
+
+
+def _royal_plus_active(player: dict) -> bool:
+    """M04: True se a assinatura Royal Plus (royal_plus_until) esta vigente."""
+    return _perk_until_active(player, "royal_plus_until")
+
+
 def premium_xp_active(player: dict) -> bool:
     """M01/M04: True se o player tem Boost de XP (xp_boost_until) ou
     Royal Plus (royal_plus_until) ainda vigente. Ambos gravados como ISO
     UTC tz-aware pelo _grant_premium_perk."""
-    now = utc_now()
-    for col in ("xp_boost_until", "royal_plus_until"):
-        raw = player.get(col)
-        if not raw:
-            continue
-        try:
-            if datetime.fromisoformat(raw) > now:
-                return True
-        except Exception:
-            continue
-    return False
+    return (_perk_until_active(player, "xp_boost_until")
+            or _perk_until_active(player, "royal_plus_until"))
 
 
 def award_xp_immediate(chat_id: int, user_id: int, amount: int, reason: str = "") -> None:
@@ -3300,6 +3308,7 @@ def build_profile_card_data(chat_id: int, user_id: int) -> ProfileCardData:
         avatar_slug=royal_avatars.resolve_slug(
             p.get("avatar_slug"), royal_id),
         skin_gold=bool(p.get("prm_skin_gold")),
+        royal_plus=_royal_plus_active(p),
     )
 
 

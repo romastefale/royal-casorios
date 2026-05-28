@@ -137,12 +137,17 @@ saldo, palavras, configs por usuário, etc).
 - ✅ `prm_skin_gold` — `ProfileCardData.skin_gold` (vindo de `build_profile_card_data`)
   → moldura do avatar em GOLD vivo + tag `[ * OURO * ]`. Entra na cache_key do render
   e no `_profile_card_data_hash` (F09) pra invalidar o file_id persistido.
-- ⏳ `prm_ressurrects` — **deferido**: o combate de boss (`handle_boss_attack`) **não
-  tem mecânica de morte do player** (player só causa dano, não tem HP/derrota). Não há
-  ponto concreto de hook; aplicar exige desenhar a mecânica de morte primeiro.
+- ⛔ `prm_ressurrects` — **BLOQUEADO (não é "aplicação de perk", é feature nova):**
+  o combate de boss (`handle_boss_attack`) **não tem mecânica de morte do player** —
+  player só dá tap/causa dano, não tem HP de combate nem estado de derrota (`hp_max`
+  e os corações no card são puramente **cosméticos**). Não existe ponto de hook pra
+  "ressuscitar". Aplicar exigiria desenhar do zero: HP de combate, contra-ataque do
+  boss, estado de morte, lockout e revive — com números de balance que teriam de ser
+  **inventados**. Não implementado sem inventar mecânica.
 
 > ⚠️ M01 entrega o pipeline de cobrança + grant + ledger. XP boost / hint / skin
-> dourada já aplicados; ressurreição depende de mecânica de morte inexistente.
+> dourada já aplicados; ressurreição depende de mecânica de morte de boss inexistente
+> (feature nova, não wiring de perk).
 
 ## 🌟 M04 — Royal Plus (assinatura Stars recorrente)
 
@@ -165,10 +170,18 @@ saldo, palavras, configs por usuário, etc).
 **Aplicação dos perks:**
 - ✅ `now < royal_plus_until` aplicado nos hot paths de XP (`premium_xp_active` →
   `*1.20`), junto com o boost do M01.
-- ⏳ **Slot extra de casório — deferido:** casórios são atribuídos pelo sistema/admin
-  via `send_couple` (não há limite de "slot" por usuário pra estender). Aplicar exige
-  modelar capacidade no pareamento, não é toggle simples.
-- ⏳ Badge violeta no profile card — ainda não desenhado (TODO render).
+- ✅ **Badge violeta no profile card** — `ProfileCardData.royal_plus` (populado por
+  `_royal_plus_active(p)` em `build_profile_card_data`) → tag `[ PLUS+ ]` em MAGENTA
+  no topo do bloco de info, right-aligned (sem colidir com o nome). Entra na cache_key
+  do render e no `_profile_card_data_hash`. Coexiste com a skin dourada (frame GOLD +
+  badge violeta ao mesmo tempo).
+- ⛔ **Slot extra de casório — BLOQUEADO (não é "aplicação de perk", é feature nova):**
+  o código **não tem limite de slot por usuário**. `user_is_available` só checa
+  `opt_out=0 AND last_seen>=48h`; `pick_couple` só exclui pares repetidos (`pair_recently_used`,
+  72h). Não existe regra "1 casório ativo por user" pra estender. Aplicar exigiria
+  **primeiro criar um limite** (nerf em TODOS os users free, que hoje pareiam sem teto)
+  e então deixar o Royal Plus burlá-lo — decisão de produto/balance, não wiring. Não
+  implementado sem inventar mecânica.
 
 ## 💡 M03 — Dica paga da PALAVRA
 
