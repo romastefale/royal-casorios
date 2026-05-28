@@ -259,6 +259,58 @@ Boost de XP global por data, sem DB — pura lógica em `SEASONAL_EVENTS` (`main
   pra upload silencioso do **identity card**. **Hardcoded** em
   `main.py` como `-1003941532741` (canal privado só do dono +
   bot). Só seta a env var se precisar trocar o canal.
+- **`PORT`** (opcional) — se setado, sobe o **health server HTTP** (F13)
+  em `0.0.0.0:$PORT` com `GET /health`. Railway injeta automaticamente
+  quando o serviço tem healthcheck. Sem `PORT`, o server é no-op (worker
+  puro não precisa).
+- **`HEALTH_STALE_SEC`** (opcional, default `600`) — `/health` retorna
+  `503` se não recebeu nenhuma update do Telegram nesse intervalo
+  (detecta `getUpdates` travado sem o processo crashar).
+- **`BACKUP_ENABLED`** (opcional, default `1`) — `0` desliga o backup
+  diário do DB (F10).
+- **`BACKUP_HOUR`** (opcional, default `3`) — hora local do backup diário.
+- **`BACKUP_RETENTION_DAYS`** (opcional, default `7`) — quantos dias de
+  backups manter em `<DB_DIR>/backups/`.
+
+## 🛡️ Infra hardening (F-series — correções de escala/robustez)
+
+> Itens da PARTE 1 do `ROADMAP.md`. Estado **real** (auditado no código,
+> não no roadmap, que está desatualizado).
+
+- **F10 · Backup automático** (`/royalbackup` owner + `backup_job`):
+  `VACUUM INTO <DB_DIR>/backups/YYYY-MM-DD.sqlite3` diário em `BACKUP_HOUR`
+  (default 3h local), precedido de `PRAGMA integrity_check` (não salva DB
+  corrompido). Retenção `BACKUP_RETENTION_DAYS`. Sobe o dump pro
+  `STASH_CHAT_ID` (Telegram = storage grátis) com `disable_notification`.
+  Usa **conexão sqlite separada** pra não tocar o cursor global. Comando
+  manual `/royalbackup` (owner-only, off-menu) gera + reporta agora.
+- **F11 · Migrations transacionais** (`run_migrations`): cada migration
+  roda em `BEGIN … COMMIT`; falha no meio → `ROLLBACK` + aborta boot, sem
+  deixar schema em estado intermediário (o `user_version` só avança no
+  sucesso).
+- **F13 · Health endpoint HTTP** (`start_health_server` + `/health`):
+  checa DB ping (`SELECT 1`), staleness de updates e `user_version`.
+  Middleware `_track_last_update` (outer, em toda update) alimenta o
+  timer. Só sobe se `PORT` setado.
+- **F14 · Graceful shutdown** (`@dp.shutdown` → `_on_shutdown`): aiogram
+  já trata SIGTERM/SIGINT (`handle_signals=True`); o hook faz
+  `flush_buffers_once()` + fecha health server + `db.commit()/close()`.
+- **Já feitos (verificados no código):** F03, F04 (semaphore de render),
+  F05, F06, F07 (`with_retry`), F08 (softban anti-spam), F12 (logs JSON
+  via `LOG_JSON`), F15 (alerta de typing), F16, F17, F18 (`next_royal_id`
+  à prova de colisão via UNIQUE index), F19 (cache de avatar em disco),
+  F20.
+- **F01/F02 (escala — auditados):** o cursor global (`cur`) é **seguro
+  no design atual** — em asyncio single-thread não há `await` entre
+  `execute` e `fetch`, logo handlers não interleavam no cursor; e
+  **nenhum** `to_thread` toca `cur`/`db` (todos chamam renders puros que
+  recebem `data` pré-buscado, ou `_do_backup_sync` com conexão separada).
+  "database is locked" já é mitigado por `PRAGMA journal_mode=WAL` +
+  `busy_timeout=5000` + `synchronous=NORMAL` (setados em
+  `setup_connection`). O rewrite completo pra `aiosqlite` (214 call
+  sites) **não foi feito**: é alto risco e exige teste em runtime (não
+  disponível nesta workspace) — deve ser feito como esforço dedicado e
+  testável, não cego em produção.
 
 ## 🪪 Identity Card (inline mode)
 

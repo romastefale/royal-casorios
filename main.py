@@ -306,6 +306,18 @@ BOSS_ATTACK_COOLDOWN_SEC = 300
 bot: Bot | None = None
 dp = Dispatcher()
 
+# F13: timestamp (monotonic) da ultima update recebida do Telegram. Se o
+# getUpdates travar (sem crashar o processo), o /health detecta staleness.
+_last_update_monotonic: float = time.monotonic()
+
+
+@dp.update.outer_middleware()
+async def _track_last_update(handler, event, data):
+    # roda ANTES de qualquer handler, em TODA update — barato e seguro.
+    global _last_update_monotonic
+    _last_update_monotonic = time.monotonic()
+    return await handler(event, data)
+
 
 # =====================================================================
 # Helpers globais — F06 (None-guard) + F16 (cap caption Telegram 1024)
@@ -1117,13 +1129,25 @@ def set_user_pref(user_id: int, key: str, value: bool) -> None:
 
 
 def run_migrations() -> None:
+    # F11: cada migration roda dentro de uma transacao explicita. Se fn()
+    # falhar no meio, ROLLBACK desfaz o parcial e o user_version NAO avanca
+    # — no proximo boot a mesma migration reroda do zero (idempotente) em
+    # vez de deixar o schema num estado intermediario corrompido.
     current = cur.execute("PRAGMA user_version").fetchone()[0]
     for version, fn in MIGRATIONS:
         if current < version:
             logger.info("Applying migration v%d", version)
-            fn(cur)
-            cur.execute(f"PRAGMA user_version = {version}")
-            db.commit()
+            try:
+                cur.execute("BEGIN")
+                fn(cur)
+                cur.execute(f"PRAGMA user_version = {version}")
+                db.commit()
+                logger.info("[MIGRATE] v%d OK", version)
+            except Exception:
+                db.rollback()
+                logger.exception("[MIGRATE] v%d FALHOU — rollback aplicado, "
+                                 "abortando boot", version)
+                raise
     final = cur.execute("PRAGMA user_version").fetchone()[0]
     logger.info("Database schema at version %d", final)
 
@@ -5388,6 +5412,135 @@ async def log_dump_job() -> None:
         await asyncio.sleep(LOG_DUMP_INTERVAL_SEC)
 
 
+# =====================================================================
+# F10 — Backup automatico do SQLite (VACUUM INTO + retencao)
+# =====================================================================
+# Railway volume pode falhar / ser recriado. Snapshot do repo eh seed
+# antigo. Solucao: backup diario (3h local) via `VACUUM INTO` (gera
+# arquivo consistente mesmo com WAL ativo) numa pasta do proprio volume
+# + retencao de N dias. Opcionalmente sobe o dump pro canal STASH
+# (Telegram = storage gratis). Usa conexao SEPARADA pra nao interferir
+# no cursor global compartilhado (db).
+BACKUP_DIR = os.path.join(DB_DIR, "backups")
+BACKUP_RETENTION_DAYS = int(os.getenv("BACKUP_RETENTION_DAYS", "7"))
+BACKUP_ENABLED = os.getenv("BACKUP_ENABLED", "1") != "0"
+BACKUP_HOUR = int(os.getenv("BACKUP_HOUR", "3"))
+
+
+def _do_backup_sync() -> tuple[str, int]:
+    """Executa VACUUM INTO num arquivo datado + prune. Roda em thread.
+    Retorna (path, size_bytes). Levanta em caso de erro."""
+    os.makedirs(BACKUP_DIR, exist_ok=True)
+    stamp = local_now().strftime("%Y-%m-%d")
+    dest = os.path.join(BACKUP_DIR, f"{stamp}.sqlite3")
+    # conexao isolada (read) — VACUUM INTO le o estado commitado.
+    src = sqlite3.connect(DB_PATH)
+    try:
+        # integridade antes de gerar backup (nao adianta salvar lixo).
+        chk = src.execute("PRAGMA integrity_check").fetchone()
+        if not chk or chk[0] != "ok":
+            raise RuntimeError(f"integrity_check falhou: {chk}")
+        if os.path.exists(dest):
+            os.remove(dest)  # idempotente p/ re-run no mesmo dia
+        src.execute("VACUUM INTO ?", (dest,))
+    finally:
+        src.close()
+    size = os.path.getsize(dest)
+    # retencao: remove backups mais velhos que N dias
+    cutoff = (local_now() - timedelta(days=BACKUP_RETENTION_DAYS)).date()
+    for fn in os.listdir(BACKUP_DIR):
+        if not fn.endswith(".sqlite3"):
+            continue
+        try:
+            d = datetime.strptime(fn[:10], "%Y-%m-%d").date()
+        except ValueError:
+            continue
+        if d < cutoff:
+            try:
+                os.remove(os.path.join(BACKUP_DIR, fn))
+            except OSError:
+                pass
+    return dest, size
+
+
+async def run_backup(upload: bool = False) -> tuple[str, int] | None:
+    """Roda o backup em thread. Se upload=True e STASH_CHAT_ID setado,
+    sobe o arquivo pro canal (silencioso). Retorna (path, size) ou None."""
+    try:
+        dest, size = await asyncio.to_thread(_do_backup_sync)
+    except Exception:
+        logger.exception("[BACKUP] falhou")
+        return None
+    logger.info("[BACKUP] OK %s (%d KB)", dest, size // 1024)
+    if upload and STASH_CHAT_ID and bot is not None:
+        try:
+            with open(dest, "rb") as f:
+                data = f.read()
+            await bot.send_document(
+                STASH_CHAT_ID,
+                BufferedInputFile(data, filename=os.path.basename(dest)),
+                caption=f"// DB backup {os.path.basename(dest)} "
+                        f"({size // 1024} KB)",
+                disable_notification=True)
+            logger.info("[BACKUP] upload STASH ok")
+        except Exception:
+            logger.exception("[BACKUP] upload STASH falhou")
+    return dest, size
+
+
+async def backup_job() -> None:
+    """Background: backup diario gated em BACKUP_HOUR local (1x/dia)."""
+    if not BACKUP_ENABLED:
+        logger.info("[BACKUP] desabilitado (BACKUP_ENABLED=0)")
+        return
+    last_day = None
+    while True:
+        await asyncio.sleep(300)  # checa a cada 5min
+        now_local = local_now()
+        day = now_local.date().isoformat()
+        if now_local.hour == BACKUP_HOUR and day != last_day:
+            # so marca o dia APOS sucesso — falha (lock/IO transiente)
+            # permite retry no proximo tick (5min) ainda no mesmo dia.
+            if await run_backup(upload=True):
+                last_day = day
+
+
+@dp.message(Command("royalbackup"))
+async def royal_backup(message: Message):
+    """Backup manual do DB. Owner-only, off-menu, qualquer chat.
+    Gera VACUUM INTO + sobe pro STASH e reporta ultimo backup."""
+    uid = message.from_user.id if message.from_user else 0
+    if OWNER_USER_ID is None or uid != OWNER_USER_ID:
+        return
+    in_group = is_group(message)
+    res = await run_backup(upload=True)
+    if not res:
+        ack = await message.answer(term_block(
+            "BACKUP", "!! falha ao gerar backup — ver logs.",
+            status="ERRO", status_color="HOT"))
+        if ack and in_group:
+            await auto_delete_after(ack, delay=12.0)
+        return
+    dest, size = res
+    # lista backups existentes p/ visao de retencao
+    try:
+        files = sorted(fn for fn in os.listdir(BACKUP_DIR)
+                       if fn.endswith(".sqlite3"))
+    except OSError:
+        files = []
+    lines = [
+        f">> arquivo: <code>{os.path.basename(dest)}</code>",
+        f">> tamanho: <b>{size // 1024} KB</b>",
+        f">> stash: <b>{'ok' if STASH_CHAT_ID else 'off (sem STASH)'}</b>",
+        f"// retencao: {len(files)} backups ({BACKUP_RETENTION_DAYS}d)",
+    ]
+    ack = await message.answer(term_block(
+        "BACKUP", "\n".join(lines), status="OK", status_color="ACID",
+        stamp=current_season_label()))
+    if ack and in_group:
+        await auto_delete_after(ack, delay=12.0)
+
+
 @dp.message(Command("royallog"))
 async def royal_log(message: Message):
     """Dump imediato dos logs. Owner-only, qualquer chat, off-menu.
@@ -7137,28 +7290,34 @@ async def track(message: Message):
 # TASKS ASSÍNCRONAS
 # =====================================================================
 
+def flush_buffers_once() -> None:
+    """Persiste activity_buffer + pair_buffer no DB num unico commit.
+    Reusado pelo loop periodico E pelo shutdown gracioso (F14)."""
+    for (chat_id, uid, day), count in list(activity_buffer.items()):
+        cur.execute(
+            "INSERT INTO daily_activity (chat_id, user_id, day, message_count) "
+            "VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(chat_id, user_id, day) "
+            "DO UPDATE SET message_count=message_count + excluded.message_count",
+            (chat_id, uid, day, count))
+    activity_buffer.clear()
+
+    for (chat_id, u1, u2), score in list(pair_buffer.items()):
+        cur.execute(
+            "INSERT INTO pair_scores (chat_id, user1, user2, score, last_seen) "
+            "VALUES (?, ?, ?, ?, ?) "
+            "ON CONFLICT(chat_id, user1, user2) "
+            "DO UPDATE SET score=score + excluded.score, last_seen=excluded.last_seen",
+            (chat_id, u1, u2, score, utc_iso()))
+    pair_buffer.clear()
+    db.commit()
+
+
 async def flush_buffers():
     while True:
         await asyncio.sleep(FLUSH_INTERVAL_SECONDS)
         try:
-            for (chat_id, uid, day), count in list(activity_buffer.items()):
-                cur.execute(
-                    "INSERT INTO daily_activity (chat_id, user_id, day, message_count) "
-                    "VALUES (?, ?, ?, ?) "
-                    "ON CONFLICT(chat_id, user_id, day) "
-                    "DO UPDATE SET message_count=message_count + excluded.message_count",
-                    (chat_id, uid, day, count))
-            activity_buffer.clear()
-
-            for (chat_id, u1, u2), score in list(pair_buffer.items()):
-                cur.execute(
-                    "INSERT INTO pair_scores (chat_id, user1, user2, score, last_seen) "
-                    "VALUES (?, ?, ?, ?, ?) "
-                    "ON CONFLICT(chat_id, user1, user2) "
-                    "DO UPDATE SET score=score + excluded.score, last_seen=excluded.last_seen",
-                    (chat_id, u1, u2, score, utc_iso()))
-            pair_buffer.clear()
-            db.commit()
+            flush_buffers_once()
         except Exception:
             logger.exception("buffer flush failed")
 
@@ -7791,6 +7950,100 @@ async def healthcheck():
 
 
 # =====================================================================
+# F13 — HTTP health endpoint (Railway healthcheck / readiness)
+# =====================================================================
+# Server HTTP minimo na porta $PORT com GET /health. Checa:
+#   (a) DB responde a SELECT 1 (liveness do storage)
+#   (b) tempo desde a ultima update do Telegram < STALE_UPDATE_SEC
+# Retorna 200 quando OK, 503 quando degradado (Railway marca unhealthy).
+# So sobe se $PORT estiver setado (worker puro nao precisa).
+STALE_UPDATE_SEC = int(os.getenv("HEALTH_STALE_SEC", "600"))
+_health_runner = None  # type: ignore[var-annotated]
+
+
+async def _health_handler(request):
+    from aiohttp import web
+    checks: dict[str, object] = {}
+    ok = True
+    # (a) DB ping
+    try:
+        cur.execute("SELECT 1")
+        cur.fetchone()
+        checks["db"] = "ok"
+    except Exception as e:
+        checks["db"] = f"fail:{type(e).__name__}"
+        ok = False
+    # (b) staleness das updates
+    idle = time.monotonic() - _last_update_monotonic
+    checks["last_update_age_sec"] = round(idle, 1)
+    if idle > STALE_UPDATE_SEC:
+        checks["updates"] = "stale"
+        ok = False
+    else:
+        checks["updates"] = "ok"
+    checks["schema_version"] = cur.execute(
+        "PRAGMA user_version").fetchone()[0]
+    return web.json_response(
+        {"status": "ok" if ok else "degraded", "checks": checks},
+        status=200 if ok else 503)
+
+
+async def start_health_server():
+    """Sobe o server de health na $PORT (no-op se PORT ausente)."""
+    global _health_runner
+    port_raw = os.getenv("PORT")
+    if not port_raw:
+        logger.info("[HEALTH] PORT ausente — health server desativado")
+        return
+    try:
+        from aiohttp import web
+    except Exception:
+        logger.warning("[HEALTH] aiohttp indisponivel — health server pulado")
+        return
+    try:
+        port = int(port_raw)
+    except ValueError:
+        logger.warning("[HEALTH] PORT invalido: %r", port_raw)
+        return
+    app = web.Application()
+    app.router.add_get("/health", _health_handler)
+    app.router.add_get("/", _health_handler)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    _health_runner = runner
+    logger.info("[HEALTH] server ON em 0.0.0.0:%d /health", port)
+
+
+# =====================================================================
+# F14 — graceful shutdown (SIGTERM do Railway)
+# =====================================================================
+# aiogram ja trata SIGINT/SIGTERM (handle_signals=True) parando o polling.
+# Este hook roda no shutdown do dispatcher: flush dos buffers, fecha o
+# health server e fecha o DB limpo (evita ResourceWarning + perda de dados).
+@dp.shutdown()
+async def _on_shutdown():
+    logger.info("[SHUTDOWN] iniciando teardown gracioso")
+    try:
+        flush_buffers_once()  # sincrona — NAO await
+    except Exception:
+        logger.exception("[SHUTDOWN] flush_buffers_once falhou")
+    if _health_runner is not None:
+        try:
+            await _health_runner.cleanup()
+            logger.info("[SHUTDOWN] health server fechado")
+        except Exception:
+            logger.exception("[SHUTDOWN] health cleanup falhou")
+    try:
+        db.commit()
+        db.close()
+        logger.info("[SHUTDOWN] DB fechado limpo")
+    except Exception:
+        logger.exception("[SHUTDOWN] db.close falhou")
+
+
+# =====================================================================
 # BOT COMMANDS REGISTRATION
 # =====================================================================
 
@@ -7931,6 +8184,7 @@ async def main():
     bot = Bot(BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
     logger.info("Royal RPG starting")
     await register_bot_commands()
+    await start_health_server()  # F13: /health na $PORT (no-op sem PORT)
     asyncio.create_task(flush_buffers())
     asyncio.create_task(cleanup_job())
     asyncio.create_task(scheduler())
@@ -7938,6 +8192,7 @@ async def main():
     asyncio.create_task(identity_card_sweep_job())
     asyncio.create_task(announce_typewriter_feature())
     asyncio.create_task(log_dump_job())
+    asyncio.create_task(backup_job())  # F10: backup diario do DB
     # allowed_updates resolvido dos handlers registrados — inclui
     # automaticamente "message_reaction" (M06) pq ha @dp.message_reaction.
     allowed = dp.resolve_used_update_types()
