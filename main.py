@@ -47,7 +47,6 @@ from aiogram.types import (
     InlineQueryResultArticle,
     InlineQueryResultCachedPhoto,
     InlineQueryResultsButton,
-    InputFile,
     InputTextMessageContent,
     KeyboardButton,
     LabeledPrice,
@@ -59,7 +58,7 @@ from aiogram.types import (
 )
 
 import royal_avatars
-from royal_words import PALAVRAS, CHARADAS
+from royal_words import PALAVRAS
 from royal_render import (
     BossKillAttacker,
     BossKillData,
@@ -4390,110 +4389,261 @@ async def close_season(chat_id: int, old_code: str | None, new_code: str) -> Non
 # pro user abrir só o que quiser ler.
 # ---------------------------------------------------------------------
 
-ROYAL_TUTORIAL = (
-    "<b>// TUTORIAL.SYS · COMO JOGAR</b>\n"
-    "<i>Toca em cada passo pra expandir ▾</i>\n\n"
+# Tutorial dividido em PARTES — cada parte vira 1 mensagem (term_block).
+# Telegram limita 1 mensagem a 4096 chars; partir mantem cada bloco
+# folgado e deixa o onboarding extremamente detalhado sem estourar.
+# Cada item da lista: (titulo_do_bloco, corpo_html).
+ROYAL_TUTORIAL_PARTS: list[tuple[str, str]] = [
+    # ---------------------------------------------------------------- 1/6
+    ("TUTORIAL 1/6", (
+        "<b>// MANUAL DO REINO · COMO JOGAR</b>\n"
+        "<i>Bem-vindo, nobre. Este guia te leva do zero ao topo do "
+        "ranking. Toca em cada seção pra expandir ▾</i>\n\n"
 
-    "<blockquote expandable>"
-    "<b>>> PASSO 1 · CHEGADA</b>\n"
-    "Entra num grupo onde o Royal tá ativo. Manda <code>/royal</code> "
-    "pra abrir o terminal principal e ver o que rola no reino.\n"
-    "<i>// se for admin do grupo, use /royalativar primeiro.</i>"
-    "</blockquote>"
+        "<blockquote expandable>"
+        "<b>>> O QUE É O RPG - Royal para Geeks</b>\n"
+        "Um RPG que vive <b>dentro do seu grupo do Telegram</b>. "
+        "Você não precisa de app nenhum: <b>conversar já é jogar</b>. "
+        "Cada mensagem te dá XP, sobe de nível, libera atributos e "
+        "te coloca pra disputar o trono do reino.\n"
+        "// não existe \"sair do jogo\" — ele roda 24h no grupo."
+        "</blockquote>"
 
-    "<blockquote expandable>"
-    "<b>>> PASSO 2 · GANHE XP</b>\n"
-    f"Você ganha <b>{XP_PER_MESSAGE} XP</b> por mensagem e "
-    f"<b>{XP_PER_REPLY} XP</b> por reply.\n"
-    f">> cooldown: {XP_COOLDOWN_MSG_SECONDS}s msg / "
-    f"{XP_COOLDOWN_REPLY_SECONDS}s reply.\n"
-    "Quanto mais você conversa, mais sobe."
-    "</blockquote>"
+        "<blockquote expandable>"
+        "<b>>> PASSO 1 · ENTRAR NO REINO</b>\n"
+        "1. Esteja num grupo onde o Royal está ativo.\n"
+        "2. Manda <code>/royal</code> pra abrir o terminal principal "
+        "(o HUB com botões de tudo).\n"
+        "3. No 1º <code>/royal</code> você é cadastrado e ganha um "
+        "<b>RYL ID</b> único (tipo <code>RYL-0042</code>) — sua "
+        "identidade pra sempre.\n"
+        "<i>// admin do grupo? rode /royalativar uma vez pra ligar o "
+        "bot ali.</i>"
+        "</blockquote>"
 
-    "<blockquote expandable>"
-    "<b>>> PASSO 3 · SUA FICHA</b>\n"
-    "Usa <code>/royalperfil</code> pra ver seu cartão de identidade — "
-    "level, atributos, ranking, casórios, florins.\n"
-    "<i>// cada nobre tem um RYL ID único.</i>"
-    "</blockquote>"
+        "<blockquote expandable>"
+        "<b>>> PASSO 2 · SUA FICHA</b>\n"
+        "<code>/royalperfil</code> (ou <code>/royalficha</code>) "
+        "gera seu <b>cartão de identidade</b> 1080×1080: avatar, "
+        "level, XP, HP, atributos, ranking, casórios e florins 🪙.\n"
+        "• <code>/royalavatar</code> — escolhe seu avatar "
+        "(1× por temporada).\n"
+        "• <code>/royalperfil RYL-0042</code> — espia a ficha de "
+        "outro nobre.\n"
+        "<i>// funciona no grupo E na sua DM com o bot.</i>"
+        "</blockquote>"
+    )),
 
-    "<blockquote expandable>"
-    "<b>>> PASSO 4 · LEVEL UP</b>\n"
-    f"Cada nível te dá <b>{PTS_PER_LEVEL} ponto(s)</b> de atributo.\n"
-    "Usa <code>/royalup</code> pra distribuir em:\n"
-    "• 💪 FORÇA — mais dano no boss\n"
-    "• 🏃 DESTREZA — mais XP em palavras\n"
-    "• 🛡️ VITALIDADE — mais HP\n"
-    "• ✨ CARISMA — mais chance em casórios"
-    "</blockquote>"
+    # ---------------------------------------------------------------- 2/6
+    ("TUTORIAL 2/6", (
+        "<b>// PROGRESSÃO · XP, NÍVEL E ATRIBUTOS</b>\n\n"
 
-    "<blockquote expandable>"
-    "<b>>> PASSO 5 · ESCOLHA UMA CLASSE</b>\n"
-    "<code>/royalclasse</code> — define teu papel no reino.\n"
-    "Cada classe tem um bônus passivo. Escolha com cuidado, "
-    "<i>vale pra temporada inteira.</i>"
-    "</blockquote>"
+        "<blockquote expandable>"
+        "<b>>> COMO GANHAR XP</b>\n"
+        f"• <b>+{XP_PER_MESSAGE} XP</b> por mensagem "
+        f"(cooldown {XP_COOLDOWN_MSG_SECONDS}s).\n"
+        f"• <b>+{XP_PER_REPLY} XP</b> por reply "
+        f"(cooldown {XP_COOLDOWN_REPLY_SECONDS}s) — responder vale "
+        "mais!\n"
+        f"• <b>+{REACTION_XP} XP</b> por reagir com emoji a uma msg "
+        f"(até {REACTION_XP_DAILY_CAP}/dia).\n"
+        f"• <b>+{XP_PALAVRA_WIN_BONUS} XP</b> ao vencer a Palavra, "
+        "XP no boss, em casórios, missões e baús.\n"
+        "<i>// o cooldown evita spam: mandar 10 msgs em 5s não "
+        "multiplica XP.</i>"
+        "</blockquote>"
 
-    "<blockquote expandable>"
-    "<b>>> PASSO 6 · PALAVRA DA HORA</b>\n"
-    "A cada <b>60 min</b> o bot solta um desafio no grupo "
-    "(anagrama, letras faltando ou charada).\n"
-    f"<i>Primeiro a acertar leva <b>{XP_PALAVRA_WIN_BONUS} XP</b> "
-    f"+ <b>{GOLD_PALAVRA_WIN} 🪙</b>.</i>\n"
-    ">> só responder no chat. /royalpalavra mostra o ativo."
-    "</blockquote>"
+        "<blockquote expandable>"
+        "<b>>> SUBIR DE NÍVEL</b>\n"
+        f"Cada nível te dá <b>{PTS_PER_LEVEL} pontos</b> de atributo. "
+        "Quando tiver pontos, o perfil mostra <b>+N pts</b> e o bot "
+        "te avisa.\n"
+        "Distribua com <code>/royalup</code>."
+        "</blockquote>"
 
-    "<blockquote expandable>"
-    "<b>>> PASSO 7 · BOSS DA SEMANA</b>\n"
-    f"Todo <b>domingo às {BOSS_SPAWN_HOUR}h</b> nasce um boss. "
-    "Todo mundo do grupo ataca junto.\n"
-    "Usa <code>/royalboss</code> pra ver HP e dar o golpe.\n"
-    "<i>// recompensa em XP + florins se derrubarem.</i>"
-    "</blockquote>"
+        "<blockquote expandable>"
+        "<b>>> OS 4 ATRIBUTOS</b>\n"
+        "• 💪 <b>FORÇA</b> — mais dano no boss.\n"
+        "• 🏃 <b>DESTREZA</b> — mais XP ao acertar a Palavra.\n"
+        "• 🛡️ <b>VITALIDADE</b> — mais HP máximo.\n"
+        "• ✨ <b>CARISMA</b> — mais chance/peso nos casórios.\n"
+        "<i>// não existe build errada, mas foque no que você mais "
+        "joga: boss → FORÇA, palavra → DESTREZA, shipper → CARISMA.</i>"
+        "</blockquote>"
+    )),
 
-    "<blockquote expandable>"
-    "<b>>> PASSO 8 · CASORIOS</b>\n"
-    "<b>3x ao dia</b> o bot escolhe um par e abre votação ❤️/🤮.\n"
-    "Casamentos ativos dão <b>+10% XP</b> e contam pro ranking.\n"
-    ">> <code>/royalmeuscasorios</code> · <code>/royalcasorios</code>\n"
-    "<i>// /royalencalhar pra sair da fila.</i>"
-    "</blockquote>"
+    # ---------------------------------------------------------------- 3/6
+    ("TUTORIAL 3/6", (
+        "<b>// CLASSES · SEU PAPEL NA CORTE</b>\n\n"
 
-    "<blockquote expandable>"
-    "<b>>> PASSO 9 · LOJA &amp; INVENTARIO</b>\n"
-    "Florins 🪙 vêm de palavras, boss e eventos.\n"
-    "<code>/royalloja</code> compra itens, "
-    "<code>/royalinventario</code> equipa.\n"
-    "<i>// alguns itens dão buff passivo.</i>"
-    "</blockquote>"
+        "<blockquote expandable>"
+        "<b>>> ESCOLHER CLASSE</b>\n"
+        "<code>/royalclasse</code> define teu papel e te dá um "
+        "<b>bônus passivo permanente</b>. Escolha com calma: "
+        "<i>vale pra temporada inteira.</i>\n\n"
+        "• 👑 <b>Monarca</b> — +20% HP base\n"
+        "• 🗡️ <b>Cavaleiro</b> — +2 FORÇA\n"
+        "• 🌹 <b>Cortesã</b> — +2 CARISMA\n"
+        "• 🧙 <b>Bruxo</b> — +2 DESTREZA\n"
+        "• 📜 <b>Cronista</b> — +10% XP em tudo\n"
+        "• 🗝️ <b>Bobo</b> — +50% ouro 🪙\n"
+        "<i>// Cronista acelera level; Bobo enche a arca pra loja.</i>"
+        "</blockquote>"
 
-    "<blockquote expandable>"
-    "<b>>> PASSO 10 · MISSOES &amp; EVENTOS</b>\n"
-    "<code>/royalmissoes</code> — missões diárias (manda msgs, "
-    "acerta PALAVRA, bate no boss, reage) → resgata <b>XP + 🪙</b>.\n"
-    "<code>/royalevento</code> — datas especiais e fins de semana "
-    "dão <b>boost de XP</b> em tudo.\n"
-    "<i>// reagir com emoji nas mensagens também dá XP (até 10/dia).</i>"
-    "</blockquote>"
+        "<blockquote expandable>"
+        "<b>>> DICA DE SINERGIA</b>\n"
+        "Casado dá <b>+10% XP</b>, Cronista dá <b>+10% XP</b>, e "
+        "eventos/Premium empilham por cima. Combinar bônus é o que "
+        "separa o top 3 do resto do ranking."
+        "</blockquote>"
+    )),
 
-    "<blockquote expandable>"
-    "<b>>> PASSO 11 · TEMPORADAS</b>\n"
-    "O reino segue as estações do ano. Cada temporada zera o "
-    "ranking, mas <b>seu nível total fica.</b>\n"
-    ">> <code>/royalranking</code> pra ver o top 10 atual."
-    "</blockquote>"
+    # ---------------------------------------------------------------- 4/6
+    ("TUTORIAL 4/6", (
+        "<b>// ATIVIDADES · PALAVRA, BOSS E CASÓRIOS</b>\n\n"
 
-    "<i>>> pronto, nobre. boa caçada ⚔️</i>"
-)
+        "<blockquote expandable>"
+        "<b>>> 🎯 PALAVRA DA HORA</b>\n"
+        "De <b>hora em hora</b> o bot solta um desafio no grupo: "
+        "anagrama, letras faltando ou charada. Fica aberto por "
+        f"<b>{min(PALAVRA_DURATIONS_MIN)}–{max(PALAVRA_DURATIONS_MIN)} "
+        "min</b>.\n"
+        "• Só <b>responder no chat</b> — o 1º a acertar leva "
+        f"<b>{XP_PALAVRA_WIN_BONUS} XP + {GOLD_PALAVRA_WIN} 🪙</b>.\n"
+        "• <code>/royalpalavra</code> mostra o desafio ativo.\n"
+        "• 💡 <code>/royalpaldica</code> gasta 1 crédito e revela "
+        "1 letra (crédito vem da loja Premium).\n"
+        f"<i>// {PALAVRA_ATTEMPT_COOLDOWN_SEC}s de cooldown entre "
+        "tentativas pra ninguém brutar.</i>"
+        "</blockquote>"
+
+        "<blockquote expandable>"
+        "<b>>> 🐉 BOSS DA SEMANA</b>\n"
+        f"Todo <b>domingo às {BOSS_SPAWN_HOUR}h</b> nasce um boss "
+        "com HP gigante. <b>O grupo inteiro ataca junto.</b>\n"
+        "• <code>/royalboss</code> mostra o HP e dá o golpe.\n"
+        "• Seu dano escala com <b>FORÇA</b>.\n"
+        "• Derrubou? Todo mundo que bateu leva <b>XP + florins</b> "
+        "(quem mais bateu, mais leva).\n"
+        "<i>// é cooperativo: chama a galera pro raid.</i>"
+        "</blockquote>"
+
+        "<blockquote expandable>"
+        "<b>>> 💍 CASÓRIOS (SHIPPER)</b>\n"
+        f"<b>{len(AUTO_HOURS)}× ao dia</b> o bot escolhe um par do "
+        "grupo e abre votação ❤️/🤮. Quanto mais vocês interagem, "
+        "mais chance de serem shippados.\n"
+        "• Casamento ativo dá <b>+10% XP</b> e conta pro ranking.\n"
+        "• <code>/royalmeuscasorios</code> — seu histórico.\n"
+        "• <code>/royalcasorios</code> — ranking dos casais.\n"
+        "• <code>/royalencalhar</code> sai da fila · "
+        "<code>/royaldesencalhar</code> volta.\n"
+        "<i>// CARISMA pesa na escolha do par.</i>"
+        "</blockquote>"
+    )),
+
+    # ---------------------------------------------------------------- 5/6
+    ("TUTORIAL 5/6", (
+        "<b>// ECONOMIA · FLORINS, LOJA E RECOMPENSAS</b>\n\n"
+
+        "<blockquote expandable>"
+        "<b>>> 🪙 DE ONDE VÊM OS FLORINS</b>\n"
+        "Palavra, boss, missões, eventos e baús. Bobo ganha +50%. "
+        "Veja a arca com <code>/royalsaldo</code>."
+        "</blockquote>"
+
+        "<blockquote expandable>"
+        "<b>>> 🛒 LOJA &amp; INVENTÁRIO</b>\n"
+        "<code>/royalloja</code> compra · "
+        "<code>/royalinventario</code> equipa:\n"
+        "• 🧪 Poção de Vigor (50) — restaura HP\n"
+        "• 🥾 Botas Ágeis (150) — +2 DES\n"
+        "• 🗡️ Espada de Ferro (200) — +3 FOR\n"
+        "• 🛡️ Armadura de Couro (200) — +HP\n"
+        "• 💍 Anel da Corte (250) — +2 CAR\n"
+        "• 📚 Tomo de Sabedoria (300) — +100 XP\n"
+        "• 👑 Coroa Decorativa (500) — cosmético\n"
+        "<i>// equipáveis dão buff enquanto equipados.</i>"
+        "</blockquote>"
+
+        "<blockquote expandable>"
+        "<b>>> 🎁 PRESENTES &amp; 🏅 CONQUISTAS</b>\n"
+        "• <code>/royalpresentear @user 100</code> manda florins "
+        "(ou reply + <code>/royalpresentear 100</code>). "
+        "Entre 10 e 5000 🪙.\n"  # GIFT_MIN / GIFT_MAX (def. mais abaixo)
+        "• <code>/royalconquistas</code> — medalhas que você "
+        "desbloqueia jogando (1º acerto, 1º boss, 1º amor...).</blockquote>"
+
+        "<blockquote expandable>"
+        "<b>>> 🗺️ MISSÕES &amp; 🎉 EVENTOS</b>\n"
+        "• <code>/royalmissoes</code> — 4 missões diárias (mandar "
+        "msgs, acertar Palavra, bater no boss, reagir) → resgata "
+        "<b>XP + 🪙</b>. Resetam todo dia.\n"
+        "• <code>/royalevento</code> — datas especiais e fins de "
+        "semana dão <b>boost de XP</b> em tudo."
+        "</blockquote>"
+    )),
+
+    # ---------------------------------------------------------------- 6/6
+    ("TUTORIAL 6/6", (
+        "<b>// AVANÇADO · DM, TEMPORADAS, CONFIG E PREMIUM</b>\n\n"
+
+        "<blockquote expandable>"
+        "<b>>> 💬 DM + INLINE</b>\n"
+        "Comandos pessoais (perfil, ficha, ranking, inventário, "
+        "saldo, casórios) funcionam na <b>sua DM com o bot</b> "
+        "também.\n"
+        "• Em mais de um grupo Royal? <code>/royalgrupo</code> "
+        "escolhe qual é o ativo na DM.\n"
+        "• <b>Inline:</b> digite <code>@nome_do_bot</code> em "
+        "qualquer chat pra enviar seu cartão de perfil ✨"
+        "</blockquote>"
+
+        "<blockquote expandable>"
+        "<b>>> ⚙️ PREFERÊNCIAS &amp; 🔒 PRIVACIDADE</b>\n"
+        "• <code>/royalconfig</code> — silenciar avisos de level-up, "
+        "etc.\n"
+        "• <code>/royalprivacidade</code> — seus controles.\n"
+        "• <code>/royaldados</code> — exportar ou apagar seus dados."
+        "</blockquote>"
+
+        "<blockquote expandable>"
+        "<b>>> 🗓️ TEMPORADAS</b>\n"
+        "O reino segue as estações do ano. Cada temporada <b>zera o "
+        "ranking</b>, mas <b>seu nível total fica</b>. "
+        "<code>/royalranking</code> mostra o top 10 atual."
+        "</blockquote>"
+
+        "<blockquote expandable>"
+        "<b>>> 💎 PREMIUM (Telegram Stars ⭐)</b>\n"
+        "Em <code>/royalloja</code> → 💎 Premium (pago no próprio "
+        "Telegram, sem cartão):\n"
+        "• 🌟 <b>Royal Plus</b> — 50⭐/mês: +20% XP + badge violeta "
+        "no card (renova sozinho, cancela quando quiser).\n"
+        "• ⚡ Boost +20% XP por 24h — 50⭐\n"
+        "• 💡 Dica da Palavra — 1⭐\n"
+        "• 🥇 Skin Dourada permanente — 100⭐"
+        "</blockquote>"
+
+        "<i>>> fim do manual. agora é com você, nobre. boa caçada ⚔️\n"
+        "// dúvida rápida? /royalajuda lista todos os comandos.</i>"
+    )),
+]
 
 
-def tutorial_block() -> str:
-    """Retorna tutorial envolvido em term_block."""
-    return term_block(
-        "TUTORIAL", ROYAL_TUTORIAL,
-        status="ONBOARDING", status_color="CYAN",
-        stamp=current_season_label(),
-    )
+async def send_tutorial(message: Message) -> None:
+    """Envia o tutorial completo em partes (cada parte = 1 mensagem),
+    respeitando o limite de 4096 chars do Telegram. Usado por /start,
+    /royaltutorial, /royalajuda e /help."""
+    season = current_season_label()
+    last = len(ROYAL_TUTORIAL_PARTS) - 1
+    for i, (title, body) in enumerate(ROYAL_TUTORIAL_PARTS):
+        await message.answer(term_block(
+            title, body, status="ONBOARDING", status_color="CYAN",
+            stamp=season if i == last else None,
+        ))
+        if i != last:
+            await asyncio.sleep(0.25)
 
 
 @dp.message(CommandStart())
@@ -4539,7 +4689,7 @@ async def start_cmd(message: Message):
         **effect_kw(message.chat.type, EFFECT_PARTY),
     )
     # Tutorial completo logo em seguida (primeira impressão = ensina o jogo)
-    await message.answer(tutorial_block())
+    await send_tutorial(message)
 
 
 # === /royal — HUB ===
@@ -4620,7 +4770,7 @@ ROYAL_HELP = (
     "<blockquote expandable>💎 <b>Premium — Telegram Stars ⭐</b>\n"
     "Em /royalloja → botão <b>💎 Premium</b>:\n"
     "🌟 <b>Royal Plus</b> (assinatura mensal) — 50⭐/mês\n"
-    "  <i>+20% XP, slot extra de casório, badge violeta</i>\n"
+    "  <i>+20% XP permanente + badge violeta no card</i>\n"
     "• ⚡ Boost +20% XP (24h) — 50⭐\n"
     "• 💡 Dica da Palavra — 1⭐\n"
     "• 🔱 Ressurreição no Boss — 10⭐\n"
@@ -4673,19 +4823,19 @@ ROYAL_HELP = (
 @dp.message(Command("royalajuda"))
 async def royal_ajuda(message: Message):
     # Tutorial primeiro (ensina), depois manual de comandos (referência)
-    await message.answer(tutorial_block())
+    await send_tutorial(message)
     await message.answer(ROYAL_HELP)
 
 
 @dp.message(Command("help"))
 async def help_cmd(message: Message):
-    await message.answer(tutorial_block())
+    await send_tutorial(message)
     await message.answer(ROYAL_HELP)
 
 
 @dp.message(Command("royaltutorial"))
 async def royal_tutorial_cmd(message: Message):
-    await message.answer(tutorial_block())
+    await send_tutorial(message)
 
 
 # === /royalperfil ===
@@ -6305,7 +6455,7 @@ async def btn_meus(message: Message):
 
 @dp.message(F.text == "📖 Tutorial")
 async def btn_tutorial(message: Message):
-    await message.answer(tutorial_block())
+    await send_tutorial(message)
 
 
 @dp.message(F.text == "❓ Como funciona")

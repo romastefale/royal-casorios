@@ -422,9 +422,13 @@ o autocomplete `/` automaticamente na 1ª inicialização com novo token.
   - **Telegram Bot API: 10** — usar sempre, não fazer downgrade
   - **aiogram: 3.28.2** (última estável, lançada em 10/05/2026)
 - **Sincronia obrigatória com o código:** sempre que mexer no bot, **revisar e atualizar quando aplicável**:
-  - `/start` (handler `start_cmd` em `main.py` ~3958) — lista de rotas pessoais e inline mode
-  - `/royalajuda` (constante `ROYAL_HELP` em `main.py` ~4059) — manual completo de comandos
-  - `/royaltutorial` (`tutorial_block()`) — explicação do gameplay
+  - `/start` (handler `start_cmd` em `main.py`) — lista de rotas pessoais e inline mode
+  - `/royalajuda` (constante `ROYAL_HELP` em `main.py`) — manual completo de comandos
+  - `/royaltutorial` (`send_tutorial()` + `ROYAL_TUTORIAL_PARTS` em `main.py`)
+    — tutorial didático em 6 partes (cada parte = 1 mensagem, respeitando o
+    limite de 4096 chars do Telegram). `send_tutorial(message)` envia todas as
+    partes em sequência; usado por `/start`, `/royaltutorial`, `/royalajuda`,
+    `/help` e o botão "📖 Tutorial".
   - `replit.md` — seções de env vars, persistência, doutrina visual, menus
   - `register_bot_commands()` (BotCommands do menu `/`) — se adicionou comando novo
   Se a mudança for puramente infra interna (cache, retry, log format), só atualizar `replit.md` (e mencionar no commit que /start/help/tutorial foram auditados e não precisaram mudar).

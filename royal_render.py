@@ -1492,9 +1492,8 @@ def render_casorio_card(p1: CasorioPartner, p2: CasorioPartner,
             )
         p1 = _norm(p1)
         p2 = _norm(p2)
-        # Paleta determinada pelo par (estavel pro mesmo casal)
+        # Seed estavel pro mesmo casal (usado so na estatica de fundo)
         pal_seed = "::".join(sorted([p1.royal_id, p2.royal_id]))
-        pal = pick_palette(pal_seed)
         W = H = CARD_SIZE
         img = Image.new("RGB", (W, H), BG_DEEP)
         draw = ImageDraw.Draw(img)
@@ -1686,7 +1685,6 @@ def render_boss_kill_card(data: BossKillData) -> bytes | None:
     destaque, podium 3 colunas dos top atacantes (avatar + dmg + gold),
     footer com duracao/loot total. Sem cache (evento unico)."""
     try:
-        pal = pick_palette(f"BOSS::{data.boss_name}")
         W = H = CARD_SIZE
         img = Image.new("RGB", (W, H), BG_DEEP)
         draw = ImageDraw.Draw(img)
@@ -1915,7 +1913,6 @@ def render_identity_card(data: IdentityCardData) -> bytes | None:
     Reino. Retorna JPEG bytes ou None."""
     try:
         royal_id = (data.royal_id or "RYL-????").upper()
-        name = (data.name or "?").strip() or "?"
 
         pal = pick_palette(royal_id)
         W = H = CARD_SIZE
@@ -2712,7 +2709,6 @@ def render_meuscasorios_card(data: MeusCasoriosData) -> bytes | None:
         partners = list(data.top_partners)[:5]
         if partners:
             mini_size = 80
-            n = len(partners)
             slot_w = (top_panel[2] - top_panel[0] - 40) // 5
             for i, p in enumerate(partners):
                 slot_x0 = top_panel[0] + 20 + i * slot_w
@@ -3776,7 +3772,6 @@ def render_shipper_card(data: ShipperData) -> bytes | None:
     if cached:
         return cached
     try:
-        pal = pick_palette(data.royal_id)
         accent = HOT if data.opted_out else MAGENTA
         seal_label = "ENCALHADO.SYS" if data.opted_out else "NO_JOGO.SYS"
         status_text = "OPT_OUT" if data.opted_out else "OPT_IN"
