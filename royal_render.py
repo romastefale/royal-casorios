@@ -2983,3 +2983,578 @@ def render_inventario_card(data: InventarioData) -> bytes | None:
         logger.exception("ROYAL_INVENTARIO_CARD_RENDER_FAILED rid=%r",
                          data.self_royal_id)
         return None
+
+
+# =====================================================================
+# SALDO CARD — cofre/wallet: número gigante de ouro + avatar
+# =====================================================================
+
+@dataclass(frozen=True)
+class SaldoData:
+    self_royal_id: str
+    self_name: str
+    self_avatar_slug: str | None
+    saldo: int
+    level: int = 0
+    season_xp: int = 0
+
+
+def render_saldo_card(data: SaldoData) -> bytes | None:
+    """Cofre: avatar + nome + saldo em destaque (font gigante)."""
+    cache_key = ("saldo", data.self_royal_id, data.self_name,
+                 data.self_avatar_slug, data.saldo, data.level,
+                 data.season_xp)
+    cached = cache_get(cache_key)
+    if cached:
+        return cached
+    try:
+        pal = pick_palette(data.self_royal_id)
+        W = H = CARD_SIZE
+        img = Image.new("RGB", (W, H), BG_DEEP)
+        draw = ImageDraw.Draw(img)
+
+        # estática + moedas de fundo (pontilhado dourado)
+        rng = random.Random(hash(("saldo", data.self_royal_id)) & 0xFFFF)
+        for _ in range(1100):
+            x = rng.randrange(W)
+            y = rng.randrange(H)
+            c = rng.choice([(20, 16, 22), (16, 14, 20), (28, 22, 30),
+                            (40, 30, 10)])
+            pixel_rect(draw, (x, y, x + 3, y + 3), c)
+
+        OUT_PAD = 28
+        panel_box = (OUT_PAD, OUT_PAD, W - OUT_PAD, H - OUT_PAD)
+        pixel_rect(draw, panel_box, BG)
+        chunky_border(draw, panel_box, outer=BLACK, inner=GOLD, thick=8)
+
+        # Header
+        header_box = (OUT_PAD + 28, OUT_PAD + 28,
+                      W - OUT_PAD - 28, OUT_PAD + 110)
+        pixel_rect(draw, header_box, PANEL)
+        pixel_rect(draw, (header_box[0], header_box[1],
+                          header_box[2], header_box[1] + 4), GOLD)
+        pixel_rect(draw, (header_box[0], header_box[3] - 4,
+                          header_box[2], header_box[3]), GOLD)
+        title_font = load_font(28, mono=True, bold=True)
+        draw.text((header_box[0] + 22, header_box[1] + 22),
+                  "ROYAL.COFRE.SYS", font=title_font, fill=GOLD)
+        sub_font = load_font(16, mono=True, bold=False)
+        sub = ">> FLORINS REAIS"
+        sw, _ = text_size(draw, sub, sub_font)
+        draw.text((header_box[2] - 22 - sw, header_box[1] + 30),
+                  sub, font=sub_font, fill=DIM)
+
+        # Avatar central
+        av_size = 180
+        av_x = (W - av_size) // 2
+        av_y = OUT_PAD + 150
+        resolved = royal_avatars.resolve_slug(
+            data.self_avatar_slug, data.self_royal_id)
+        portrait = royal_avatars.load_avatar(resolved, av_size)
+        pixel_rect(draw, (av_x - 6, av_y - 6,
+                          av_x + av_size + 6, av_y + av_size + 6), BLACK)
+        pixel_rect(draw, (av_x - 3, av_y - 3,
+                          av_x + av_size + 3, av_y + av_size + 3), GOLD)
+        if portrait is not None:
+            img.paste(portrait, (av_x, av_y), portrait)
+
+        # Nome + royal_id
+        name_font = load_font(22, mono=True, bold=True)
+        name = ellipsize(data.self_name, 22).upper()
+        nw, _ = text_size_smart(draw, name, name_font)
+        draw_text_smart(draw, ((W - nw) // 2, av_y + av_size + 16),
+                        name, name_font, INK)
+        rid_font = load_font(16, mono=True, bold=False)
+        idw, _ = text_size(draw, data.self_royal_id, rid_font)
+        draw.text(((W - idw) // 2, av_y + av_size + 46),
+                  data.self_royal_id, font=rid_font, fill=DIM)
+
+        # Cofre painel grande
+        cof_top = av_y + av_size + 90
+        cof = (OUT_PAD + 60, cof_top, W - OUT_PAD - 60, cof_top + 180)
+        pixel_rect(draw, cof, PANEL)
+        pixel_rect(draw, (cof[0], cof[1], cof[2], cof[1] + 4), GOLD)
+        pixel_rect(draw, (cof[0], cof[3] - 4, cof[2], cof[3]), GOLD)
+        pixel_rect(draw, (cof[0], cof[1], cof[0] + 4, cof[3]), GOLD)
+        pixel_rect(draw, (cof[2] - 4, cof[1], cof[2], cof[3]), GOLD)
+
+        lbl_font = load_font(14, mono=True, bold=False)
+        draw.text((cof[0] + 20, cof[1] + 14),
+                  ">> SALDO ATUAL", font=lbl_font, fill=DIM)
+
+        big_font = load_font(72, mono=True, bold=True)
+        big_txt = format_br(data.saldo)
+        bw, bh = text_size_smart(draw, big_txt, big_font)
+        # se não couber, reduz
+        if bw > cof[2] - cof[0] - 80:
+            big_font = load_font(56, mono=True, bold=True)
+            bw, bh = text_size_smart(draw, big_txt, big_font)
+        cx = cof[0] + (cof[2] - cof[0] - bw - 50) // 2
+        cy = cof[1] + (cof[3] - cof[1] - bh) // 2
+        draw_text_smart(draw, (cx, cy), big_txt, big_font, GOLD)
+        # moeda 🪙 à direita
+        coin_font = load_font(48, mono=True, bold=True)
+        draw_text_smart(draw, (cx + bw + 12, cy + 8),
+                        "🪙", coin_font, GOLD)
+
+        # Stats secundários (level + xp)
+        if data.level > 0 or data.season_xp > 0:
+            stat_y = cof[3] + 18
+            stat_font = load_font(14, mono=True, bold=False)
+            stat_txt = (f"LVL {data.level}  ·  "
+                        f"XP TEMP. {format_br(data.season_xp)}")
+            sw, _ = text_size(draw, stat_txt, stat_font)
+            draw.text(((W - sw) // 2, stat_y),
+                      stat_txt, font=stat_font, fill=DIM)
+
+        # Footer
+        foot_font = load_font(12, mono=True, bold=False)
+        foot_left = "> /royalsaldo  //  /royalloja"
+        foot_right = f"v0.1 // {pal['name']}_MODE"
+        draw.text((OUT_PAD + 60, H - OUT_PAD - 50),
+                  foot_left, font=foot_font, fill=DIM)
+        fw, _ = text_size(draw, foot_right, foot_font)
+        draw.text((W - OUT_PAD - 60 - fw, H - OUT_PAD - 50),
+                  foot_right, font=foot_font, fill=pal["footer"])
+
+        img = img.convert("RGBA")
+        apply_scanlines(img, every=3, alpha=55)
+        vimg = img.convert("RGB")
+        apply_vignette(vimg, strength=170)
+        img = vimg.convert("RGBA")
+        apply_grain(img, intensity=18)
+        img = img.convert("RGB")
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=90, optimize=True)
+        payload = buf.getvalue()
+        cache_put(cache_key, payload)
+        return payload
+    except Exception:
+        logger.exception("ROYAL_SALDO_CARD_RENDER_FAILED rid=%r",
+                         data.self_royal_id)
+        return None
+
+
+# =====================================================================
+# LOJA CARD — vitrine 4x2 dos itens com preço + can-afford
+# =====================================================================
+
+@dataclass(frozen=True)
+class LojaSlot:
+    item_id: str
+    emoji: str
+    name: str
+    price: int
+    item_type: str
+    affordable: bool
+
+
+@dataclass(frozen=True)
+class LojaData:
+    viewer_royal_id: str
+    viewer_name: str
+    viewer_avatar_slug: str | None
+    saldo: int
+    slots: tuple[LojaSlot, ...]
+
+
+def render_loja_card(data: LojaData) -> bytes | None:
+    """Vitrine: header com saldo + grid 4x2 com preço por item."""
+    cache_key = ("loja", data.viewer_royal_id, data.viewer_name,
+                 data.viewer_avatar_slug, data.saldo,
+                 tuple((s.item_id, s.price, s.affordable) for s in data.slots))
+    cached = cache_get(cache_key)
+    if cached:
+        return cached
+    try:
+        pal = pick_palette(data.viewer_royal_id)
+        W = H = CARD_SIZE
+        img = Image.new("RGB", (W, H), BG_DEEP)
+        draw = ImageDraw.Draw(img)
+
+        rng = random.Random(hash(("loja", data.viewer_royal_id)) & 0xFFFF)
+        for _ in range(1100):
+            x = rng.randrange(W)
+            y = rng.randrange(H)
+            c = rng.choice([(20, 16, 22), (16, 14, 20), (28, 22, 30)])
+            pixel_rect(draw, (x, y, x + 3, y + 3), c)
+
+        OUT_PAD = 28
+        panel_box = (OUT_PAD, OUT_PAD, W - OUT_PAD, H - OUT_PAD)
+        pixel_rect(draw, panel_box, BG)
+        chunky_border(draw, panel_box, outer=BLACK, inner=ACID, thick=8)
+
+        # Header
+        header_box = (OUT_PAD + 28, OUT_PAD + 28,
+                      W - OUT_PAD - 28, OUT_PAD + 110)
+        pixel_rect(draw, header_box, PANEL)
+        pixel_rect(draw, (header_box[0], header_box[1],
+                          header_box[2], header_box[1] + 4), ACID)
+        pixel_rect(draw, (header_box[0], header_box[3] - 4,
+                          header_box[2], header_box[3]), ACID)
+        title_font = load_font(28, mono=True, bold=True)
+        draw.text((header_box[0] + 22, header_box[1] + 22),
+                  "ROYAL.LOJA.SYS", font=title_font, fill=ACID)
+        sub_font = load_font(16, mono=True, bold=False)
+        sub = ">> OPEN_24H"
+        sw, _ = text_size(draw, sub, sub_font)
+        draw.text((header_box[2] - 22 - sw, header_box[1] + 30),
+                  sub, font=sub_font, fill=DIM)
+
+        # Mini-bar de identidade com saldo (mais magra que o inventário)
+        idbar_top = OUT_PAD + 130
+        idbar = (OUT_PAD + 28, idbar_top,
+                 W - OUT_PAD - 28, idbar_top + 100)
+        pixel_rect(draw, idbar, PANEL)
+        pixel_rect(draw, (idbar[0], idbar[1],
+                          idbar[2], idbar[1] + 4), GOLD)
+        # avatar
+        av_size = 80
+        av_x = idbar[0] + 16
+        av_y = idbar[1] + 10
+        resolved = royal_avatars.resolve_slug(
+            data.viewer_avatar_slug, data.viewer_royal_id)
+        portrait = royal_avatars.load_avatar(resolved, av_size)
+        pixel_rect(draw, (av_x - 2, av_y - 2,
+                          av_x + av_size + 2, av_y + av_size + 2), GOLD)
+        if portrait is not None:
+            img.paste(portrait, (av_x, av_y), portrait)
+        # nome + saldo
+        info_x = av_x + av_size + 16
+        nm_font = load_font(18, mono=True, bold=True)
+        nm = ellipsize(data.viewer_name, 16).upper()
+        draw_text_smart(draw, (info_x, av_y + 4), nm, nm_font, INK)
+        sld_label_font = load_font(11, mono=True, bold=False)
+        draw.text((info_x, av_y + 30),
+                  ">> SALDO", font=sld_label_font, fill=DIM)
+        sld_font = load_font(24, mono=True, bold=True)
+        sld_txt = f"{format_br(data.saldo)} 🪙"
+        draw_text_smart(draw, (info_x, av_y + 44),
+                        sld_txt, sld_font, GOLD)
+
+        # Grid 4x2 vitrine
+        grid_top = idbar[3] + 20
+        grid_pad = 12
+        cols = 4
+        rows = 2
+        avail_w = W - OUT_PAD * 2 - 56
+        slot_w = (avail_w - grid_pad * (cols - 1)) // cols
+        slot_h = 250
+        grid_x0 = OUT_PAD + 28
+
+        for i in range(cols * rows):
+            r = i // cols
+            c = i % cols
+            sx0 = grid_x0 + c * (slot_w + grid_pad)
+            sy0 = grid_top + r * (slot_h + grid_pad)
+            sx1 = sx0 + slot_w
+            sy1 = sy0 + slot_h
+
+            slot = data.slots[i] if i < len(data.slots) else None
+            if slot is None:
+                pixel_rect(draw, (sx0, sy0, sx1, sy1), BG_DEEP)
+                pixel_rect(draw, (sx0, sy0, sx1, sy0 + 2), (40, 36, 44))
+                pixel_rect(draw, (sx0, sy1 - 2, sx1, sy1), (40, 36, 44))
+                pixel_rect(draw, (sx0, sy0, sx0 + 2, sy1), (40, 36, 44))
+                pixel_rect(draw, (sx1 - 2, sy0, sx1, sy1), (40, 36, 44))
+                continue
+
+            pixel_rect(draw, (sx0, sy0, sx1, sy1), PANEL)
+            border_color = ACID if slot.affordable else HOT
+            pixel_rect(draw, (sx0, sy0, sx1, sy0 + 3), border_color)
+            pixel_rect(draw, (sx0, sy1 - 3, sx1, sy1), border_color)
+            pixel_rect(draw, (sx0, sy0, sx0 + 3, sy1), DIM)
+            pixel_rect(draw, (sx1 - 3, sy0, sx1, sy1), DIM)
+
+            # emoji
+            emj_font = load_font(48, mono=True, bold=False)
+            ew, eh = text_size_smart(draw, slot.emoji, emj_font)
+            draw_text_smart(draw,
+                            (sx0 + (slot_w - ew) // 2, sy0 + 16),
+                            slot.emoji, emj_font, INK)
+
+            # nome
+            nm2_font = load_font(13, mono=True, bold=True)
+            name_clean = ellipsize(slot.name, 14)
+            nw2, _ = text_size_smart(draw, name_clean, nm2_font)
+            if nw2 > slot_w - 12:
+                name_clean = ellipsize(slot.name, 10)
+                nw2, _ = text_size_smart(draw, name_clean, nm2_font)
+            draw_text_smart(draw,
+                            (sx0 + (slot_w - nw2) // 2, sy0 + 90),
+                            name_clean, nm2_font, INK)
+
+            # preço (centro-baixo, faixa destacada)
+            price_y = sy0 + 130
+            price_box = (sx0 + 12, price_y, sx1 - 12, price_y + 40)
+            pixel_rect(draw, price_box, BG_DEEP)
+            pixel_rect(draw, (price_box[0], price_box[1],
+                              price_box[2], price_box[1] + 2), GOLD)
+            price_font = load_font(20, mono=True, bold=True)
+            price_txt = f"{format_br(slot.price)}🪙"
+            pw, ph = text_size_smart(draw, price_txt, price_font)
+            draw_text_smart(draw,
+                            (sx0 + (slot_w - pw) // 2, price_y + 8),
+                            price_txt, price_font, GOLD)
+
+            # badge can-afford
+            badge_font = load_font(11, mono=True, bold=True)
+            if slot.affordable:
+                bd = "[ PODES ]"
+                bdc_bg = ACID
+                bdc_fg = BLACK
+            else:
+                bd = "[ SEM OURO ]"
+                bdc_bg = HOT
+                bdc_fg = INK
+            bw_, bh_ = text_size(draw, bd, badge_font)
+            bx0 = sx0 + (slot_w - bw_) // 2 - 6
+            by0 = sy0 + 200
+            pixel_rect(draw, (bx0, by0,
+                              bx0 + bw_ + 12, by0 + bh_ + 8), bdc_bg)
+            draw.text((bx0 + 6, by0 + 4),
+                      bd, font=badge_font, fill=bdc_fg)
+
+        # Footer
+        foot_font = load_font(12, mono=True, bold=False)
+        foot_left = "> /royalloja  //  toca no botao p/ comprar"
+        foot_right = f"v0.1 // {pal['name']}_MODE"
+        draw.text((OUT_PAD + 60, H - OUT_PAD - 50),
+                  foot_left, font=foot_font, fill=DIM)
+        fw, _ = text_size(draw, foot_right, foot_font)
+        draw.text((W - OUT_PAD - 60 - fw, H - OUT_PAD - 50),
+                  foot_right, font=foot_font, fill=pal["footer"])
+
+        img = img.convert("RGBA")
+        apply_scanlines(img, every=3, alpha=55)
+        vimg = img.convert("RGB")
+        apply_vignette(vimg, strength=170)
+        img = vimg.convert("RGBA")
+        apply_grain(img, intensity=18)
+        img = img.convert("RGB")
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=90, optimize=True)
+        payload = buf.getvalue()
+        cache_put(cache_key, payload)
+        return payload
+    except Exception:
+        logger.exception("ROYAL_LOJA_CARD_RENDER_FAILED")
+        return None
+
+
+# =====================================================================
+# BOSS STATUS CARD — boss vivo: nome + HP bar gigante + atacantes
+# =====================================================================
+
+@dataclass(frozen=True)
+class BossStatusData:
+    boss_id: int
+    name: str
+    hp: int
+    max_hp: int
+    attackers: int
+    week_marker: str = ""
+
+
+def render_boss_status_card(data: BossStatusData) -> bytes | None:
+    """Status do boss vivo: nome enorme, HP bar gigante, atacantes."""
+    cache_key = ("boss_status", data.boss_id, data.name,
+                 data.hp, data.max_hp, data.attackers, data.week_marker)
+    cached = cache_get(cache_key)
+    if cached:
+        return cached
+    try:
+        # paleta sempre HOT/HOSTIL pra boss
+        pal = pick_palette(f"boss-{data.boss_id}")
+        W = H = CARD_SIZE
+        img = Image.new("RGB", (W, H), BG_DEEP)
+        draw = ImageDraw.Draw(img)
+
+        # estática hostil — mais densa
+        rng = random.Random(hash(("boss", data.boss_id, data.hp)) & 0xFFFF)
+        for _ in range(1500):
+            x = rng.randrange(W)
+            y = rng.randrange(H)
+            c = rng.choice([(40, 10, 12), (30, 8, 10), (20, 6, 8),
+                            (16, 14, 20)])
+            pixel_rect(draw, (x, y, x + 3, y + 3), c)
+
+        OUT_PAD = 28
+        panel_box = (OUT_PAD, OUT_PAD, W - OUT_PAD, H - OUT_PAD)
+        pixel_rect(draw, panel_box, BG)
+        chunky_border(draw, panel_box, outer=BLACK, inner=HOT, thick=10)
+
+        # Header de alerta
+        header_box = (OUT_PAD + 28, OUT_PAD + 28,
+                      W - OUT_PAD - 28, OUT_PAD + 120)
+        pixel_rect(draw, header_box, PANEL)
+        pixel_rect(draw, (header_box[0], header_box[1],
+                          header_box[2], header_box[1] + 4), HOT)
+        pixel_rect(draw, (header_box[0], header_box[3] - 4,
+                          header_box[2], header_box[3]), HOT)
+        title_font = load_font(30, mono=True, bold=True)
+        draw.text((header_box[0] + 22, header_box[1] + 26),
+                  "ROYAL.BOSS.SYS", font=title_font, fill=HOT)
+        sub_font = load_font(18, mono=True, bold=True)
+        sub = ">> !! HOSTIL !!"
+        sw, _ = text_size(draw, sub, sub_font)
+        draw.text((header_box[2] - 22 - sw, header_box[1] + 34),
+                  sub, font=sub_font, fill=HOT)
+
+        # Nome do boss — gigante
+        name_top = OUT_PAD + 160
+        name_panel = (OUT_PAD + 28, name_top,
+                      W - OUT_PAD - 28, name_top + 200)
+        pixel_rect(draw, name_panel, PANEL)
+        pixel_rect(draw, (name_panel[0], name_panel[1],
+                          name_panel[2], name_panel[1] + 4), HOT)
+
+        # Sigilo procedural (8x8 pixel art baseado em hash determinístico
+        # do nome — hashlib pra ser estável entre restarts do interpretador)
+        sig_seed = int(
+            hashlib.sha1(data.name.encode("utf-8")).hexdigest()[:8], 16)
+        sig_rng = random.Random(sig_seed)
+        sig_size = 120
+        sig_x = name_panel[0] + 30
+        sig_y = name_panel[1] + 40
+        pixel_rect(draw, (sig_x - 4, sig_y - 4,
+                          sig_x + sig_size + 4, sig_y + sig_size + 4),
+                   BLACK)
+        # 8x8 grid simétrico (espelhado vertical)
+        cell = sig_size // 8
+        for gy in range(8):
+            for gx in range(4):
+                if sig_rng.random() < 0.55:
+                    px0 = sig_x + gx * cell
+                    py0 = sig_y + gy * cell
+                    pixel_rect(draw,
+                               (px0, py0, px0 + cell, py0 + cell), HOT)
+                    # espelho
+                    px1 = sig_x + (7 - gx) * cell
+                    pixel_rect(draw,
+                               (px1, py0, px1 + cell, py0 + cell), HOT)
+
+        # Nome ao lado do sigilo
+        nm_x = sig_x + sig_size + 30
+        nm_font = load_font(36, mono=True, bold=True)
+        nm = ellipsize(data.name, 18).upper()
+        nw, nh = text_size_smart(draw, nm, nm_font)
+        # se cortar, reduz
+        if nw > W - nm_x - OUT_PAD - 50:
+            nm_font = load_font(28, mono=True, bold=True)
+            nw, nh = text_size_smart(draw, nm, nm_font)
+        draw_text_smart(draw, (nm_x, name_panel[1] + 60),
+                        nm, nm_font, HOT)
+        sub2_font = load_font(14, mono=True, bold=False)
+        draw.text((nm_x, name_panel[1] + 60 + nh + 12),
+                  ">> ANOMALIA ATIVA", font=sub2_font, fill=DIM)
+
+        # HP BAR gigante
+        bar_top = name_panel[3] + 30
+        bar_panel = (OUT_PAD + 28, bar_top,
+                     W - OUT_PAD - 28, bar_top + 180)
+        pixel_rect(draw, bar_panel, PANEL)
+        pixel_rect(draw, (bar_panel[0], bar_panel[1],
+                          bar_panel[2], bar_panel[1] + 4), HOT)
+
+        hp_lbl_font = load_font(16, mono=True, bold=False)
+        draw.text((bar_panel[0] + 20, bar_panel[1] + 14),
+                  ">> HP", font=hp_lbl_font, fill=DIM)
+
+        # numérico HP atual/max
+        hp_n_font = load_font(28, mono=True, bold=True)
+        hp_n_txt = (f"{format_br(max(0, data.hp))} / "
+                    f"{format_br(data.max_hp)}")
+        hnw, _ = text_size(draw, hp_n_txt, hp_n_font)
+        draw.text((bar_panel[2] - 20 - hnw, bar_panel[1] + 12),
+                  hp_n_txt, font=hp_n_font, fill=INK)
+
+        # barra
+        bar_x0 = bar_panel[0] + 20
+        bar_x1 = bar_panel[2] - 20
+        bar_y0 = bar_panel[1] + 60
+        bar_y1 = bar_y0 + 70
+        # background da barra
+        pixel_rect(draw, (bar_x0, bar_y0, bar_x1, bar_y1), BG_DEEP)
+        pixel_rect(draw, (bar_x0, bar_y0, bar_x1, bar_y0 + 2), BLACK)
+        pixel_rect(draw, (bar_x0, bar_y1 - 2, bar_x1, bar_y1), BLACK)
+        pixel_rect(draw, (bar_x0, bar_y0, bar_x0 + 2, bar_y1), BLACK)
+        pixel_rect(draw, (bar_x1 - 2, bar_y0, bar_x1, bar_y1), BLACK)
+
+        pct = max(0.0, min(1.0, data.hp / max(1, data.max_hp)))
+        fill_w = int((bar_x1 - bar_x0 - 4) * pct)
+        if fill_w > 0:
+            # gradiente de cor por threshold
+            if pct > 0.5:
+                fill_c = ACID
+            elif pct > 0.2:
+                fill_c = GOLD
+            else:
+                fill_c = HOT
+            pixel_rect(draw, (bar_x0 + 2, bar_y0 + 2,
+                              bar_x0 + 2 + fill_w, bar_y1 - 2), fill_c)
+            # listras horizontais pra textura
+            for sy in range(bar_y0 + 2, bar_y1 - 2, 6):
+                pixel_rect(draw, (bar_x0 + 2, sy,
+                                  bar_x0 + 2 + fill_w, sy + 1),
+                           (0, 0, 0, 80) if False else BLACK)
+
+        # percentual centrado
+        pct_int = int(pct * 100)
+        pct_font = load_font(28, mono=True, bold=True)
+        pct_txt = f"{pct_int}%"
+        pw, ph = text_size(draw, pct_txt, pct_font)
+        # pinta no centro da barra
+        draw.text((bar_x0 + (bar_x1 - bar_x0 - pw) // 2,
+                   bar_y0 + (bar_y1 - bar_y0 - ph) // 2 - 2),
+                  pct_txt, font=pct_font, fill=INK)
+
+        # Footer: atacantes + week
+        att_y = bar_panel[3] + 30
+        att_panel = (OUT_PAD + 28, att_y,
+                     W - OUT_PAD - 28, att_y + 90)
+        pixel_rect(draw, att_panel, PANEL)
+        pixel_rect(draw, (att_panel[0], att_panel[1],
+                          att_panel[2], att_panel[1] + 4), pal["footer"])
+
+        att_lbl_font = load_font(14, mono=True, bold=False)
+        draw.text((att_panel[0] + 20, att_panel[1] + 14),
+                  ">> ATACANTES NESSA SEMANA", font=att_lbl_font, fill=DIM)
+        att_n_font = load_font(40, mono=True, bold=True)
+        att_n_txt = f"{format_br(data.attackers)} ⚔"
+        anw, anh = text_size_smart(draw, att_n_txt, att_n_font)
+        draw_text_smart(draw, (att_panel[0] + 20, att_panel[1] + 36),
+                        att_n_txt, att_n_font, pal["footer"])
+
+        if data.week_marker:
+            wk_font = load_font(14, mono=True, bold=False)
+            ww, _ = text_size(draw, data.week_marker, wk_font)
+            draw.text((att_panel[2] - 20 - ww, att_panel[3] - 24),
+                      data.week_marker, font=wk_font, fill=DIM)
+
+        # Footer
+        foot_font = load_font(12, mono=True, bold=False)
+        foot_left = "> /royalboss  //  toca em Atacar"
+        foot_right = "v0.1 // HOSTIL_MODE"
+        draw.text((OUT_PAD + 60, H - OUT_PAD - 50),
+                  foot_left, font=foot_font, fill=DIM)
+        fw, _ = text_size(draw, foot_right, foot_font)
+        draw.text((W - OUT_PAD - 60 - fw, H - OUT_PAD - 50),
+                  foot_right, font=foot_font, fill=HOT)
+
+        img = img.convert("RGBA")
+        apply_scanlines(img, every=3, alpha=55)
+        vimg = img.convert("RGB")
+        apply_vignette(vimg, strength=180)
+        img = vimg.convert("RGBA")
+        apply_grain(img, intensity=22)
+        img = img.convert("RGB")
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=90, optimize=True)
+        payload = buf.getvalue()
+        cache_put(cache_key, payload)
+        return payload
+    except Exception:
+        logger.exception("ROYAL_BOSS_STATUS_CARD_RENDER_FAILED bid=%r",
+                         data.boss_id)
+        return None

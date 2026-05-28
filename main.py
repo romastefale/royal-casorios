@@ -66,21 +66,28 @@ from royal_render import (
     RankingEntry,
     render_boss_kill_card,
     render_casorio_card,
+    render_boss_status_card,
     render_casorios_ranking_card,
     render_classe_card,
     render_identity_card,
     render_inventario_card,
     render_levelup_card,
+    render_loja_card,
     render_loja_drop_card,
     render_meuscasorios_card,
     render_palavra_spoiler_card,
     render_profile_card,
     render_ranking_card,
+    render_saldo_card,
+    BossStatusData,
     CouplePodiumEntry,
     InventarioData,
     InventarioSlot,
+    LojaData,
+    LojaSlot,
     MeusCasoriosData,
     PartnerMini,
+    SaldoData,
 )
 import hashlib
 
@@ -4197,7 +4204,50 @@ async def royal_loja(message: Message):
         return
     p = ensure_player(message.chat.id, message.from_user.id)
     db.commit()
-    gold_br = f"{int(p['gold']):,}".replace(",", ".")
+    await react_to(message.chat.id, message.message_id, "🛒")
+    saldo = int(p["gold"] or 0)
+    rid = p.get("royal_id") or "RYL-????"
+    # === CARD VISUAL (card-first com text fallback) ===
+    try:
+        await safe_typing(message.chat.id, "upload_photo")
+        slots = tuple(
+            LojaSlot(
+                item_id=iid,
+                emoji=item.get("emoji", "📦"),
+                name=item.get("name", iid),
+                price=int(item.get("price", 0)),
+                item_type=item.get("type", "item"),
+                affordable=saldo >= int(item.get("price", 0)),
+            )
+            for iid, item in list(ITEMS.items())[:8]
+        )
+        data = LojaData(
+            viewer_royal_id=rid,
+            viewer_name=get_anon_name(message.chat.id, message.from_user.id),
+            viewer_avatar_slug=p.get("avatar_slug"),
+            saldo=saldo,
+            slots=slots,
+        )
+        png = await asyncio.to_thread(render_loja_card, data)
+        if png and bot is not None:
+            n_aff = sum(1 for s in slots if s.affordable)
+            caption = (f"<b>🛒 LOJA REAL // OPEN_24H</b>\n"
+                       f"<i>{len(slots)} itens à venda · "
+                       f"{n_aff} que podes pagar · "
+                       f"saldo <b>{format_br(saldo)}</b> 🪙</i>")
+            sent = await bot.send_photo(
+                message.chat.id,
+                BufferedInputFile(png, filename="royal_loja.jpg"),
+                caption=cap1024(caption),
+                parse_mode="HTML",
+                reply_markup=loja_keyboard(),
+            )
+            register_owner(sent, message.from_user.id, auto_delete_secs=60.0)
+            return
+    except Exception:
+        logger.exception("render_loja_card path failed; fallback texto")
+    # === Fallback texto ===
+    gold_br = f"{saldo:,}".replace(",", ".")
     parts = [f">> SALDO: <b><code>{gold_br}</code></b> florins 🪙\n"]
     for iid, item in ITEMS.items():
         parts.append(
@@ -4232,14 +4282,44 @@ async def royal_saldo(message: Message):
         return
     p = ensure_player(owner_chat, message.from_user.id)
     db.commit()
-    gold_br = f"{int(p['gold']):,}".replace(",", ".")
+    await react_to(message.chat.id, message.message_id, "🪙")
+    saldo = int(p["gold"] or 0)
+    rid = p.get("royal_id") or "RYL-????"
+    # === CARD VISUAL (card-first com text fallback) ===
+    try:
+        await safe_typing(message.chat.id, "upload_photo")
+        total_xp = int(p.get("total_xp") or 0)
+        lvl, _, _, _ = level_progress(total_xp)
+        data = SaldoData(
+            self_royal_id=rid,
+            self_name=get_anon_name(owner_chat, message.from_user.id),
+            self_avatar_slug=p.get("avatar_slug"),
+            saldo=saldo,
+            level=int(lvl),
+            season_xp=int(p.get("season_xp") or 0),
+        )
+        png = await asyncio.to_thread(render_saldo_card, data)
+        if png and bot is not None:
+            caption = (f"<i>Suas arcas — "
+                       f"<b>{format_br(saldo)}</b> 🪙</i>")
+            await bot.send_photo(
+                message.chat.id,
+                BufferedInputFile(png, filename=f"saldo-{rid}.jpg"),
+                caption=cap1024(caption),
+                parse_mode="HTML",
+            )
+            return
+    except Exception:
+        logger.exception("render_saldo_card path failed; fallback texto")
+    # === Fallback texto ===
+    gold_br = f"{saldo:,}".replace(",", ".")
     body = (
         f"🪙 Suas arcas guardam <b><code>{gold_br}</code></b> florins.\n"
         f"<i>Gasta com sabedoria em /royalloja.</i>"
     )
     await message.answer(term_block("FLORINS", body,
                                     status="SALDO_OK",
-                                    stamp=f"ID {p.get('royal_id', 'RYL-????')}"))
+                                    stamp=f"ID {rid}"))
 
 
 # === /royalranking ===
@@ -4600,7 +4680,44 @@ async def royal_boss_status(message: Message):
             f">> próximo spawn: <b>domingo {BOSS_SPAWN_HOUR}h</b>",
             status="OFFLINE", status_color="AMBER"))
         return
-    await message.answer(format_boss_text(boss), reply_markup=boss_keyboard(boss["id"]))
+    if message.from_user:
+        await react_to(message.chat.id, message.message_id, "⚔")
+    # === CARD VISUAL (card-first com text fallback) ===
+    try:
+        await safe_typing(message.chat.id, "upload_photo")
+        cur.execute(
+            "SELECT COUNT(DISTINCT user_id) AS n FROM boss_hits WHERE boss_id=?",
+            (boss["id"],))
+        att_row = cur.fetchone()
+        attackers = int(att_row["n"] if att_row else 0)
+        data = BossStatusData(
+            boss_id=int(boss["id"]),
+            name=str(boss["name"]),
+            hp=int(boss["hp"]),
+            max_hp=int(boss["max_hp"]),
+            attackers=attackers,
+            week_marker=str(boss.get("week_marker") or ""),
+        )
+        png = await asyncio.to_thread(render_boss_status_card, data)
+        if png and bot is not None:
+            pct = int(100 * data.hp / max(1, data.max_hp))
+            caption = (f"<b>⚔️ {html.escape(data.name)}</b>\n"
+                       f"<i>HP <b>{format_br(data.hp)}</b>/"
+                       f"{format_br(data.max_hp)} "
+                       f"({pct}%) · {attackers} atacantes</i>")
+            await bot.send_photo(
+                message.chat.id,
+                BufferedInputFile(png, filename=f"boss_{boss['id']}.jpg"),
+                caption=cap1024(caption),
+                parse_mode="HTML",
+                reply_markup=boss_keyboard(boss["id"]),
+            )
+            return
+    except Exception:
+        logger.exception("render_boss_status_card path failed; fallback texto")
+    # === Fallback texto ===
+    await message.answer(format_boss_text(boss),
+                         reply_markup=boss_keyboard(boss["id"]))
 
 
 # === Privacidade ===

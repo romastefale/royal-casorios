@@ -419,3 +419,51 @@ id = "6Q5K2p_-E2ODa1wz2G7mp"
 uri = "file://attached_assets/casorios_preview/07_inventario_8itens_cheio.jpg"
 type = "image"
 title = "/royalinventario — 8 slots cheios (max)"
+
+[[outputs]]
+id = "iNoOfb1HPIU0Qiz9iqvd-"
+uri = "file://attached_assets/casorios_preview/08_saldo_normal.jpg"
+type = "image"
+title = "/royalsaldo — normal (12.500 🪙)"
+
+[[outputs]]
+id = "OtOziNZhTCA3-Gb_wXUYX"
+uri = "file://attached_assets/casorios_preview/09_saldo_zero.jpg"
+type = "image"
+title = "/royalsaldo — zero (sem florins)"
+
+[[outputs]]
+id = "dCzaIuzmmZCYJ87tfpYSq"
+uri = "file://attached_assets/casorios_preview/10_saldo_rico.jpg"
+type = "image"
+title = "/royalsaldo — bilionário (overflow handling)"
+
+[[outputs]]
+id = "5tf_Q-aYcI5IR0sSWAsDQ"
+uri = "file://attached_assets/casorios_preview/11_loja_normal.jpg"
+type = "image"
+title = "/royalloja — saldo médio (3 pode pagar, 4 não)"
+
+[[outputs]]
+id = "8oHUFRXON388CfzF5t4z1"
+uri = "file://attached_assets/casorios_preview/12_loja_rico.jpg"
+type = "image"
+title = "/royalloja — saldo alto (tudo affordável)"
+
+[[outputs]]
+id = "5NeN36JL73zH6LzjKoRXw"
+uri = "file://attached_assets/casorios_preview/13_boss_75pct.jpg"
+type = "image"
+title = "/royalboss — HP 75% (ACID/verde)"
+
+[[outputs]]
+id = "vC6Ea0mlKYbT7jEPmbceb"
+uri = "file://attached_assets/casorios_preview/14_boss_15pct.jpg"
+type = "image"
+title = "/royalboss — HP 15% (HOT/sangue)"
+
+[[outputs]]
+id = "IcKfvCI5xJgDX4BET8Edq"
+uri = "file://attached_assets/casorios_preview/15_boss_full.jpg"
+type = "image"
+title = "/royalboss — HP 100% recém-spawn"
