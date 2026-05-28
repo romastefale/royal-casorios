@@ -72,6 +72,20 @@ saldo, palavras, configs por usuário, etc).
 - **`TEST_CHAT_IDS`** (opcional, comma-separated) — chat_ids de grupos de
   teste. Esses grupos **não** aparecem no picker de DM nem no fallback
   do inline mode. Ex.: `TEST_CHAT_IDS="-1001234567890,-1009876543210"`
+- **`SENTRY_DSN`** (opcional) — DSN do projeto Sentry. Sem isso o
+  bot loga `[SENTRY] desabilitado` e segue normal (no-op gracioso).
+  Quando setado, `init_sentry()` em `main.py` registra `AsyncioIntegration`
+  + `LoggingIntegration` (events em ERROR+) e o `sentry_scope_middleware`
+  enriquece cada update com `chat_id`, `uid`, `username`, `update_id`.
+  Filtros em `_sentry_before_send` dropam ruido conhecido
+  (`TelegramRetryAfter`, `TelegramNetworkError`, `TelegramServerError`,
+  `CancelledError`). Helper `sentry_capture(exc, **tags)` disponivel.
+- **`SENTRY_ENVIRONMENT`** (opcional, default `production`) — separa
+  staging/prod no painel do Sentry.
+- **`SENTRY_TRACES_SAMPLE_RATE`** (opcional, default `0.05`) — 5% de
+  traces. Subir pra debugar perf, manter baixo pra economizar quota.
+- **`SENTRY_RELEASE`** (opcional) — tag de release pra correlacionar
+  erro com deploy. Idealmente o SHA curto do commit.
 - **`STASH_CHAT_ID`** (opcional, override) — chat_id de canal privado
   pra upload silencioso do **identity card**. **Hardcoded** em
   `main.py` como `-1003941532741` (canal privado só do dono +

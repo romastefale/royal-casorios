@@ -103,6 +103,70 @@ STASH_CHAT_ID: int | None = (
 _owner_raw = os.getenv("OWNER_USER_ID", "").strip()
 OWNER_USER_ID: int | None = int(_owner_raw) if _owner_raw.lstrip("-").isdigit() else None
 
+# Sentry (observabilidade). Sem DSN configurado = no-op gracioso.
+SENTRY_DSN = os.getenv("SENTRY_DSN", "").strip()
+SENTRY_ENV = os.getenv("SENTRY_ENVIRONMENT", "production").strip()
+SENTRY_TRACES_RATE = float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.05"))
+SENTRY_RELEASE = os.getenv("SENTRY_RELEASE", "").strip() or None
+
+
+def init_sentry() -> bool:
+    """Inicializa Sentry se SENTRY_DSN setado. Retorna True se ativo.
+    Falha gracioso: import error ou DSN invalido nao derruba o bot."""
+    if not SENTRY_DSN:
+        logger.info("[SENTRY] desabilitado (SENTRY_DSN nao setado)")
+        return False
+    try:
+        import sentry_sdk
+        from sentry_sdk.integrations.asyncio import AsyncioIntegration
+        from sentry_sdk.integrations.logging import LoggingIntegration
+
+        sentry_sdk.init(
+            dsn=SENTRY_DSN,
+            environment=SENTRY_ENV,
+            release=SENTRY_RELEASE,
+            traces_sample_rate=SENTRY_TRACES_RATE,
+            send_default_pii=False,
+            max_breadcrumbs=50,
+            integrations=[
+                AsyncioIntegration(),
+                LoggingIntegration(level=logging.INFO, event_level=logging.ERROR),
+            ],
+            before_send=_sentry_before_send,
+        )
+        sentry_sdk.set_tag("bot", "royal-rpg")
+        logger.info("[SENTRY] ativo env=%s rate=%.2f", SENTRY_ENV, SENTRY_TRACES_RATE)
+        return True
+    except Exception as e:
+        logger.exception("[SENTRY] init falhou: %s", e)
+        return False
+
+
+def _sentry_before_send(event, hint):
+    """Filtra ruido conhecido antes de mandar pro Sentry."""
+    exc = hint.get("exc_info") if hint else None
+    if exc:
+        exc_type = exc[0].__name__ if exc[0] else ""
+        # Erros transitorios do Telegram nao sao bug nosso.
+        if exc_type in {"TelegramRetryAfter", "TelegramNetworkError",
+                        "TelegramServerError", "CancelledError"}:
+            return None
+    return event
+
+
+def sentry_capture(exc: BaseException, **tags) -> None:
+    """Helper opcional pra capturar excecao com contexto extra.
+    No-op se Sentry nao iniciado."""
+    try:
+        import sentry_sdk
+        with sentry_sdk.new_scope() as scope:
+            for k, v in tags.items():
+                scope.set_tag(k, v)
+            sentry_sdk.capture_exception(exc)
+    except Exception:
+        pass
+
+
 DB_PATH = os.getenv("DATABASE_PATH", "./data/royal_casorios.sqlite3")
 TZ_NAME = os.getenv("TZ", "America/Sao_Paulo")
 AUTO_HOURS = [int(x.strip()) for x in os.getenv("AUTO_HOURS", "9,15,21").split(",") if x.strip()]
@@ -168,6 +232,45 @@ BOSS_ATTACK_COOLDOWN_SEC = 300
 
 bot: Bot | None = None
 dp = Dispatcher()
+
+
+@dp.update.outer_middleware()
+async def sentry_scope_middleware(handler, event, data):
+    """Enriquece o scope do Sentry com chat_id/uid/update_id por update.
+    Se Sentry nao iniciado, eh no-op (try/except silencioso)."""
+    try:
+        import sentry_sdk
+    except Exception:
+        return await handler(event, data)
+
+    chat_id = None
+    uid = None
+    username = None
+    try:
+        msg = getattr(event, "message", None) or getattr(event, "edited_message", None)
+        cb = getattr(event, "callback_query", None)
+        inline = getattr(event, "inline_query", None)
+        reaction = getattr(event, "message_reaction", None)
+        src = msg or (cb and cb.message) or reaction
+        if src and getattr(src, "chat", None):
+            chat_id = src.chat.id
+        from_user = (getattr(msg, "from_user", None)
+                     or (cb and cb.from_user)
+                     or (inline and inline.from_user)
+                     or (reaction and getattr(reaction, "user", None)))
+        if from_user:
+            uid = from_user.id
+            username = from_user.username
+    except Exception:
+        pass
+
+    with sentry_sdk.new_scope() as scope:
+        if chat_id is not None:
+            scope.set_tag("chat_id", str(chat_id))
+        if uid is not None:
+            scope.set_user({"id": uid, "username": username})
+        scope.set_tag("update_id", str(getattr(event, "update_id", "")))
+        return await handler(event, data)
 
 # =====================================================================
 # DB CONNECTION + PRAGMA SETUP (per-connection PRAGMAs ALWAYS applied)
@@ -5568,6 +5671,7 @@ async def main():
     global bot
     if not BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN environment variable is required")
+    init_sentry()
     bot = Bot(BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
     logger.info("Royal RPG starting")
     await register_bot_commands()
