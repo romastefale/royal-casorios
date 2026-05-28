@@ -7,6 +7,7 @@ Pillow puro (sem Chromium) pra deploy leve no Railway.
 
 from __future__ import annotations
 
+import hashlib
 import io
 import logging
 import random
@@ -229,6 +230,41 @@ def chunky_border(draw, box, *, outer=BLACK, inner=INK, thick=6):
         draw.rectangle((cx + 2, cy + 2, cx + csz - 2, cy + csz - 2), fill=outer)
 
 
+def procedural_sigil(seed_key: str, size: int,
+                     palette: dict | None = None) -> Image.Image:
+    """Sigilo 8-bit determinístico (estilo identicon retro).
+    Gera um padrão 10x10 espelhado horizontalmente (= simétrico) com 2 cores
+    da paleta sobre fundo escuro, então upscala NEAREST pra `size`.
+    Sempre o MESMO sigilo pro MESMO royal_id — funciona como brasão do player.
+    """
+    rng = random.Random(hash(seed_key) & 0xFFFFFFFF)
+    grid = 10  # resolução do sigilo (par pra espelhar limpo)
+    bg = (14, 12, 18)
+    if palette is None:
+        fg_a = ACID
+        fg_b = HOT
+    else:
+        fg_a = palette.get("header", ACID)
+        fg_b = palette.get("level", HOT)
+
+    base = Image.new("RGB", (grid, grid), bg)
+    px = base.load()
+    half = grid // 2
+    # densidade ~55% nos pixels ativos pra dar peso visual sem encher
+    for y in range(grid):
+        for x in range(half):
+            r = rng.random()
+            if r < 0.55:
+                if r < 0.18:
+                    px[x, y] = fg_b
+                else:
+                    px[x, y] = fg_a
+            # espelha horizontal
+            px[grid - 1 - x, y] = px[x, y]
+
+    return base.resize((size, size), Image.NEAREST)
+
+
 def pixelated_avatar(avatar_bytes: bytes | None, size: int,
                      fallback_initial: str = "?") -> Image.Image:
     """Avatar 'baixado' pra 32x32 e re-upscalado com NEAREST = mosaico 8-bit.
@@ -443,7 +479,8 @@ def render_profile_card(data: ProfileCardData,
         data.pts_available, data.rank, data.total_players,
         data.palavras_won, data.casorios, data.gold,
         data.msg_count, data.joined_str,
-        bool(avatar_bytes),  # so muda se ganhou/perdeu foto
+        # Hash da foto: invalida cache se o player trocar a foto no Telegram
+        hashlib.md5(avatar_bytes).hexdigest() if avatar_bytes else None,
     )
     cached = cache_get(cache_key)
     if cached:
@@ -493,15 +530,42 @@ def render_profile_card(data: ProfileCardData,
         pixel_rect(draw, (header_box[2] - 14, header_box[3] - 18,
                           header_box[2] - 8, header_box[3] - 10), HOT)
 
-        # ===== Avatar pixelado =====
+        # ===== Avatar híbrido: SIGILO 8-bit principal + foto real no canto =====
         avatar_size = 296
         ax = OUT_PAD + 60
         ay = OUT_PAD + 130
-        av = pixelated_avatar(avatar_bytes, avatar_size, data.initial)
-        img.paste(av, (ax, ay), av)
-        # tag "SUBJECT" debaixo do avatar
+
+        # 1) Sigilo procedural (brasão do player — determinístico por royal_id)
+        sigil_inner = avatar_size - 12
+        sigil = procedural_sigil(data.royal_id, sigil_inner, pal)
+        # Moldura do quadro principal
+        pixel_rect(draw, (ax, ay, ax + avatar_size, ay + avatar_size), BLACK)
+        pixel_rect(draw, (ax + 4, ay + 4,
+                          ax + avatar_size - 4, ay + avatar_size - 4), GOLD_DIM)
+        pixel_rect(draw, (ax + 6, ay + 6,
+                          ax + avatar_size - 6, ay + avatar_size - 6), BLACK)
+        img.paste(sigil, (ax + 6, ay + 6))
+
+        # 2) Thumbnail da foto real no canto inferior direito (vestígio)
+        if avatar_bytes:
+            try:
+                face_outer = 92
+                face = pixelated_avatar(avatar_bytes, face_outer, data.initial)
+                fx = ax + avatar_size - face_outer - 8
+                fy = ay + avatar_size - face_outer - 8
+                img.paste(face, (fx, fy), face)
+                # micro-label discreto acima do thumbnail
+                face_tag_font = load_font(11, mono=True, bold=True)
+                ft = "[FACE]"
+                ftw, _ = text_size(draw, ft, face_tag_font)
+                draw.text((fx + (face_outer - ftw) // 2, fy - 18),
+                          ft, font=face_tag_font, fill=DIM)
+            except Exception:
+                logger.warning("face thumbnail failed", exc_info=True)
+
+        # tag "[ SIGIL ]" debaixo do avatar
         tag_font = load_font(16, mono=True, bold=True)
-        tag = "[ SUBJECT ]"
+        tag = "[ SIGIL ]"
         tw, _ = text_size(draw, tag, tag_font)
         draw.text((ax + (avatar_size - tw) // 2, ay + avatar_size + 14),
                   tag, font=tag_font, fill=GOLD_DIM)

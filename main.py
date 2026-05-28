@@ -1229,6 +1229,13 @@ def build_profile_card_data(chat_id: int, user_id: int) -> ProfileCardData:
     """Coleta dados pra renderizar o cartao 1080x1080."""
     p = ensure_player(chat_id, user_id)
     name = get_name(chat_id, user_id) or "Nobre"
+    # Privacidade: se display_name for o user_id numerico do Telegram cru
+    # (fallback de get_name quando display_name nao foi salvo), substitui
+    # por um alias derivado do royal_id. NUNCA expor user_id do Telegram.
+    royal_id = p.get("royal_id") or "RYL-????"
+    if name.lstrip("-").isdigit():
+        suffix = royal_id.replace("RYL-", "").lstrip("0") or "0"
+        name = f"ANON-{suffix}"
     lvl, in_lvl, needed, _ = level_progress(p["total_xp"])
 
     cur.execute("SELECT COUNT(*) AS total FROM players WHERE chat_id=?", (chat_id,))
@@ -1263,7 +1270,7 @@ def build_profile_card_data(chat_id: int, user_id: int) -> ProfileCardData:
             pass
 
     return ProfileCardData(
-        royal_id=p.get("royal_id") or "RYL-????",
+        royal_id=royal_id,
         name=name,
         initial=(name[:1] or "?").upper(),
         class_name=class_name,
