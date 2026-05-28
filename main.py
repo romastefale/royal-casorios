@@ -1338,6 +1338,37 @@ async def roll_dice_visual(chat_id: int, emoji: str = "🎲",
 # em memoria (maxsize) + expiracao automatica. Sem GC manual no hot path.
 _rate_limits: TTLCache = TTLCache(maxsize=20_000, ttl=3600)
 
+# F08: scoring de ofensas + softban. Cada hit de cooldown soma 1 ponto
+# na janela de SPAM_WINDOW_SEC. Ao cruzar SPAM_THRESHOLD pontos, o user
+# entra em softban — comandos sao ignorados silenciosamente (sem reply
+# pra evitar amplificar). Aviso unico no momento do ban (sem flood de
+# warnings em chat). 1 nivel: thresh 6, ban 120s.
+_spam_score: TTLCache = TTLCache(maxsize=20_000, ttl=300)  # 5min window
+_softban_until: TTLCache = TTLCache(maxsize=20_000, ttl=600)
+SPAM_THRESHOLD = 6
+SPAM_BAN_SEC = 120
+
+
+def is_softbanned(uid: int) -> int:
+    """Retorna segundos restantes de softban ou 0 se livre."""
+    until = _softban_until.get(uid, 0.0)
+    now = utc_now().timestamp()
+    if until > now:
+        return int(until - now) + 1
+    return 0
+
+
+def _bump_spam_score(uid: int) -> tuple[int, bool]:
+    """Incrementa score; retorna (novo_score, virou_softban_agora)."""
+    score = int(_spam_score.get(uid, 0)) + 1
+    _spam_score[uid] = score
+    if score >= SPAM_THRESHOLD and not is_softbanned(uid):
+        _softban_until[uid] = utc_now().timestamp() + SPAM_BAN_SEC
+        logger.warning("[SPAM] softban uid=%d score=%d duration=%ds",
+                       uid, score, SPAM_BAN_SEC)
+        return score, True
+    return score, False
+
 
 def rate_limited(uid: int, action: str, cooldown: float = 10.0) -> int:
     """Retorna 0 se OK, ou segundos restantes se ainda em cooldown."""
@@ -1351,14 +1382,33 @@ def rate_limited(uid: int, action: str, cooldown: float = 10.0) -> int:
 
 async def deny_if_rate_limited(message: Message, action: str,
                                 cooldown: float = 10.0) -> bool:
-    """Helper: responde com aviso e retorna True se rate-limited."""
+    """Helper: responde com aviso e retorna True se rate-limited.
+    F08: softban silencioso. Se o user ja estiver banido, ignora a
+    mensagem sem responder (evita amplificar spam). Cada hit de
+    cooldown soma 1 ponto; ao cruzar SPAM_THRESHOLD, aplica softban
+    + envia aviso UNICO com auto-delete."""
     if not message.from_user:
         return False
-    wait = rate_limited(message.from_user.id, action, cooldown)
+    uid = message.from_user.id
+    if is_softbanned(uid):
+        return True  # silent ignore
+    wait = rate_limited(uid, action, cooldown)
     if wait > 0:
-        await message.answer(
-            term_block(action, f"⏳ Aguarde <b>{wait}s</b> antes de invocar de novo.",
-                       status="THROTTLED", status_color="AMBER"))
+        _, just_banned = _bump_spam_score(uid)
+        if just_banned:
+            try:
+                ack = await message.answer(term_block(
+                    "ANTISPAM",
+                    f"🚫 Detectado flood. Bot vai te ignorar por "
+                    f"<b>{SPAM_BAN_SEC}s</b>. Relax e respira.",
+                    status="BANIDO", status_color="HOT"))
+                await auto_delete_after(ack, delay=15.0)
+            except Exception:
+                pass
+        else:
+            await message.answer(term_block(
+                action, f"⏳ Aguarde <b>{wait}s</b> antes de invocar de novo.",
+                status="THROTTLED", status_color="AMBER"))
         return True
     return False
 
