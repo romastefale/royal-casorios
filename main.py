@@ -39,6 +39,7 @@ from aiogram.types import (
     InputFile,
     KeyboardButton,
     Message,
+    ReactionTypeEmoji,
     ReplyKeyboardMarkup,
 )
 
@@ -552,6 +553,65 @@ async def safe_typing(chat_id: int, action: str = "typing") -> None:
         await bot.send_chat_action(chat_id, action)
     except Exception:
         pass
+
+
+# =====================================================================
+# UI: "cores" via emoji + auto-delete + bot reactions + typing realista
+# =====================================================================
+# Bot API NAO suporta colorir botoes inline — todos renderizam na cor do
+# tema do cliente. A unica forma de dar "cor visual" e atraves do emoji
+# lider no texto do botao. Convencao adotada (use SEMPRE estes prefixos):
+
+BTN_OK   = "✅"   # verde     — confirmar / aplicar / ir
+BTN_NO   = "❌"   # vermelho  — cancelar / fechar / destrutivo
+BTN_INFO = "🔵"   # azul      — informacao / navegar / abrir
+BTN_WARN = "⚠️"   # amarelo   — atencao / reversivel-com-custo
+BTN_BACK = "◀️"   # neutro    — voltar
+BTN_GO   = "▶️"   # neutro    — avancar / proximo
+
+
+async def auto_delete_after(msg: Message, delay: float = 8.0) -> None:
+    """Agenda exclusao da mensagem em N segundos sem bloquear o handler.
+    Ideal pra acks efemeros (rate-limit, '0 pontos', etc) — mantem o chat
+    limpo sem o usuario precisar deletar manualmente."""
+    if bot is None or msg is None:
+        return
+    async def _task():
+        try:
+            await asyncio.sleep(delay)
+            await bot.delete_message(msg.chat.id, msg.message_id)
+        except Exception:
+            pass
+    asyncio.create_task(_task())
+
+
+async def react_to(chat_id: int, message_id: int, emoji: str,
+                   big: bool = False) -> None:
+    """Bot reage com emoji a uma mensagem do usuario (setMessageReaction,
+    Bot API 7.0+). So aceita emojis da whitelist oficial do Telegram —
+    falha silenciosa pra qualquer outro."""
+    if bot is None:
+        return
+    try:
+        await bot.set_message_reaction(
+            chat_id=chat_id, message_id=message_id,
+            reaction=[ReactionTypeEmoji(emoji=emoji)],
+            is_big=big,
+        )
+    except Exception:
+        pass
+
+
+async def type_then_send(chat_id: int, text: str, delay: float = 1.2,
+                         action: str = "typing", **kwargs):
+    """Mostra '... digitando' por `delay` segundos antes de mandar o texto.
+    Da sensacao de 'humano pensando'. Pra fotos use action='upload_photo'.
+    Repassa **kwargs pro send_message (reply_markup, parse_mode, etc)."""
+    if bot is None:
+        return None
+    await safe_typing(chat_id, action)
+    await asyncio.sleep(delay)
+    return await bot.send_message(chat_id, text, **kwargs)
 
 
 # Anti-spam: cooldown por (uid, acao). Pensado pra 500+ users simultaneos.
@@ -1507,18 +1567,20 @@ async def send_profile_card(chat_id_to: int, owner_chat: int, owner_uid: int):
 # =====================================================================
 
 def hub_keyboard_main() -> InlineKeyboardMarkup:
+    # Convencao de "cor" via emoji lider:
+    # 🔵 navegar  ✅ acao confirmar  ⚠️ destrutivo/cuidado
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="👑 Meu Perfil",       callback_data="r:perfil"),
-         InlineKeyboardButton(text="⬆️ Distribuir Pts",   callback_data="r:up:menu")],
-        [InlineKeyboardButton(text="🎭 Escolher Classe",  callback_data="r:cls:menu"),
-         InlineKeyboardButton(text="🎒 Inventário",       callback_data="r:inv")],
-        [InlineKeyboardButton(text="🪙 Loja",             callback_data="r:loja"),
-         InlineKeyboardButton(text="🏆 Ranking",          callback_data="r:rank")],
-        [InlineKeyboardButton(text="🎯 Palavra da Hora",  callback_data="r:pal"),
-         InlineKeyboardButton(text="🐉 Boss",             callback_data="r:boss")],
-        [InlineKeyboardButton(text="💍 Casórios",         callback_data="r:cas"),
-         InlineKeyboardButton(text="❓ Ajuda",            callback_data="r:help")],
-        [InlineKeyboardButton(text="🔒 Privacidade",      callback_data="r:priv")],
+        [InlineKeyboardButton(text="👑 Perfil",            callback_data="r:perfil"),
+         InlineKeyboardButton(text=f"{BTN_OK} Subir Pts",  callback_data="r:up:menu")],
+        [InlineKeyboardButton(text="🎭 Classe",            callback_data="r:cls:menu"),
+         InlineKeyboardButton(text="🎒 Mochila",           callback_data="r:inv")],
+        [InlineKeyboardButton(text="🪙 Loja",              callback_data="r:loja"),
+         InlineKeyboardButton(text="🏆 Ranking",           callback_data="r:rank")],
+        [InlineKeyboardButton(text="🎯 Palavra",           callback_data="r:pal"),
+         InlineKeyboardButton(text="🐉 Boss",              callback_data="r:boss")],
+        [InlineKeyboardButton(text="💍 Casórios",          callback_data="r:cas"),
+         InlineKeyboardButton(text=f"{BTN_INFO} Ajuda",    callback_data="r:help")],
+        [InlineKeyboardButton(text=f"{BTN_WARN} Privacidade", callback_data="r:priv")],
     ])
 
 
@@ -2347,6 +2409,10 @@ async def start_cmd(message: Message):
 
 @dp.message(Command("royal"))
 async def royal_hub(message: Message):
+    # Bot reage ao comando antes de responder — feedback instantaneo
+    if message.from_user:
+        await react_to(message.chat.id, message.message_id, "👀")
+    await safe_typing(message.chat.id)
     await message.answer(hub_text(), reply_markup=hub_keyboard_main())
 
 
@@ -2413,6 +2479,9 @@ async def royal_tutorial_cmd(message: Message):
 async def royal_perfil(message: Message):
     if not message.from_user:
         return
+    # Reage 👀 imediatamente — o user ve feedback antes do card renderizar
+    await react_to(message.chat.id, message.message_id, "👀")
+    await safe_typing(message.chat.id, "upload_photo")
     # /royalperfil RYL-0042
     parts = (message.text or "").split(maxsplit=1)
     live_name = display_name(message)
@@ -2469,11 +2538,17 @@ async def royal_up(message: Message):
     p = ensure_player(chat_id, message.from_user.id)
     db.commit()
     if p["pts_available"] <= 0:
-        await message.answer(term_block(
+        # Ack efemero: bot reage 🤷, manda card AMARELO de "vazio" e
+        # auto-deleta em 10s pra nao poluir o chat do grupo
+        await react_to(chat_id, message.message_id, "🤷‍♂️")
+        ack = await message.answer(term_block(
             "ATRIBUTOS",
-            "<i>Sem pontos disponíveis. Suba de nível primeiro ⭐</i>",
-            status="EMPTY", status_color="AMBER"))
+            "<i>Sem pontos. Suba de nível primeiro ⭐</i>",
+            status="VAZIO", status_color="AMBER"))
+        await auto_delete_after(ack, delay=10.0)
         return
+    # Reage ✅ quando ha pontos — feedback positivo imediato
+    await react_to(chat_id, message.message_id, "✍")
     body = (
         f"<b>{p['pts_available']}</b> ponto(s) para distribuir.\n"
         f"<i>Escolha um atributo abaixo:</i>"

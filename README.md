@@ -8,6 +8,14 @@ Bot de Telegram de RPG retro-futurista para grupos. Construído com **aiogram 3.
 
 ## 🆕 Novidades (mai/2026)
 
+**UX viva (Bot API 10):**
+- ⚡ **Bot reage ao seu comando** com `👀` / `✍` antes de responder — feedback instantâneo via `set_message_reaction` (helper `react_to()`)
+- ⌨️ **"Digitando..."** simulado em renders pesados (`type_then_send`, `safe_typing`)
+- 🧹 **Auto-deletar acks efêmeros** (rate-limit, "sem pontos") em N segundos pra não poluir grupo (`auto_delete_after`)
+- 🎨 **Convenção de "cor" via emoji** nos botões — `BTN_OK ✅` verde, `BTN_NO ❌` vermelho, `BTN_INFO 🔵` azul, `BTN_WARN ⚠️` amarelo. *Botão colorido nativo NÃO existe em nenhuma versão do Bot API — emoji é a única forma.*
+- 🎉 Message effects (`EFFECT_*`) já em uso em DM 1:1
+
+
 **Visual do cartão de perfil:**
 - 🎨 **8 sprites 8-bit estilo Stardew** desenhados pixel-por-pixel em grids 10×10 (`SPRITE_SWORD`, `BOOT`, `HEART`, `MASK`, `TROPHY`, `BOOK`, `RINGS`, `COIN`) renderizados via helper genérico `draw_sprite()` acima de cada label
 - 📝 **Abreviações → palavras inteiras:** `FOR/DES/VIT/CAR` → `FORÇA/DESTREZA/VITAL/CARISMA`, `NIVEL`→`NÍVEL`, `RANK`→`POSIÇÃO`, `CASORIOS`→`CASÓRIOS`, `[SIGIL]`→`[BRASÃO]`, `[FACE]`→`[FOTO]`. Chip alargado p/ 184 px, fonte ajustada (40→30 attrs, 28→26 status)

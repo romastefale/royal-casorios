@@ -21,9 +21,30 @@ A branch `main` LOCAL nunca é alterada no remoto — sempre fazemos `main:royal
 - Requer secret `BOT_TOKEN`
 
 ## User preferences
-- Sempre usar as versões mais atualizadas das APIs:
-  - **Telegram Bot API: 10**
-  - **aiogram: última versão estável** (atualmente 3.28.2, lançada em 10/05/2026)
+- **Versões fixas (regra do usuário):**
+  - **Telegram Bot API: 10** — usar sempre, não fazer downgrade
+  - **aiogram: 3.28.2** (última estável, lançada em 10/05/2026)
+
+## 🎛️ UI: "cores" via emoji + helpers de UX
+
+### ⚠️ Verdade técnica: NÃO existem botões coloridos no Bot API
+Inline buttons renderizam SEMPRE na cor do tema do cliente Telegram. **Nenhuma versão** (incluindo API 10) permite colorir botão individual. A única forma de dar "cor visual" é via **emoji líder no texto do botão**. Convenção adotada (constantes em `main.py:568`):
+
+| Constante | Emoji | "Cor" | Uso |
+|---|---|---|---|
+| `BTN_OK` | ✅ | verde | confirmar / aplicar / ir |
+| `BTN_NO` | ❌ | vermelho | cancelar / fechar / destrutivo |
+| `BTN_INFO` | 🔵 | azul | informação / navegar |
+| `BTN_WARN` | ⚠️ | amarelo | atenção / reversível com custo |
+| `BTN_BACK` | ◀️ | neutro | voltar |
+| `BTN_GO` | ▶️ | neutro | avançar |
+
+### Helpers de UX em `main.py` (usar SEMPRE quando aplicável)
+- `await auto_delete_after(msg, delay=8.0)` — agenda exclusão automática. Ideal para acks efêmeros (rate-limit, "sem pontos", warnings) que poluem chat de grupo.
+- `await react_to(chat_id, message_id, emoji)` — bot reage com emoji ao comando do user (Bot API 7.0+). Feedback instantâneo antes da resposta completa renderizar. Whitelist do Telegram aplica.
+- `await type_then_send(chat_id, text, delay=1.2, action="typing")` — mostra "... digitando" por N segundos antes de enviar. Para fotos: `action="upload_photo"`.
+- `await safe_typing(chat_id, action)` — só dispara chat action, sem delay.
+- `**effect_kw(chat.type, EFFECT_*)` — sparkles/fire/heart em DM 1:1 (Bot API 7.7).
 
 ## 🎨 Identidade visual — Retro-futurist dystopian
 
