@@ -86,6 +86,29 @@ aplicável:
 > Se a mudança for **puramente infra interna** (cache, retry, log format), só atualizar
 > `replit.md` e mencionar no commit que /start/help/tutorial foram auditados e não mudaram.
 
+**💸 Custo zero — NUNCA usar funções/serviços pagos:**
+- Não usar nenhuma API/serviço/feature que cobre dinheiro (gateways pagos, APIs com
+  cobrança por uso, geração de mídia paga, etc). Só recursos gratuitos.
+- Telegram Stars (XTR) é exceção legítima: é **receita** do bot (usuário paga o bot),
+  não custo nosso, e o Telegram processa direto sem gateway externo.
+
+**🎬 UX no grupo — animação interativa, sem poluir (regra do dono):**
+- **Comandos de escolha** (inline keyboard / menus): depois que o usuário seleciona e o ato
+  conclui, **editar ou apagar a mensagem antiga** — nunca empilhar mensagem nova por cima.
+  Usar `edit_message_text` / `edit_message_reply_markup` / `delete_message` (ou o helper
+  `auto_delete_after` p/ acks efêmeros).
+- Preferir **animação interativa via edição da MESMA mensagem** (atualizar texto/markup
+  in-place conforme o fluxo avança) em vez de mandar várias mensagens em sequência.
+- O fluxo deve se **resolver/concluir sozinho** in-place conforme o ato termina — uma
+  interação = idealmente uma mensagem que evolui, não um rastro de mensagens.
+- **Não floodar o grupo.** Menos mensagens, mais edição in-place.
+
+> ⚠️ **Privacidade:** `attached_assets/` tem arquivos trackados no git (só
+> `generated_images/` é ignorado) e vai pro GitHub no push `main:royalRPG`. **Nunca**
+> commitar prints de conversa / dumps / logs com PII (telefones, user ids). Se precisar de
+> assets só locais, adicionar ao `.gitignore` ou `git rm --cached` (destrutivo — via project
+> task ou pedir ao usuário).
+
 ---
 
 ## 📁 Estrutura de arquivos
