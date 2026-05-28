@@ -458,12 +458,53 @@ def migrate_to_v5(c: sqlite3.Cursor) -> None:
                 raise
 
 
+def migrate_to_v6(c: sqlite3.Cursor) -> None:
+    """Randomiza royal_ids existentes (RYL-0001, 0002... -> RYL-NNNN
+    sortidos entre 1000-9999). Pool por chat = 9000, retry on collision.
+    Invalida inline_card_file_id + inline_card_hash pra forcar regen do
+    identity card com o novo ID na proxima sweep/inline."""
+    import random as _r
+    c.execute("SELECT DISTINCT chat_id FROM players WHERE royal_id IS NOT NULL")
+    chats = [r[0] for r in c.fetchall()]
+    total = 0
+    for chat_id in chats:
+        c.execute(
+            "SELECT user_id, royal_id FROM players "
+            "WHERE chat_id=? AND royal_id IS NOT NULL", (chat_id,))
+        players = c.fetchall()
+        used: set[str] = set()
+        # Sortear sem colisao no mesmo chat.
+        for user_id, _old_rid in players:
+            for _ in range(200):
+                suffix = _r.randint(1000, 9999)
+                candidate = f"RYL-{suffix:04d}"
+                if candidate not in used:
+                    used.add(candidate)
+                    break
+            else:
+                # Pool exausto (>9000 players num chat) — usa 5 digitos.
+                while True:
+                    suffix = _r.randint(10000, 99999)
+                    candidate = f"RYL-{suffix:05d}"
+                    if candidate not in used:
+                        used.add(candidate)
+                        break
+            c.execute(
+                "UPDATE players SET royal_id=?, inline_card_file_id=NULL, "
+                "inline_card_hash=NULL WHERE chat_id=? AND user_id=?",
+                (candidate, chat_id, user_id))
+            total += 1
+    logger.info("migrate_to_v6: randomized %d royal_ids across %d chats",
+                total, len(chats))
+
+
 MIGRATIONS = [
     (1, migrate_to_v1),
     (2, migrate_to_v2),
     (3, migrate_to_v3),
     (4, migrate_to_v4),
     (5, migrate_to_v5),
+    (6, migrate_to_v6),
 ]
 
 
@@ -1392,17 +1433,44 @@ async def is_admin(message: Message) -> bool:
 # RPG — IDENTIDADE: ROYAL ID, PLAYERS
 # =====================================================================
 
+def _random_royal_suffix() -> int:
+    """Sufixo aleatorio 1000-9999 — pool de 9000 por chat. Sem sequencia
+    visivel (ROY#0001, 0002...) pra preservar privacidade da ordem de
+    cadastro e impedir adivinhacao trivial de IDs vizinhos."""
+    import random as _r
+    return _r.randint(1000, 9999)
+
+
 def next_royal_id(chat_id: int) -> str:
+    """Gera royal_id aleatorio (RYL-NNNN, 1000-9999) com retry on collision
+    via UNIQUE INDEX idx_players_chat_royal_id. Mantem royal_id_seq apenas
+    como contador de quantos players foram cadastrados (compat historica)."""
     cur.execute(
         "INSERT INTO royal_id_seq (chat_id, next_id) VALUES (?, 1) "
-        "ON CONFLICT(chat_id) DO NOTHING",
+        "ON CONFLICT(chat_id) DO UPDATE SET next_id = next_id + 1",
         (chat_id,),
     )
-    cur.execute("SELECT next_id FROM royal_id_seq WHERE chat_id=?", (chat_id,))
-    row = cur.fetchone()
-    nid = row["next_id"]
-    cur.execute("UPDATE royal_id_seq SET next_id=? WHERE chat_id=?", (nid + 1, chat_id))
-    return f"RYL-{nid:04d}"
+    for _ in range(80):
+        suffix = _random_royal_suffix()
+        candidate = f"RYL-{suffix:04d}"
+        cur.execute(
+            "SELECT 1 FROM players WHERE chat_id=? AND royal_id=?",
+            (chat_id, candidate),
+        )
+        if cur.fetchone() is None:
+            return candidate
+    # Fallback extremamente improvavel (chat com >>1000 players ativos):
+    # expande pool pra 10000-99999 (5 digitos) e tenta de novo.
+    for _ in range(40):
+        suffix = __import__("random").randint(10000, 99999)
+        candidate = f"RYL-{suffix:05d}"
+        cur.execute(
+            "SELECT 1 FROM players WHERE chat_id=? AND royal_id=?",
+            (chat_id, candidate),
+        )
+        if cur.fetchone() is None:
+            return candidate
+    raise RuntimeError(f"next_royal_id: pool exhausted for chat {chat_id}")
 
 
 def ensure_player(chat_id: int, user_id: int) -> dict:
@@ -1578,11 +1646,13 @@ def get_cached_profile_file_id(owner_chat: int, owner_uid: int) -> str | None:
 # =====================================================================
 
 def _identity_card_hash(name: str, avatar_slug: str | None,
-                        username: str | None = None) -> str:
+                        username: str | None = None,
+                        royal_id: str | None = None) -> str:
     """Hash estavel pra detectar mudancas. Sem temporada — virada de season
-    SEM mudanca de avatar/handle nao deve regenerar."""
+    SEM mudanca de avatar/handle/royal_id nao deve regenerar."""
     raw = (f"{(name or '').strip()}|{(avatar_slug or '').strip()}|"
-           f"{(username or '').strip().lstrip('@').lower()}")
+           f"{(username or '').strip().lstrip('@').lower()}|"
+           f"{(royal_id or '').strip().upper()}")
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
 
 
@@ -1639,7 +1709,8 @@ async def ensure_identity_card_async(chat_id: int, user_id: int,
                         user_id, chat_id, royal_id)
             return row["inline_card_file_id"]
         name = raw_name or (f"@{username}" if username else "?")
-        target_hash = _identity_card_hash(name, avatar_slug, username)
+        target_hash = _identity_card_hash(name, avatar_slug, username,
+                                          royal_id)
         current_fid = row["inline_card_file_id"]
         current_hash = row["inline_card_hash"]
         if not force and current_fid and current_hash == target_hash:
@@ -5112,8 +5183,8 @@ async def identity_card_sweep_job():
                             "skip do dia")
                 continue
             cur.execute(
-                "SELECT p.chat_id, p.user_id, p.avatar_slug, "
-                "       p.inline_card_hash, u.display_name "
+                "SELECT p.chat_id, p.user_id, p.avatar_slug, p.royal_id, "
+                "       p.inline_card_hash, u.display_name, u.username "
                 "FROM players p "
                 "LEFT JOIN users u ON u.chat_id=p.chat_id AND u.user_id=p.user_id"
             )
@@ -5122,8 +5193,12 @@ async def identity_card_sweep_job():
             checked = 0
             for r in rows:
                 checked += 1
-                name = (r["display_name"] or "").strip() or str(r["user_id"])
-                target = _identity_card_hash(name, r["avatar_slug"])
+                raw_name = (r["display_name"] or "").strip()
+                username = (r["username"] or "").strip() or None
+                name = raw_name or (f"@{username}" if username
+                                    else str(r["user_id"]))
+                target = _identity_card_hash(name, r["avatar_slug"],
+                                             username, r["royal_id"])
                 if r["inline_card_hash"] == target:
                     continue
                 fid = await ensure_identity_card_async(
