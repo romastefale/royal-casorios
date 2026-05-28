@@ -885,6 +885,62 @@ async def react_to(chat_id: int, message_id: int, emoji: str,
                            chat_id, message_id, emoji, e)
 
 
+async def typewriter_animate(chat_id: int, full_text: str, *,
+                             chunk: int = 5, delay: float = 0.4,
+                             cursor: str = "▌",
+                             final_parse_mode: str | None = None) -> "Message | None":
+    """Envia mensagem e edita progressivamente, simulando digitacao
+    letra por letra (efeito terminal CRT).
+
+    Telegram tem rate-limit ~1 edit/s em grupos, entao usamos chunks de
+    N chars + delay >=0.35s. Durante a anim, parse_mode=None pra evitar
+    quebra de tags HTML parciais. Render final pode usar HTML via
+    final_parse_mode (aplicado num edit unico no fim).
+    """
+    if bot is None or not full_text:
+        return None
+    try:
+        msg = await bot.send_message(chat_id, cursor or " ",
+                                     parse_mode=None,
+                                     disable_notification=True)
+    except Exception:
+        logger.exception("typewriter: send inicial falhou")
+        return None
+    text = full_text
+    i = 0
+    last_render = ""
+    while i < len(text):
+        i = min(len(text), i + max(1, chunk))
+        render = text[:i] + (cursor if i < len(text) else "")
+        if render == last_render:
+            await asyncio.sleep(delay)
+            continue
+        try:
+            await bot.edit_message_text(
+                render, chat_id=chat_id, message_id=msg.message_id,
+                parse_mode=None)
+            last_render = render
+        except Exception as e:
+            es = str(e)
+            if "MESSAGE_NOT_MODIFIED" in es:
+                pass
+            elif "Too Many Requests" in es or "retry after" in es.lower():
+                await asyncio.sleep(1.5)
+                continue
+            else:
+                logger.debug("typewriter edit fail: %s", e)
+                break
+        await asyncio.sleep(delay)
+    if final_parse_mode:
+        try:
+            await bot.edit_message_text(
+                text, chat_id=chat_id, message_id=msg.message_id,
+                parse_mode=final_parse_mode)
+        except Exception:
+            pass
+    return msg
+
+
 async def type_then_send(chat_id: int, text: str, delay: float = 1.2,
                          action: str = "typing", **kwargs):
     """Mostra '... digitando' por `delay` segundos antes de mandar o texto.
@@ -1481,6 +1537,17 @@ def next_royal_id(chat_id: int) -> str:
         if cur.fetchone() is None:
             return candidate
     raise RuntimeError(f"next_royal_id: pool exhausted for chat {chat_id}")
+
+
+def get_or_create_player(chat_id: int, user_id: int) -> tuple[dict, bool]:
+    """Igual ensure_player mas retorna (row, is_new). Permite que o
+    chamador customize feedback pro player recem-cadastrado vs existente."""
+    cur.execute("SELECT * FROM players WHERE chat_id=? AND user_id=?",
+                (chat_id, user_id))
+    row = cur.fetchone()
+    if row:
+        return dict(row), False
+    return ensure_player(chat_id, user_id), True
 
 
 def ensure_player(chat_id: int, user_id: int) -> dict:
@@ -3395,8 +3462,33 @@ async def royal_hub(message: Message):
     # Bot reage ao comando antes de responder — feedback instantaneo
     if message.from_user:
         await react_to(message.chat.id, message.message_id, "👀")
+    # Cadastra player se for novo (so em grupo — DM nao tem contexto de
+    # chat_id de grupo). Se for o 1o /royal do nobre, animacao de boas
+    # vindas letra por letra antes do hub.
+    is_new = False
+    rid = "RYL-????"
+    if (message.chat.type in ("group", "supergroup")
+            and message.from_user):
+        try:
+            row, is_new = get_or_create_player(
+                message.chat.id, message.from_user.id)
+            rid = row.get("royal_id") or rid
+        except Exception:
+            logger.exception("royal_hub: get_or_create_player falhou")
+    if is_new:
+        intro = (
+            f"> ROYAL.SYS // CADASTRADO\n"
+            f">> {rid} sincronizado\n"
+            f"// bem-vindo ao reino, nobre"
+        )
+        await typewriter_animate(message.chat.id, intro,
+                                 chunk=4, delay=0.35)
+        await asyncio.sleep(0.4)
     await safe_typing(message.chat.id)
-    await message.answer(hub_text(), reply_markup=hub_keyboard_main())
+    extra = (effect_kw(message.chat.type, EFFECT_PARTY)
+             if is_new else {})
+    await message.answer(hub_text(), reply_markup=hub_keyboard_main(),
+                         **extra)
 
 
 @dp.message(F.text == "👑 Reino")
