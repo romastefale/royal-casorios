@@ -675,6 +675,20 @@ def get_name(chat_id: int, user_id: int) -> str:
     return row["display_name"] if row else str(user_id)
 
 
+def anonize(name: str, royal_id: str | None) -> str:
+    """Privacidade: se `name` for puro digito (= user_id numerico do Telegram
+    como fallback de get_name), retorna alias ANON-<suffix> derivado do
+    royal_id. NUNCA expor user_id cru do Telegram em texto/caption/card.
+    """
+    if not name:
+        return "Nobre"
+    if name.lstrip("-").isdigit():
+        rid = royal_id or "RYL-????"
+        suffix = rid.replace("RYL-", "").lstrip("0") or "0"
+        return f"ANON-{suffix}"
+    return name
+
+
 # =====================================================================
 # SHIPPER (legado, preservado)
 # =====================================================================
@@ -1075,7 +1089,7 @@ def _schedule_levelup_dm(chat_id: int, user_id: int,
         return
     royal_id = player.get("royal_id") or ""
     class_id = player.get("class_id")
-    name = get_name(chat_id, user_id)
+    name = anonize(get_name(chat_id, user_id), royal_id)
     loop.create_task(notify_level_up_dm(
         user_id, royal_id, name, new_lvl, class_id))
 
@@ -1165,7 +1179,7 @@ def progress_bar(current: int, total: int, length: int = 10) -> str:
 
 def build_profile_text(chat_id: int, user_id: int) -> str:
     p = ensure_player(chat_id, user_id)
-    name = get_name(chat_id, user_id) or "Nobre"
+    name = anonize(get_name(chat_id, user_id), p.get("royal_id"))
     lvl, in_lvl, needed, _ = level_progress(p["total_xp"])
     bar = progress_bar(in_lvl, needed)
 
@@ -1228,14 +1242,8 @@ def build_profile_text(chat_id: int, user_id: int) -> str:
 def build_profile_card_data(chat_id: int, user_id: int) -> ProfileCardData:
     """Coleta dados pra renderizar o cartao 1080x1080."""
     p = ensure_player(chat_id, user_id)
-    name = get_name(chat_id, user_id) or "Nobre"
-    # Privacidade: se display_name for o user_id numerico do Telegram cru
-    # (fallback de get_name quando display_name nao foi salvo), substitui
-    # por um alias derivado do royal_id. NUNCA expor user_id do Telegram.
     royal_id = p.get("royal_id") or "RYL-????"
-    if name.lstrip("-").isdigit():
-        suffix = royal_id.replace("RYL-", "").lstrip("0") or "0"
-        name = f"ANON-{suffix}"
+    name = anonize(get_name(chat_id, user_id), royal_id)
     lvl, in_lvl, needed, _ = level_progress(p["total_xp"])
 
     cur.execute("SELECT COUNT(*) AS total FROM players WHERE chat_id=?", (chat_id,))
@@ -1301,7 +1309,7 @@ def build_profile_caption(chat_id: int, user_id: int) -> str:
     Limite de caption do Telegram: 1024 chars.
     """
     p = ensure_player(chat_id, user_id)
-    name = get_name(chat_id, user_id) or "Nobre"
+    name = anonize(get_name(chat_id, user_id), p.get("royal_id"))
     lvl, in_lvl, needed, _ = level_progress(p["total_xp"])
 
     cur.execute("SELECT COUNT(*) AS total FROM players WHERE chat_id=?", (chat_id,))

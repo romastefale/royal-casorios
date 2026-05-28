@@ -175,7 +175,15 @@ def load_font(size: int, *, mono: bool = True, bold: bool = True):
                 return ImageFont.truetype(path, size=scaled)
         except Exception:
             continue
-    return ImageFont.load_default()
+    # Fallback Railway-safe: load_default(size=...) requer Pillow >= 10.1 e
+    # retorna a DejaVuSans embutida na lib (TrueType, escalavel). Sem o
+    # parametro `size`, retorna um bitmap fixo ~10px que IGNORA o tamanho
+    # — foi o que causou o bug das letras minusculas no deploy.
+    try:
+        return ImageFont.load_default(size=scaled)
+    except TypeError:
+        # Pillow muito antigo — pelo menos NAO travar
+        return ImageFont.load_default()
 
 
 def format_br(n: int | None) -> str:
