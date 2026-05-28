@@ -401,3 +401,21 @@ id = "vMjWRq-A0sugKMjrfbEb4"
 uri = "file://attached_assets/casorios_preview/04_meuscasorios_vazio.jpg"
 type = "image"
 title = "/royalmeuscasorios — Edge case: zero parceiros"
+
+[[outputs]]
+id = "SN7dHHYLTUT1O47UfbqJS"
+uri = "file://attached_assets/casorios_preview/05_inventario_6itens.jpg"
+type = "image"
+title = "/royalinventario — 6 itens (2 equipados)"
+
+[[outputs]]
+id = "__E17IND8RxWOZKVAhLiy"
+uri = "file://attached_assets/casorios_preview/06_inventario_1item.jpg"
+type = "image"
+title = "/royalinventario — 1 item só (slots vazios visiveis)"
+
+[[outputs]]
+id = "6Q5K2p_-E2ODa1wz2G7mp"
+uri = "file://attached_assets/casorios_preview/07_inventario_8itens_cheio.jpg"
+type = "image"
+title = "/royalinventario — 8 slots cheios (max)"

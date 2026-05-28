@@ -69,6 +69,7 @@ from royal_render import (
     render_casorios_ranking_card,
     render_classe_card,
     render_identity_card,
+    render_inventario_card,
     render_levelup_card,
     render_loja_drop_card,
     render_meuscasorios_card,
@@ -76,6 +77,8 @@ from royal_render import (
     render_profile_card,
     render_ranking_card,
     CouplePodiumEntry,
+    InventarioData,
+    InventarioSlot,
     MeusCasoriosData,
     PartnerMini,
 )
@@ -4079,8 +4082,9 @@ async def royal_inv(message: Message):
     uid = message.from_user.id
     ensure_player(chat_id, uid)
     db.commit()
+    await react_to(message.chat.id, message.message_id, "🎒")
     cur.execute(
-        "SELECT item_id, qty, equipped FROM inventory WHERE chat_id=? AND user_id=? ORDER BY equipped DESC",
+        "SELECT item_id, qty, equipped FROM inventory WHERE chat_id=? AND user_id=? AND qty>0 ORDER BY equipped DESC, item_id",
         (chat_id, uid))
     rows = cur.fetchall()
     if not rows:
@@ -4089,6 +4093,52 @@ async def royal_inv(message: Message):
             "<i>Cofre vazio. Visita a /royalloja pra comprar itens.</i>",
             status="VAZIO", status_color="AMBER"))
         return
+    # === CARD VISUAL (card-first com text fallback) ===
+    try:
+        await safe_typing(message.chat.id, "upload_photo")
+        self_p = get_player(chat_id, uid) or {}
+        self_rid = self_p.get("royal_id") or "RYL-????"
+        self_name = get_anon_name(chat_id, uid)
+        self_slug = self_p.get("avatar_slug")
+        saldo = int(self_p.get("gold") or 0)
+        slots: list[InventarioSlot] = []
+        for r in rows:
+            item = ITEMS.get(r["item_id"])
+            if not item:
+                continue
+            slots.append(InventarioSlot(
+                item_id=r["item_id"],
+                emoji=item.get("emoji", "📦"),
+                name=item.get("name", r["item_id"]),
+                qty=int(r["qty"]),
+                equipped=bool(r["equipped"]),
+                item_type=item.get("type", "item"),
+            ))
+        data = InventarioData(
+            self_royal_id=self_rid,
+            self_name=self_name,
+            self_avatar_slug=self_slug,
+            saldo=saldo,
+            slots=tuple(slots[:8]),
+        )
+        png = await asyncio.to_thread(render_inventario_card, data)
+        if png and bot is not None:
+            n_eq = sum(1 for s in slots if s.equipped)
+            caption = (f"<b>🎒 MOCHILA // ROY {html.escape(self_rid)}</b>\n"
+                       f"<i>{len(slots)} itens · {n_eq} equipados · "
+                       f"<b>{format_br(saldo)}</b> 🪙</i>")
+            sent = await bot.send_photo(
+                message.chat.id,
+                BufferedInputFile(png, filename=f"inventario-{self_rid}.jpg"),
+                caption=cap1024(caption),
+                parse_mode="HTML",
+                reply_markup=inv_keyboard(chat_id, uid, snapshot=rows),
+            )
+            register_owner(sent, uid, auto_delete_secs=60.0)
+            return
+    except Exception:
+        logger.exception("render_inventario_card path failed; fallback texto")
+    # === Fallback texto ===
     parts = []
     for r in rows:
         item = ITEMS.get(r["item_id"])
@@ -4106,11 +4156,18 @@ async def royal_inv(message: Message):
     register_owner(sent, uid, auto_delete_secs=60.0)
 
 
-def inv_keyboard(chat_id: int, uid: int) -> InlineKeyboardMarkup:
-    cur.execute(
-        "SELECT item_id, equipped FROM inventory WHERE chat_id=? AND user_id=? AND qty>0",
-        (chat_id, uid))
-    rows = cur.fetchall()
+def inv_keyboard(chat_id: int, uid: int,
+                 snapshot: list | None = None) -> InlineKeyboardMarkup:
+    """Monta teclado de inventario. Se snapshot fornecido (rows com
+    item_id + equipped), usa ele em vez de requery — garante sincronia
+    visual com card cacheado no mesmo handler."""
+    if snapshot is None:
+        cur.execute(
+            "SELECT item_id, equipped FROM inventory WHERE chat_id=? AND user_id=? AND qty>0",
+            (chat_id, uid))
+        rows = cur.fetchall()
+    else:
+        rows = snapshot
     buttons = []
     for r in rows:
         item = ITEMS.get(r["item_id"])

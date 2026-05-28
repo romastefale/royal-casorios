@@ -2755,3 +2755,231 @@ def render_meuscasorios_card(data: MeusCasoriosData) -> bytes | None:
         logger.exception("ROYAL_MEUS_CASORIOS_CARD_RENDER_FAILED rid=%r",
                          data.self_royal_id)
         return None
+
+
+# =====================================================================
+# INVENTARIO CARD — grid 4x2 com itens da mochila
+# =====================================================================
+
+@dataclass(frozen=True)
+class InventarioSlot:
+    item_id: str
+    emoji: str
+    name: str
+    qty: int
+    equipped: bool
+    item_type: str   # "equip" | "consumable" | "cosmetic"
+
+
+@dataclass(frozen=True)
+class InventarioData:
+    self_royal_id: str
+    self_name: str
+    self_avatar_slug: str | None
+    saldo: int            # ouro atual
+    slots: tuple[InventarioSlot, ...]    # itens com qty > 0
+
+
+def render_inventario_card(data: InventarioData) -> bytes | None:
+    """Mochila: avatar+saldo no topo, grid 4x2 de slots com itens."""
+    cache_key = ("inventario", data.self_royal_id, data.self_name,
+                 data.self_avatar_slug, data.saldo,
+                 tuple((s.item_id, s.qty, s.equipped) for s in data.slots))
+    cached = cache_get(cache_key)
+    if cached:
+        return cached
+    try:
+        pal = pick_palette(data.self_royal_id)
+        W = H = CARD_SIZE
+        img = Image.new("RGB", (W, H), BG_DEEP)
+        draw = ImageDraw.Draw(img)
+
+        # estática
+        rng = random.Random(hash(("inv", data.self_royal_id)) & 0xFFFF)
+        for _ in range(1100):
+            x = rng.randrange(W)
+            y = rng.randrange(H)
+            c = rng.choice([(20, 16, 22), (16, 14, 20), (28, 22, 30)])
+            pixel_rect(draw, (x, y, x + 3, y + 3), c)
+
+        OUT_PAD = 28
+        panel_box = (OUT_PAD, OUT_PAD, W - OUT_PAD, H - OUT_PAD)
+        pixel_rect(draw, panel_box, BG)
+        chunky_border(draw, panel_box, outer=BLACK, inner=pal["header"],
+                      thick=8)
+
+        # Header bar
+        header_box = (OUT_PAD + 28, OUT_PAD + 28,
+                      W - OUT_PAD - 28, OUT_PAD + 110)
+        pixel_rect(draw, header_box, PANEL)
+        pixel_rect(draw, (header_box[0], header_box[1],
+                          header_box[2], header_box[1] + 4), pal["header"])
+        pixel_rect(draw, (header_box[0], header_box[3] - 4,
+                          header_box[2], header_box[3]), pal["header"])
+        title_font = load_font(28, mono=True, bold=True)
+        draw.text((header_box[0] + 22, header_box[1] + 22),
+                  "ROYAL.INVENTARIO.SYS", font=title_font, fill=pal["header"])
+        sub_font = load_font(16, mono=True, bold=False)
+        sub = f">> SLOTS={len(data.slots)}/8"
+        sw, _ = text_size(draw, sub, sub_font)
+        draw.text((header_box[2] - 22 - sw, header_box[1] + 30),
+                  sub, font=sub_font, fill=DIM)
+
+        # Avatar mini + nome + saldo (faixa de identificação)
+        idbar_top = OUT_PAD + 130
+        idbar_box = (OUT_PAD + 28, idbar_top,
+                     W - OUT_PAD - 28, idbar_top + 140)
+        pixel_rect(draw, idbar_box, PANEL)
+        pixel_rect(draw, (idbar_box[0], idbar_box[1],
+                          idbar_box[2], idbar_box[1] + 4), GOLD)
+        # avatar
+        av_size = 110
+        av_x = idbar_box[0] + 16
+        av_y = idbar_box[1] + 16
+        resolved = royal_avatars.resolve_slug(
+            data.self_avatar_slug, data.self_royal_id)
+        portrait = royal_avatars.load_avatar(resolved, av_size)
+        pixel_rect(draw, (av_x - 3, av_y - 3,
+                          av_x + av_size + 3, av_y + av_size + 3), BLACK)
+        pixel_rect(draw, (av_x - 1, av_y - 1,
+                          av_x + av_size + 1, av_y + av_size + 1), GOLD)
+        if portrait is not None:
+            img.paste(portrait, (av_x, av_y), portrait)
+
+        # nome + royal_id ao lado
+        info_x = av_x + av_size + 24
+        name_font = load_font(22, mono=True, bold=True)
+        name = ellipsize(data.self_name, 18).upper()
+        draw_text_smart(draw, (info_x, av_y + 8), name, name_font, INK)
+        rid_font = load_font(14, mono=True, bold=False)
+        draw.text((info_x, av_y + 40),
+                  data.self_royal_id, font=rid_font, fill=DIM)
+
+        # saldo (canto direito do idbar)
+        saldo_label_font = load_font(12, mono=True, bold=False)
+        draw.text((info_x, av_y + 68),
+                  ">> SALDO", font=saldo_label_font, fill=DIM)
+        saldo_font = load_font(28, mono=True, bold=True)
+        saldo_txt = f"{format_br(data.saldo)} 🪙"
+        draw_text_smart(draw, (info_x, av_y + 84),
+                        saldo_txt, saldo_font, GOLD)
+
+        # Grid 4x2 de slots
+        grid_top = idbar_box[3] + 20
+        grid_pad = 12
+        cols = 4
+        rows = 2
+        avail_w = W - OUT_PAD * 2 - 56
+        slot_w = (avail_w - grid_pad * (cols - 1)) // cols
+        slot_h = 220
+        grid_x0 = OUT_PAD + 28
+
+        for i in range(cols * rows):
+            r = i // cols
+            c = i % cols
+            sx0 = grid_x0 + c * (slot_w + grid_pad)
+            sy0 = grid_top + r * (slot_h + grid_pad)
+            sx1 = sx0 + slot_w
+            sy1 = sy0 + slot_h
+
+            slot = data.slots[i] if i < len(data.slots) else None
+            if slot is None:
+                # slot vazio
+                pixel_rect(draw, (sx0, sy0, sx1, sy1), BG_DEEP)
+                pixel_rect(draw, (sx0, sy0, sx1, sy0 + 2), (40, 36, 44))
+                pixel_rect(draw, (sx0, sy1 - 2, sx1, sy1), (40, 36, 44))
+                pixel_rect(draw, (sx0, sy0, sx0 + 2, sy1), (40, 36, 44))
+                pixel_rect(draw, (sx1 - 2, sy0, sx1, sy1), (40, 36, 44))
+                em_font = load_font(14, mono=True, bold=False)
+                etxt = "[ - ]"
+                ew, eh = text_size(draw, etxt, em_font)
+                draw.text((sx0 + (slot_w - ew) // 2,
+                           sy0 + (slot_h - eh) // 2),
+                          etxt, font=em_font, fill=(60, 52, 66))
+                continue
+
+            # slot ocupado
+            pixel_rect(draw, (sx0, sy0, sx1, sy1), PANEL)
+            border_color = pal["xp"] if slot.equipped else DIM
+            top_bar = pal["xp"] if slot.equipped else pal["footer"]
+            pixel_rect(draw, (sx0, sy0, sx1, sy0 + 3), top_bar)
+            pixel_rect(draw, (sx0, sy1 - 3, sx1, sy1), top_bar)
+            pixel_rect(draw, (sx0, sy0, sx0 + 3, sy1), border_color)
+            pixel_rect(draw, (sx1 - 3, sy0, sx1, sy1), border_color)
+
+            # emoji grande no centro-cima
+            emj_font = load_font(48, mono=True, bold=False)
+            ew, eh = text_size_smart(draw, slot.emoji, emj_font)
+            draw_text_smart(draw,
+                            (sx0 + (slot_w - ew) // 2, sy0 + 16),
+                            slot.emoji, emj_font, INK)
+
+            # nome (max 2 linhas)
+            nm_font = load_font(13, mono=True, bold=True)
+            name_clean = ellipsize(slot.name, 14)
+            nw, _ = text_size_smart(draw, name_clean, nm_font)
+            if nw > slot_w - 12:
+                name_clean = ellipsize(slot.name, 10)
+                nw, _ = text_size_smart(draw, name_clean, nm_font)
+            draw_text_smart(draw,
+                            (sx0 + (slot_w - nw) // 2, sy0 + 90),
+                            name_clean, nm_font, INK)
+
+            # qty (canto inf direito)
+            if slot.qty > 1:
+                qty_font = load_font(16, mono=True, bold=True)
+                qty_txt = f"x{slot.qty}"
+                qw, qh = text_size(draw, qty_txt, qty_font)
+                pixel_rect(draw,
+                           (sx1 - qw - 14, sy1 - qh - 12,
+                            sx1 - 6, sy1 - 6), BLACK)
+                draw.text((sx1 - qw - 10, sy1 - qh - 10),
+                          qty_txt, font=qty_font, fill=GOLD)
+
+            # equipped badge (faixa inferior)
+            badge_font = load_font(11, mono=True, bold=True)
+            if slot.equipped:
+                bd = "[ EQUIPADO ]"
+                bw, bh = text_size(draw, bd, badge_font)
+                pixel_rect(draw,
+                           (sx0 + (slot_w - bw) // 2 - 6, sy0 + 130,
+                            sx0 + (slot_w + bw) // 2 + 6, sy0 + 130 + bh + 8),
+                           pal["xp"])
+                draw.text((sx0 + (slot_w - bw) // 2,
+                           sy0 + 134),
+                          bd, font=badge_font, fill=BLACK)
+            else:
+                type_label = {"equip": "[EQUIP]",
+                              "consumable": "[USAVEL]",
+                              "cosmetic": "[COSMETIC]"}.get(slot.item_type,
+                                                            "[ITEM]")
+                tw, _ = text_size(draw, type_label, badge_font)
+                draw.text((sx0 + (slot_w - tw) // 2, sy0 + 134),
+                          type_label, font=badge_font, fill=DIM)
+
+        # Footer
+        foot_font = load_font(12, mono=True, bold=False)
+        foot_left = "> /royalinventario  //  /royalloja"
+        foot_right = f"v0.1 // {pal['name']}_MODE"
+        draw.text((OUT_PAD + 60, H - OUT_PAD - 50),
+                  foot_left, font=foot_font, fill=DIM)
+        fw, _ = text_size(draw, foot_right, foot_font)
+        draw.text((W - OUT_PAD - 60 - fw, H - OUT_PAD - 50),
+                  foot_right, font=foot_font, fill=pal["footer"])
+
+        img = img.convert("RGBA")
+        apply_scanlines(img, every=3, alpha=55)
+        vimg = img.convert("RGB")
+        apply_vignette(vimg, strength=170)
+        img = vimg.convert("RGBA")
+        apply_grain(img, intensity=18)
+        img = img.convert("RGB")
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=90, optimize=True)
+        payload = buf.getvalue()
+        cache_put(cache_key, payload)
+        return payload
+    except Exception:
+        logger.exception("ROYAL_INVENTARIO_CARD_RENDER_FAILED rid=%r",
+                         data.self_royal_id)
+        return None
