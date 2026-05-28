@@ -99,6 +99,13 @@ PALAVRA_DURATIONS_MIN = [5, 7, 10]
 PALAVRA_JITTER_SEC = 60
 PALAVRA_ATTEMPT_COOLDOWN_SEC = 3
 
+# Baú Real — spawna 30min após cada Palavra; primeiros 5 abrem
+CHEST_DELAY_MIN = 30
+CHEST_TTL_MIN = 30
+CHEST_MAX_CLAIMS = 5
+# (xp, gold) por ordem de chegada: 1º até 5º
+CHEST_REWARDS = [(150, 10), (100, 10), (75, 10), (50, 10), (25, 10)]
+
 # Boss
 BOSS_SPAWN_WEEKDAY = 6  # 6 = Domingo (Mon=0..Sun=6)
 BOSS_SPAWN_HOUR = 20
@@ -272,6 +279,33 @@ def migrate_to_v2(c: sqlite3.Cursor) -> None:
             next_palavra_at TEXT,
             current_season TEXT
         );
+
+        CREATE TABLE IF NOT EXISTS chests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chat_id INTEGER NOT NULL,
+            spawn_at TEXT NOT NULL,
+            spawned_at TEXT,
+            expires_at TEXT,
+            message_id INTEGER,
+            status TEXT NOT NULL DEFAULT 'pending'
+        );
+        CREATE INDEX IF NOT EXISTS idx_chests_status_spawn
+            ON chests(status, spawn_at);
+        CREATE INDEX IF NOT EXISTS idx_chests_chat_status
+            ON chests(chat_id, status);
+
+        CREATE TABLE IF NOT EXISTS chest_claims (
+            chest_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            slot INTEGER NOT NULL,
+            xp INTEGER NOT NULL,
+            gold INTEGER NOT NULL,
+            name TEXT,
+            claimed_at TEXT,
+            PRIMARY KEY(chest_id, user_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_chest_claims_chest
+            ON chest_claims(chest_id);
 
         CREATE TABLE IF NOT EXISTS season_hall (
             chat_id INTEGER,
@@ -1554,6 +1588,11 @@ async def spawn_palavra(chat_id: int) -> None:
         cur.execute("UPDATE challenges SET message_id=? WHERE id=?", (msg.message_id, cid))
         db.commit()
     logger.info("palavra spawned chat=%d cid=%d type=%s dur=%d", chat_id, cid, challenge_type, duration_min)
+    # Agenda baú real pra 30min depois
+    try:
+        schedule_chest_after_palavra(chat_id)
+    except Exception:
+        logger.exception("schedule_chest_after_palavra failed chat=%d", chat_id)
 
 
 async def handle_palavra_attempt(message: Message, ch: dict) -> bool:
@@ -1657,6 +1696,209 @@ def schedule_next_palavra(chat_id: int) -> None:
         (chat_id, next_at.isoformat()),
     )
     db.commit()
+
+
+# =====================================================================
+# RPG — BAU REAL (spawna 30min apos cada Palavra; primeiros 5 abrem)
+# =====================================================================
+
+def schedule_chest_after_palavra(chat_id: int) -> None:
+    """Cria registro de bau pendente CHEST_DELAY_MIN minutos no futuro."""
+    spawn_at = utc_now() + timedelta(minutes=CHEST_DELAY_MIN)
+    cur.execute(
+        "INSERT INTO chests (chat_id, spawn_at, status) VALUES (?, ?, 'pending')",
+        (chat_id, spawn_at.isoformat()),
+    )
+    db.commit()
+
+
+def chest_keyboard(chest_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="🎁 Abrir Baú", callback_data=f"r:chest:{chest_id}")
+    ]])
+
+
+def format_chest_text(chest_id: int, status: str = "open") -> str:
+    cur.execute(
+        "SELECT slot, name, xp, gold, user_id FROM chest_claims "
+        "WHERE chest_id=? ORDER BY slot",
+        (chest_id,),
+    )
+    claims = [dict(r) for r in cur.fetchall()]
+    remaining = CHEST_MAX_CLAIMS - len(claims)
+
+    rows = []
+    for c in claims:
+        nm = (c["name"] or "anon")[:18]
+        rows.append(f"[{c['slot']}] {nm:<18}  +{c['xp']:>3} XP  +{c['gold']:>2}🪙")
+    for slot in range(len(claims) + 1, CHEST_MAX_CLAIMS + 1):
+        xp, gold = CHEST_REWARDS[slot - 1]
+        rows.append(f"[{slot}] {'???':<18}  +{xp:>3} XP  +{gold:>2}🪙")
+
+    pre = "<pre>" + html.escape("\n".join(rows)) + "</pre>"
+    body = ">> baú real materializou // primeiros 5 saqueiam\n" + pre
+
+    if status == "open":
+        body += f"\n// vagas restantes: <b>{remaining}/{CHEST_MAX_CLAIMS}</b>"
+        st, color = "ABERTO", "ACID"
+    elif status == "closed":
+        body += "\n!! saqueado por completo"
+        st, color = "FECHADO", "AMBER"
+    else:  # expired
+        body += "\n!! cofre selou — vagas perdidas no éter"
+        st, color = "EXPIRADO", "HOT"
+
+    return term_block("BAU", body, status=st, status_color=color)
+
+
+async def spawn_chest(chat_id: int, chest_id: int) -> None:
+    """Envia mensagem do bau e marca como aberto."""
+    expires_at = utc_now() + timedelta(minutes=CHEST_TTL_MIN)
+    text = format_chest_text(chest_id, status="open")
+    msg = await safe_send(chat_id, text, reply_markup=chest_keyboard(chest_id))
+    if msg:
+        cur.execute(
+            "UPDATE chests SET status='open', spawned_at=?, expires_at=?, message_id=? "
+            "WHERE id=?",
+            (utc_iso(), expires_at.isoformat(), msg.message_id, chest_id),
+        )
+        db.commit()
+        logger.info("chest spawned chat=%d chest=%d", chat_id, chest_id)
+    else:
+        cur.execute("UPDATE chests SET status='expired' WHERE id=?", (chest_id,))
+        db.commit()
+
+
+async def expire_old_chests() -> None:
+    """Fecha baus cujo TTL passou."""
+    now = utc_iso()
+    cur.execute(
+        "SELECT id, chat_id, message_id FROM chests "
+        "WHERE status='open' AND expires_at IS NOT NULL AND expires_at < ?",
+        (now,),
+    )
+    expired = [dict(r) for r in cur.fetchall()]
+    for ch in expired:
+        cur.execute("UPDATE chests SET status='expired' WHERE id=?", (ch["id"],))
+        db.commit()
+        if ch["message_id"]:
+            try:
+                await safe_edit(
+                    ch["chat_id"], ch["message_id"],
+                    format_chest_text(ch["id"], status="expired"),
+                    reply_markup=None,
+                )
+            except Exception:
+                logger.exception("expire_old_chests edit failed")
+
+
+async def handle_chest_claim(cb: CallbackQuery, chest_id: int) -> None:
+    """Processa clique em Abrir Baú. Aloca slot atomicamente."""
+    if not cb.message or not cb.from_user:
+        await cb.answer()
+        return
+    chat_id = cb.message.chat.id
+    uid = cb.from_user.id
+
+    cur.execute("SELECT * FROM chests WHERE id=? AND chat_id=?", (chest_id, chat_id))
+    row = cur.fetchone()
+    if not row:
+        await cb.answer("🪦 Baú sumiu.", show_alert=False)
+        return
+    chest = dict(row)
+
+    if chest["status"] != "open":
+        await cb.answer("🔒 Baú já está fechado.", show_alert=False)
+        return
+
+    # TTL
+    try:
+        if chest["expires_at"]:
+            exp = datetime.fromisoformat(chest["expires_at"])
+            if utc_now() > exp:
+                cur.execute("UPDATE chests SET status='expired' WHERE id=?", (chest_id,))
+                db.commit()
+                await cb.answer("⏰ Baú expirou.", show_alert=False)
+                if chest["message_id"]:
+                    await safe_edit(
+                        chat_id, chest["message_id"],
+                        format_chest_text(chest_id, status="expired"),
+                        reply_markup=None,
+                    )
+                return
+    except Exception:
+        pass
+
+    # Ja claimou?
+    cur.execute(
+        "SELECT slot FROM chest_claims WHERE chest_id=? AND user_id=?",
+        (chest_id, uid),
+    )
+    prev = cur.fetchone()
+    if prev:
+        await cb.answer(f"Você já abriu (slot {prev['slot']}).", show_alert=False)
+        return
+
+    # Aloca slot atomicamente
+    cur.execute("SELECT COUNT(*) AS n FROM chest_claims WHERE chest_id=?", (chest_id,))
+    n = cur.fetchone()["n"]
+    if n >= CHEST_MAX_CLAIMS:
+        cur.execute(
+            "UPDATE chests SET status='closed' WHERE id=? AND status='open'",
+            (chest_id,),
+        )
+        db.commit()
+        await cb.answer("🔒 Baú esvaziou.", show_alert=False)
+        if chest["message_id"]:
+            await safe_edit(
+                chat_id, chest["message_id"],
+                format_chest_text(chest_id, status="closed"),
+                reply_markup=None,
+            )
+        return
+
+    slot = n + 1
+    xp, gold = CHEST_REWARDS[slot - 1]
+    name = (cb.from_user.full_name or cb.from_user.first_name or "anon")[:32]
+
+    cur.execute(
+        "INSERT OR IGNORE INTO chest_claims "
+        "(chest_id, user_id, slot, xp, gold, name, claimed_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (chest_id, uid, slot, xp, gold, name, utc_iso()),
+    )
+    if cur.rowcount == 0:
+        db.commit()
+        await cb.answer("Você já abriu.", show_alert=False)
+        return
+
+    ensure_player(chat_id, uid)
+    award_xp_immediate(chat_id, uid, xp, reason="chest")
+    cur.execute(
+        "UPDATE players SET gold=gold+? WHERE chat_id=? AND user_id=?",
+        (gold, chat_id, uid),
+    )
+    db.commit()
+
+    # Fechou no ultimo slot?
+    final_status = "open"
+    if slot >= CHEST_MAX_CLAIMS:
+        cur.execute("UPDATE chests SET status='closed' WHERE id=?", (chest_id,))
+        db.commit()
+        final_status = "closed"
+
+    if chest["message_id"]:
+        kb = chest_keyboard(chest_id) if final_status == "open" else None
+        try:
+            await safe_edit(
+                chat_id, chest["message_id"],
+                format_chest_text(chest_id, status=final_status),
+                reply_markup=kb,
+            )
+        except Exception:
+            logger.exception("chest edit failed")
+
+    await cb.answer(f"🎁 +{xp} XP  +{gold}🪙", show_alert=False)
 
 
 # =====================================================================
@@ -2711,6 +2953,19 @@ async def hub_cb(cb: CallbackQuery):
                         show_alert=True)
         return
 
+    # Baú: callback vem do próprio chat onde foi postado; ignora needs_chat
+    if action == "chest":
+        if len(parts) < 3:
+            await cb.answer()
+            return
+        try:
+            chest_id = int(parts[2])
+        except ValueError:
+            await cb.answer()
+            return
+        await handle_chest_claim(cb, chest_id)
+        return
+
     try:
         if action == "perfil":
             target_chat = chat_id or (cb.message.chat.id if is_group_chat(cb.message) else None)
@@ -3245,6 +3500,20 @@ async def scheduler():
 
             # === FINALIZA DESAFIOS EXPIRADOS ===
             await finalize_expired_challenges()
+
+            # === BAUS REAIS (spawn pendentes + expira abertos) ===
+            try:
+                cur.execute(
+                    "SELECT id, chat_id FROM chests "
+                    "WHERE status='pending' AND spawn_at <= ?",
+                    (utc_iso(),),
+                )
+                pending = [dict(r) for r in cur.fetchall()]
+                for ch in pending:
+                    await spawn_chest(ch["chat_id"], ch["id"])
+                await expire_old_chests()
+            except Exception:
+                logger.exception("chest scheduler tick failed")
 
             # === BOSS SEMANAL ===
             await spawn_boss_if_due()
