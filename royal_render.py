@@ -1896,3 +1896,301 @@ def render_identity_card(data: IdentityCardData) -> bytes | None:
         logger.exception("ROYAL_IDENTITY_CARD_RENDER_FAILED rid=%r",
                          data.royal_id)
         return None
+
+
+# =====================================================================
+# CLASSE CARD — exibido quando user escolhe classe pela 1a vez.
+# Pequeno, sem cache (evento unico). Avatar + emoji classe + nome + bonus.
+# =====================================================================
+
+@dataclass(frozen=True)
+class ClasseCardData:
+    royal_id: str
+    name: str
+    class_emoji: str
+    class_name: str
+    class_bonus: str
+    avatar_slug: str | None = None
+    season_label: str = ""
+
+
+def render_classe_card(data: ClasseCardData) -> bytes | None:
+    """Card 1080x1080 de selecao de classe. Sem cache."""
+    try:
+        royal_id = (data.royal_id or "RYL-????").upper()
+        name = ellipsize(data.name or "?", 28)
+        pal = pick_palette(royal_id)
+        W = H = CARD_SIZE
+        img = Image.new("RGB", (W, H), BG_DEEP)
+        draw = ImageDraw.Draw(img)
+
+        rng = random.Random(hash(royal_id + data.class_name) & 0xFFFF)
+        for _ in range(1300):
+            x = rng.randrange(W); y = rng.randrange(H)
+            c = rng.choice([(20, 18, 26), (16, 14, 22), (28, 22, 32)])
+            pixel_rect(draw, (x, y, x + 3, y + 3), c)
+
+        OUT_PAD = 28
+        panel_box = (OUT_PAD, OUT_PAD, W - OUT_PAD, H - OUT_PAD)
+        pixel_rect(draw, panel_box, BG)
+        accent = pal.get("header", CYAN)
+        chunky_border(draw, panel_box, outer=BLACK, inner=accent, thick=8)
+
+        # Header
+        header_box = (OUT_PAD + 28, OUT_PAD + 28,
+                      W - OUT_PAD - 28, OUT_PAD + 110)
+        pixel_rect(draw, header_box, PANEL)
+        pixel_rect(draw, (header_box[0], header_box[1],
+                          header_box[2], header_box[1] + 4), accent)
+        pixel_rect(draw, (header_box[0], header_box[3] - 4,
+                          header_box[2], header_box[3]), accent)
+        title_font = load_font(26, mono=True, bold=True)
+        draw.text((header_box[0] + 22, header_box[1] + 24),
+                  "> CLASSE.SYS  // SELECIONADA",
+                  font=title_font, fill=accent)
+        if data.season_label:
+            season_font = load_font(18, mono=True, bold=False)
+            stxt = f">> {data.season_label.upper()}"
+            sw, _ = text_size(draw, stxt, season_font)
+            draw.text((header_box[2] - 22 - sw, header_box[1] + 30),
+                      stxt, font=season_font, fill=DIM)
+        pixel_rect(draw, (header_box[2] - 18, header_box[3] - 18,
+                          header_box[2] - 10, header_box[3] - 10), accent)
+
+        # Avatar a esquerda
+        AVATAR_SIZE = 360
+        AX = 80
+        AY = 220
+        pixel_rect(draw, (AX - 6, AY - 6,
+                          AX + AVATAR_SIZE + 6, AY + AVATAR_SIZE + 6), BLACK)
+        pixel_rect(draw, (AX - 3, AY - 3,
+                          AX + AVATAR_SIZE + 3, AY + AVATAR_SIZE + 3), accent)
+        pixel_rect(draw, (AX, AY, AX + AVATAR_SIZE, AY + AVATAR_SIZE), BLACK)
+        resolved = royal_avatars.resolve_slug(data.avatar_slug, royal_id)
+        portrait = royal_avatars.load_avatar(resolved, AVATAR_SIZE)
+        if portrait is not None:
+            img.paste(portrait, (AX, AY),
+                      portrait if portrait.mode == "RGBA" else None)
+        else:
+            sigil = procedural_sigil(royal_id, AVATAR_SIZE, palette=pal)
+            img.paste(sigil, (AX, AY))
+
+        # Nome embaixo do avatar
+        nm_font = load_font(20, mono=False, bold=True)
+        nw, nh = text_size(draw, name, nm_font)
+        draw.text((AX + (AVATAR_SIZE - nw) // 2, AY + AVATAR_SIZE + 18),
+                  name, font=nm_font, fill=INK)
+        id_font = load_font(18, mono=True, bold=True)
+        id_txt = f"ROY#{royal_id.replace('RYL-', '').replace('ROY-', '')}"
+        iw, _ = text_size(draw, id_txt, id_font)
+        draw.text((AX + (AVATAR_SIZE - iw) // 2, AY + AVATAR_SIZE + 50),
+                  id_txt, font=id_font, fill=accent)
+
+        # Bloco da classe a direita
+        BX = AX + AVATAR_SIZE + 60
+        BY = AY
+        BW = W - BX - 80
+        BH = AVATAR_SIZE
+        pixel_rect(draw, (BX, BY, BX + BW, BY + BH), PANEL)
+        chunky_border(draw, (BX, BY, BX + BW, BY + BH),
+                      outer=BLACK, inner=accent, thick=6)
+
+        # Emoji da classe gigante
+        emoji_font = load_font(120, mono=False, bold=True)
+        ew, eh = text_size(draw, data.class_emoji, emoji_font)
+        draw.text((BX + (BW - ew) // 2, BY + 30),
+                  data.class_emoji, font=emoji_font, fill=INK)
+
+        # Nome da classe
+        cname_font = load_font(32, mono=True, bold=True)
+        cw, ch = text_size(draw, data.class_name.upper(), cname_font)
+        if cw > BW - 40:
+            cname_font = load_font(26, mono=True, bold=True)
+            cw, ch = text_size(draw, data.class_name.upper(), cname_font)
+        cny = BY + 30 + eh + 30
+        draw.text((BX + (BW - cw) // 2 + 2, cny + 2),
+                  data.class_name.upper(), font=cname_font, fill=BLACK)
+        draw.text((BX + (BW - cw) // 2, cny),
+                  data.class_name.upper(), font=cname_font, fill=accent)
+
+        # Bonus
+        bn_font = load_font(20, mono=True, bold=False)
+        bonus = data.class_bonus
+        # quebra texto se grande
+        max_chars = 22
+        if len(bonus) > max_chars:
+            bonus = ellipsize(bonus, max_chars * 2)
+        bw, bh = text_size(draw, bonus, bn_font)
+        if bw > BW - 30:
+            bonus = ellipsize(bonus, max_chars)
+            bw, bh = text_size(draw, bonus, bn_font)
+        by = cny + ch + 24
+        draw.text((BX + (BW - bw) // 2, by),
+                  bonus, font=bn_font, fill=INK)
+
+        # Footer
+        footer_font = load_font(18, mono=True, bold=False)
+        ftxt = "[ IDENTIDADE FIXADA  //  RPG.REINO ]"
+        fw, _ = text_size(draw, ftxt, footer_font)
+        draw.text(((W - fw) // 2, H - OUT_PAD - 60),
+                  ftxt, font=footer_font, fill=DIM)
+
+        img = img.convert("RGBA")
+        apply_scanlines(img, every=3, alpha=55)
+        vimg = img.convert("RGB")
+        apply_vignette(vimg, strength=160)
+        img = vimg.convert("RGBA")
+        apply_grain(img, intensity=18)
+        img = img.convert("RGB")
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=90, optimize=True)
+        return buf.getvalue()
+    except Exception:
+        logger.exception("ROYAL_CLASSE_CARD_RENDER_FAILED rid=%r",
+                         data.royal_id)
+        return None
+
+
+# =====================================================================
+# LOJA DROP CARD — exibido em compra de item raro/lendario.
+# Item gigante centrado + nome + price + rarity stamp.
+# =====================================================================
+
+@dataclass(frozen=True)
+class LojaDropData:
+    royal_id: str
+    buyer_name: str
+    item_emoji: str
+    item_name: str
+    item_desc: str
+    price: int
+    rarity: str  # "RARO" | "LENDARIO"
+
+
+def render_loja_drop_card(data: LojaDropData) -> bytes | None:
+    """Card 1080x1080 de drop de item. Sem cache."""
+    try:
+        royal_id = (data.royal_id or "RYL-????").upper()
+        buyer = ellipsize(data.buyer_name or "?", 22)
+        rarity = (data.rarity or "RARO").upper()
+        # Paleta por rarity
+        if rarity == "LENDARIO":
+            accent = (180, 90, 220)   # purple
+            sub_accent = GOLD
+        else:
+            accent = GOLD
+            sub_accent = AMBER
+
+        W = H = CARD_SIZE
+        img = Image.new("RGB", (W, H), BG_DEEP)
+        draw = ImageDraw.Draw(img)
+
+        rng = random.Random(hash(royal_id + data.item_name) & 0xFFFF)
+        for _ in range(1400):
+            x = rng.randrange(W); y = rng.randrange(H)
+            c = rng.choice([(22, 18, 22), (16, 14, 18), (30, 24, 28),
+                            (40, 28, 18)])
+            pixel_rect(draw, (x, y, x + 3, y + 3), c)
+
+        OUT_PAD = 28
+        panel_box = (OUT_PAD, OUT_PAD, W - OUT_PAD, H - OUT_PAD)
+        pixel_rect(draw, panel_box, BG)
+        chunky_border(draw, panel_box, outer=BLACK, inner=accent, thick=8)
+
+        # Header
+        header_box = (OUT_PAD + 28, OUT_PAD + 28,
+                      W - OUT_PAD - 28, OUT_PAD + 110)
+        pixel_rect(draw, header_box, PANEL)
+        pixel_rect(draw, (header_box[0], header_box[1],
+                          header_box[2], header_box[1] + 4), accent)
+        pixel_rect(draw, (header_box[0], header_box[3] - 4,
+                          header_box[2], header_box[3]), accent)
+        title_font = load_font(26, mono=True, bold=True)
+        draw.text((header_box[0] + 22, header_box[1] + 24),
+                  "> LOJA.SYS  // AQUISICAO",
+                  font=title_font, fill=accent)
+        # Rarity tag a direita
+        rar_font = load_font(20, mono=True, bold=True)
+        rar_txt = f"!! {rarity}"
+        rw, _ = text_size(draw, rar_txt, rar_font)
+        draw.text((header_box[2] - 22 - rw, header_box[1] + 28),
+                  rar_txt, font=rar_font, fill=sub_accent)
+        pixel_rect(draw, (header_box[2] - 18, header_box[3] - 18,
+                          header_box[2] - 10, header_box[3] - 10), accent)
+
+        # Caixa do item centrada
+        ITEM_BOX = 480
+        IX = (W - ITEM_BOX) // 2
+        IY = 200
+        pixel_rect(draw, (IX, IY, IX + ITEM_BOX, IY + ITEM_BOX), PANEL)
+        chunky_border(draw, (IX, IY, IX + ITEM_BOX, IY + ITEM_BOX),
+                      outer=BLACK, inner=accent, thick=8)
+
+        # Emoji do item GIGANTE (centro do quadrado)
+        em_font = load_font(280, mono=False, bold=True)
+        ew, eh = text_size(draw, data.item_emoji, em_font)
+        # textbbox tem offset weird com emojis; compensa
+        ex = IX + (ITEM_BOX - ew) // 2
+        ey = IY + (ITEM_BOX - eh) // 2 - 30
+        # sombra
+        draw.text((ex + 4, ey + 4), data.item_emoji,
+                  font=em_font, fill=BLACK)
+        draw.text((ex, ey), data.item_emoji, font=em_font, fill=INK)
+
+        # Nome do item
+        nm_font = load_font(36, mono=True, bold=True)
+        nm = data.item_name.upper()
+        nw, nh = text_size(draw, nm, nm_font)
+        if nw > W - 120:
+            nm_font = load_font(28, mono=True, bold=True)
+            nw, nh = text_size(draw, nm, nm_font)
+        nm_y = IY + ITEM_BOX + 30
+        draw.text(((W - nw) // 2 + 3, nm_y + 3),
+                  nm, font=nm_font, fill=BLACK)
+        draw.text(((W - nw) // 2, nm_y),
+                  nm, font=nm_font, fill=accent)
+
+        # Price riscado (PAGO)
+        pr_font = load_font(22, mono=True, bold=True)
+        price_txt = f"-{format_br(data.price)} florins"
+        pw, ph = text_size(draw, price_txt, pr_font)
+        pr_y = nm_y + nh + 22
+        draw.text(((W - pw) // 2, pr_y),
+                  price_txt, font=pr_font, fill=HOT)
+        # risco em cima do preco
+        pixel_rect(draw, ((W - pw) // 2 - 6, pr_y + ph // 2,
+                          (W + pw) // 2 + 6, pr_y + ph // 2 + 3),
+                   HOT)
+
+        # Buyer line
+        buy_font = load_font(18, mono=True, bold=False)
+        rid_short = royal_id.replace('RYL-', '').replace('ROY-', '')
+        buy_txt = f">> ROY#{rid_short}  ::  {buyer}"
+        bw_w, _ = text_size(draw, buy_txt, buy_font)
+        if bw_w > W - 100:
+            buy_txt = f">> ROY#{rid_short}"
+            bw_w, _ = text_size(draw, buy_txt, buy_font)
+        draw.text(((W - bw_w) // 2, pr_y + ph + 24),
+                  buy_txt, font=buy_font, fill=DIM)
+
+        # Footer
+        footer_font = load_font(16, mono=True, bold=False)
+        ftxt = "[ INVENTARIO ATUALIZADO ]"
+        fw, _ = text_size(draw, ftxt, footer_font)
+        draw.text(((W - fw) // 2, H - OUT_PAD - 50),
+                  ftxt, font=footer_font, fill=sub_accent)
+
+        img = img.convert("RGBA")
+        apply_scanlines(img, every=3, alpha=55)
+        vimg = img.convert("RGB")
+        apply_vignette(vimg, strength=170)
+        img = vimg.convert("RGBA")
+        apply_grain(img, intensity=18)
+        img = img.convert("RGB")
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=90, optimize=True)
+        return buf.getvalue()
+    except Exception:
+        logger.exception("ROYAL_LOJA_DROP_CARD_RENDER_FAILED rid=%r item=%r",
+                         data.royal_id, data.item_name)
+        return None

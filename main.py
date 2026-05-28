@@ -57,13 +57,17 @@ from royal_render import (
     BossKillAttacker,
     BossKillData,
     CasorioPartner,
+    ClasseCardData,
     IdentityCardData,
+    LojaDropData,
     ProfileCardData,
     RankingEntry,
     render_boss_kill_card,
     render_casorio_card,
+    render_classe_card,
     render_identity_card,
     render_levelup_card,
+    render_loja_drop_card,
     render_palavra_spoiler_card,
     render_profile_card,
     render_ranking_card,
@@ -4499,11 +4503,50 @@ async def hub_cb(cb: CallbackQuery):
                 if cid not in CLASSES:
                     await cb.answer()
                     return
-                ensure_player(chat_id, cb.from_user.id)
+                p = ensure_player(chat_id, cb.from_user.id)
+                # Detecta se eh a PRIMEIRA escolha (sem class_id ainda) — so
+                # renderiza card na 1a vez pra nao spammar troca de classe.
+                first_time = not (p.get("class_id"))
                 cur.execute("UPDATE players SET class_id=? WHERE chat_id=? AND user_id=?",
                             (cid, chat_id, cb.from_user.id))
                 db.commit()
-                await cb.answer(f"Classe: {CLASSES[cid]['name']} ✓")
+                info = CLASSES[cid]
+                await cb.answer(f"Classe: {info['name']} ✓")
+                if first_time:
+                    try:
+                        live = display_name(
+                            Message.model_construct(
+                                chat=cb.message.chat,
+                                from_user=cb.from_user)
+                        ) if False else (
+                            (cb.from_user.full_name or "").strip()
+                            or get_name(chat_id, cb.from_user.id))
+                        data = ClasseCardData(
+                            royal_id=p.get("royal_id") or "RYL-????",
+                            name=live,
+                            class_emoji=info.get("emoji", "🎭"),
+                            class_name=info.get("name", cid.upper()),
+                            class_bonus=info.get("bonus", ""),
+                            avatar_slug=p.get("avatar_slug"),
+                            season_label=current_season_label(),
+                        )
+                        card = await asyncio.to_thread(render_classe_card, data)
+                        if card:
+                            caption = (
+                                f"{info['emoji']} <b>{html.escape(info['name'])}</b> "
+                                f"// <i>{html.escape(info['bonus'])}</i>"
+                            )
+                            if len(caption) > 1024:
+                                caption = caption[:1020] + "..."
+                            await bot.send_photo(
+                                chat_id,
+                                photo=BufferedInputFile(
+                                    card, filename=f"classe-{cid}.jpg"),
+                                caption=caption,
+                                parse_mode="HTML",
+                            )
+                    except Exception:
+                        logger.exception("render_classe_card path failed")
                 return
             await cb.answer()
             return
@@ -4535,6 +4578,45 @@ async def hub_cb(cb: CallbackQuery):
                 (chat_id, cb.from_user.id, iid))
             db.commit()
             await cb.answer(f"Comprou {item['name']} ✓")
+            # Card de drop pra itens raros (>=250) ou lendarios (>=500)
+            price = int(item.get("price", 0))
+            rarity = None
+            if price >= 500:
+                rarity = "LENDARIO"
+            elif price >= 250:
+                rarity = "RARO"
+            if rarity:
+                try:
+                    buyer = ((cb.from_user.full_name or "").strip()
+                             or get_name(chat_id, cb.from_user.id))
+                    data = LojaDropData(
+                        royal_id=p.get("royal_id") or "RYL-????",
+                        buyer_name=buyer,
+                        item_emoji=item.get("emoji", "📦"),
+                        item_name=item.get("name", iid),
+                        item_desc=item.get("desc", ""),
+                        price=price,
+                        rarity=rarity,
+                    )
+                    card = await asyncio.to_thread(render_loja_drop_card, data)
+                    if card:
+                        rar_mark = "🟪" if rarity == "LENDARIO" else "🟧"
+                        caption = (
+                            f"{rar_mark} <b>{html.escape(rarity)}</b> // "
+                            f"{html.escape(item.get('name', iid))} "
+                            f"— <code>-{price}</code>🪙"
+                        )
+                        if len(caption) > 1024:
+                            caption = caption[:1020] + "..."
+                        await bot.send_photo(
+                            chat_id,
+                            photo=BufferedInputFile(
+                                card, filename=f"drop-{iid}.jpg"),
+                            caption=caption,
+                            parse_mode="HTML",
+                        )
+                except Exception:
+                    logger.exception("render_loja_drop_card path failed")
             return
 
         if action == "atk":

@@ -317,3 +317,27 @@ id = "0g67gNUmyxUyNHI1qkpbw"
 uri = "file://.local/preview/identity_test2.jpg"
 type = "image"
 title = "Identity card — nome longo, sem avatar (sigilo fallback)"
+
+[[outputs]]
+id = "aZD7XkBE-_GnvGmaaHOBl"
+uri = "file://.local/preview/classe_test.jpg"
+type = "image"
+title = "Classe card — Monarca"
+
+[[outputs]]
+id = "oBHqaenyFREjY5bWvHkyd"
+uri = "file://.local/preview/classe_test2.jpg"
+type = "image"
+title = "Classe card — Bruxo (sem avatar)"
+
+[[outputs]]
+id = "4PqRfRRTaSH1In6elurW5"
+uri = "file://.local/preview/loja_raro.jpg"
+type = "image"
+title = "Loja drop — RARO (Espada de Ferro)"
+
+[[outputs]]
+id = "wq9Sw42Vg0Q5ElKmCp6gi"
+uri = "file://.local/preview/loja_lend.jpg"
+type = "image"
+title = "Loja drop — LENDARIO (Coroa)"
