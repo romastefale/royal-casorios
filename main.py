@@ -3518,6 +3518,23 @@ async def royal_hub(message: Message):
              if is_new else {})
     await message.answer(hub_text(), reply_markup=hub_keyboard_main(),
                          **extra)
+    # Nudge pos-cadastro: lembra o nobre de escolher classe. Roda
+    # tambem pra players ja existentes que ainda nao escolheram.
+    if (message.chat.type in ("group", "supergroup")
+            and message.from_user):
+        try:
+            p = get_player(message.chat.id, message.from_user.id)
+        except Exception:
+            p = None
+        if p and not (p.get("class_id") or "").strip():
+            await asyncio.sleep(0.6)
+            nudge = (
+                ">> PROXIMO_PASSO\n"
+                "// classe nao definida\n"
+                "// usa /royalclasse pra escolher a sua"
+            )
+            await typewriter_animate(message.chat.id, nudge,
+                                     chunk=5, delay=0.32)
 
 
 @dp.message(F.text == "👑 Reino")
