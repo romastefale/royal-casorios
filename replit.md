@@ -61,6 +61,13 @@ saldo, palavras, configs por usuário, etc).
 > precisa ser removido com `git rm --cached data/royal_casorios.sqlite3`
 > (ação destrutiva — pedir ao usuário ou rodar via project task).
 
+## 🔇 `/royalmudo` — master switch via DM do owner
+
+- **Em GRUPO** (owner-only): toggle do chat atual (ON/OFF).
+- **Em DM do owner**: **broadcast** — se qualquer grupo estiver ON-AIR, silencia TODOS os grupos do `chats_rpg`. Se todos já estiverem mudos, religa TODOS.
+- Útil pra silenciar tudo de uma vez antes de deploy/manutenção sem precisar entrar em cada grupo.
+- Log: `[MUDO] BROADCAST actor=<uid> new_state=ON|OFF total=N changed=M`.
+
 ## 📜 Log dump — `/royallog` + auto 5min
 
 - **Ring buffer in-memory:** `_LogRingBuffer` (maxlen 5000) anexado ao root logger em `main.py:107` — captura logs do bot + aiogram.

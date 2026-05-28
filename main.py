@@ -4323,13 +4323,55 @@ async def royal_log(message: Message):
 
 @dp.message(Command("royalmudo"))
 async def royal_mudo(message: Message):
-    """Toggle mute do chat. Owner-only, group-only, NAO aparece no menu.
+    """Toggle mute. Owner-only, NAO aparece no menu.
+
+    - Em GRUPO: toggle do chat atual.
+    - Em DM do owner: master switch — se algum grupo estiver ON-AIR,
+      silencia TODOS; se todos ja estiverem silenciados, religa TODOS.
+
     Quando ON: bot pula auto-casorios, auto-palavra, auto-boss, auto-chest
     e anuncios one-shot. Comandos manuais continuam respondendo."""
-    if not is_group(message):
-        return
     uid = message.from_user.id if message.from_user else 0
     if OWNER_USER_ID is None or uid != OWNER_USER_ID:
+        return
+
+    # === DM owner: aplica em TODOS os grupos conhecidos ===
+    if message.chat.type == "private":
+        cur.execute("SELECT chat_id, COALESCE(muted, 0) AS muted FROM chats_rpg")
+        rows = cur.fetchall()
+        if not rows:
+            await message.answer(term_block(
+                "MUDO.SYS",
+                ">> <b>SEM GRUPOS</b>\n<i>// nenhum chat ativo no DB.</i>",
+                status="VAZIO", status_color="AMBER"))
+            return
+        any_unmuted = any(int(r["muted"] or 0) == 0 for r in rows)
+        target_state = True if any_unmuted else False  # ON se sobrar algum ativo
+        changed = 0
+        for r in rows:
+            chat_id = int(r["chat_id"])
+            if bool(int(r["muted"] or 0)) != target_state:
+                set_chat_muted(chat_id, target_state)
+                changed += 1
+        logger.info("[MUDO] BROADCAST actor=%d new_state=%s total=%d changed=%d",
+                    uid, "ON" if target_state else "OFF", len(rows), changed)
+        if target_state:
+            body = (f">> <b>SILENCIADO GLOBAL</b>\n"
+                    f"// {len(rows)} grupos atingidos ({changed} mudados)\n"
+                    f"<i>// auto-posts pausados em todos os grupos.</i>\n"
+                    f"<i>// /royalmudo de novo na DM pra religar todos.</i>")
+            status, color = "MUDO-ALL", "AMBER"
+        else:
+            body = (f">> <b>NORMALIZADO GLOBAL</b>\n"
+                    f"// {len(rows)} grupos religados ({changed} mudados)\n"
+                    f"<i>// auto-posts religados em todos os grupos.</i>")
+            status, color = "ON-AIR-ALL", "ACID"
+        await message.answer(term_block("MUDO.SYS", body,
+                                        status=status, status_color=color))
+        return
+
+    # === GRUPO: toggle local ===
+    if not is_group(message):
         return
     chat_id = message.chat.id
     new_state = not is_chat_muted(chat_id)
