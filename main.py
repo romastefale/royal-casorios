@@ -5339,9 +5339,15 @@ async def register_bot_commands():
         BotCommand(command="royalprivacidade",  description="🔒 Privacidade"),
         BotCommand(command="royaldados",        description="📦 Meus dados"),
     ]
-    admin_cmds = [
+    # IMPORTANTE: scopes do Telegram sao resolvidos por SUBSTITUICAO
+    # (mais especifico vence), nao merge. AllChatAdministrators tem
+    # prioridade > AllGroupChats pra admins — entao se mandar so o
+    # comando admin, admins PERDEM os 19 comandos normais no menu /.
+    # Fix: admin_cmds = group_cmds + extras de admin.
+    admin_extra = [
         BotCommand(command="royalpalavratest", description="🧪 (admin) Disparar Palavra de teste"),
     ]
+    admin_cmds = group_cmds + admin_extra
 
     try:
         await bot.set_my_commands(group_cmds, scope=BotCommandScopeAllGroupChats())
