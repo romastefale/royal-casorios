@@ -1,0 +1,90 @@
+2026-05-28T16:50:48.134613518Z [info] Mounting volume on: /var/lib/containers/railwayapp/bind-mounts/0ba52e08-b8fb-465f-882f-8afbfe588a10/vol_nhn4rl20swfn7cn7
+2026-05-28T16:50:49.124357713Z [info] Starting Container
+2026-05-28T16:50:50.440708387Z [error] 2026-05-28 16:50:49,561 INFO royal-casorios: Applying migration v7
+2026-05-28T16:50:50.440715431Z [error] 2026-05-28 16:50:49,567 INFO royal-casorios: Database schema at version 7
+2026-05-28T16:50:50.440719012Z [error] 2026-05-28 16:50:49,573 INFO royal-casorios: Royal RPG starting
+2026-05-28T16:50:50.440804714Z [error] 2026-05-28 16:50:49,558 INFO royal-casorios: [DB] usando /data/royal_casorios.sqlite3 (184 KB)
+2026-05-28T16:50:50.706162958Z [error] 2026-05-28 16:50:50,669 INFO aiogram.dispatcher: Start polling
+2026-05-28T16:50:50.821294021Z [error] 2026-05-28 16:50:50,817 INFO aiogram.dispatcher: Run polling for bot @RoyalRPGbot id=8846613568 - 'RPG Royal para Geeks'
+2026-05-28T16:51:10.828828397Z [error] 2026-05-28 16:51:01,107 INFO aiogram.event: Update id=861088667 is handled. Duration 3 ms by bot id=8846613568
+2026-05-28T16:52:21.200623816Z [error] 2026-05-28 16:52:14,080 INFO aiogram.event: Update id=861088668 is handled. Duration 1 ms by bot id=8846613568
+2026-05-28T16:52:21.200628480Z [error] 2026-05-28 16:52:16,201 INFO aiogram.event: Update id=861088669 is handled. Duration 1 ms by bot id=8846613568
+2026-05-28T16:52:21.200632960Z [error] 2026-05-28 16:52:18,256 INFO royal-casorios: [MUSIC_BOT] recebido chat=-1002556760909 mid=1530674 ctype=ContentType.PHOTO from_user_id=8589834936 sender_chat_id=None has_text=False has_caption=True entities=0 caption_entities=7
+2026-05-28T16:52:21.200637458Z [error] 2026-05-28 16:52:18,256 INFO royal-casorios: [MUSIC_BOT] ent[caption_entities#0] type=text_mention offset=0 length=1 user_id=1759115970 is_bot=False
+2026-05-28T16:52:21.200642772Z [error] 2026-05-28 16:52:18,256 INFO royal-casorios: [MUSIC_BOT] ent[caption_entities#1] type=bold offset=0 length=1 user_id=None is_bot=None
+2026-05-28T16:52:21.200647238Z [error] 2026-05-28 16:52:18,256 INFO royal-casorios: [MUSIC_BOT] ent[caption_entities#2] type=code offset=6 length=2 user_id=None is_bot=None
+2026-05-28T16:52:21.200650846Z [error] 2026-05-28 16:52:18,256 INFO royal-casorios: [MUSIC_BOT] ent[caption_entities#3] type=code offset=12 length=1 user_id=None is_bot=None
+2026-05-28T16:52:21.200654508Z [error] 2026-05-28 16:52:18,256 INFO royal-casorios: [MUSIC_BOT] ent[caption_entities#4] type=text_link offset=16 length=12 user_id=None is_bot=None
+2026-05-28T16:52:21.200659057Z [error] 2026-05-28 16:52:18,256 INFO royal-casorios: [MUSIC_BOT] ent[caption_entities#5] type=bold offset=16 length=12 user_id=None is_bot=None
+2026-05-28T16:52:21.200663620Z [error] 2026-05-28 16:52:18,256 INFO royal-casorios: [MUSIC_BOT] ent[caption_entities#6] type=italic offset=31 length=14 user_id=None is_bot=None
+2026-05-28T16:52:21.200667562Z [error] 2026-05-28 16:52:18,256 INFO royal-casorios: xp+6 uid=1759115970 chat=-1002556760909 reason=music_mention level 1→1
+2026-05-28T16:52:21.200671377Z [error] 2026-05-28 16:52:18,256 INFO royal-casorios: music_mention xp+6 uid=1759115970 chat=-1002556760909 mid=1530674
+2026-05-28T16:52:21.201268294Z [error] 2026-05-28 16:52:18,875 INFO aiogram.event: Update id=861088670 is handled. Duration 620 ms by bot id=8846613568
+2026-05-28T16:52:21.201272715Z [error] 2026-05-28 16:52:19,323 INFO aiogram.event: Update id=861088671 is handled. Duration 1 ms by bot id=8846613568
+2026-05-28T16:52:24.836830975Z [error] 2026-05-28 16:52:24,830 INFO aiogram.event: Update id=861088672 is handled. Duration 1 ms by bot id=8846613568
+2026-05-28T16:52:26.520521044Z [error] 2026-05-28 16:52:26,516 INFO aiogram.event: Update id=861088673 is handled. Duration 1 ms by bot id=8846613568
+2026-05-28T16:52:31.236469243Z [error] 2026-05-28 16:52:31,018 INFO aiogram.event: Update id=861088674 is handled. Duration 1 ms by bot id=8846613568
+2026-05-28T16:52:51.044378914Z [error] 2026-05-28 16:52:42,741 INFO aiogram.event: Update id=861088675 is handled. Duration 1 ms by bot id=8846613568
+2026-05-28T16:52:55.010151535Z [error] 2026-05-28 16:52:55,007 INFO aiogram.event: Update id=861088676 is handled. Duration 1 ms by bot id=8846613568
+2026-05-28T16:52:57.185521968Z [error] 2026-05-28 16:52:57,176 INFO aiogram.event: Update id=861088677 is handled. Duration 1 ms by bot id=8846613568
+2026-05-28T16:52:59.572709954Z [error] 2026-05-28 16:52:59,371 INFO aiogram.event: Update id=861088678 is handled. Duration 1 ms by bot id=8846613568
+2026-05-28T16:53:19.325615307Z [error] 2026-05-28 16:53:11,992 INFO royal-casorios: announce_typewriter: ok sent=2/2
+2026-05-28T16:53:19.325618480Z [error] 2026-05-28 16:53:12,973 INFO aiogram.event: Update id=861088679 is handled. Duration 1 ms by bot id=8846613568
+2026-05-28T16:53:24.308762495Z [error] 2026-05-28 16:53:24,305 INFO aiogram.event: Update id=861088680 is handled. Duration 1 ms by bot id=8846613568
+2026-05-28T16:53:27.024693969Z [error] 2026-05-28 16:53:27,022 INFO aiogram.event: Update id=861088681 is handled. Duration 1 ms by bot id=8846613568
+2026-05-28T16:54:07.144932699Z [error] 2026-05-28 16:54:02,004 INFO aiogram.event: Update id=861088682 is handled. Duration 1 ms by bot id=8846613568
+2026-05-28T16:54:10.669846882Z [error] 2026-05-28 16:54:10,669 INFO aiogram.event: Update id=861088683 is handled. Duration 1 ms by bot id=8846613568
+2026-05-28T16:54:12.255009830Z [error] 2026-05-28 16:54:12,249 INFO aiogram.event: Update id=861088684 is handled. Duration 1 ms by bot id=8846613568
+2026-05-28T16:54:14.184947995Z [error] 2026-05-28 16:54:14,022 INFO aiogram.event: Update id=861088685 is handled. Duration 1 ms by bot id=8846613568
+2026-05-28T16:54:21.294821242Z [error] 2026-05-28 16:54:20,960 INFO aiogram.event: Update id=861088686 is handled. Duration 1 ms by bot id=8846613568
+2026-05-28T16:54:51.127834616Z [error] 2026-05-28 16:54:42,713 INFO aiogram.event: Update id=861088687 is handled. Duration 1 ms by bot id=8846613568
+2026-05-28T16:55:31.225619840Z [error] 2026-05-28 16:55:31,203 INFO aiogram.event: Update id=861088688 is handled. Duration 1 ms by bot id=8846613568
+2026-05-28T16:55:37.466082331Z [error] 2026-05-28 16:55:37,400 INFO aiogram.event: Update id=861088689 is handled. Duration 1 ms by bot id=8846613568
+2026-05-28T16:55:57.488621397Z [error] 2026-05-28 16:55:50,672 INFO royal-casorios: healthcheck activity_buf=1 pair_buf=5 admin_cache=0 photo_cache=0
+2026-05-28T16:57:27.401041914Z [error] 2026-05-28 16:57:24,390 INFO aiogram.event: Update id=861088690 is handled. Duration 1 ms by bot id=8846613568
+2026-05-28T16:59:27.755520851Z [error] 2026-05-28 16:59:25,719 INFO aiogram.event: Update id=861088691 is handled. Duration 1 ms by bot id=8846613568
+2026-05-28T16:59:31.884219287Z [error] 2026-05-28 16:59:31,699 INFO royal-casorios: [PALAVRA] tentativa ch=10 uid=909117236 mid=1530696 text='@Sexyhotboy228 [8948431768] para ser aceito no grupo, inscreva-se em nosso canal.. Depois de entrar, clique no botão aba'
+2026-05-28T16:59:31.884222240Z [error] 2026-05-28 16:59:31,699 INFO royal-casorios: [PALAVRA] text>120 chars ignorado ch=10 uid=909117236
+2026-05-28T16:59:31.884225944Z [error] 2026-05-28 16:59:31,699 INFO aiogram.event: Update id=861088692 is handled. Duration 1 ms by bot id=8846613568
+2026-05-28T16:59:32.870345290Z [error] 2026-05-28 16:59:32,638 INFO royal-casorios: palavra spawned chat=-1002556760909 cid=10 type=spoiler_img dur=5 word=alho
+2026-05-28T16:59:34.293473683Z [error] 2026-05-28 16:59:34,292 INFO royal-casorios: palavra spawned chat=-5204880504 cid=11 type=spoiler_img dur=7 word=cantar
+2026-05-28T16:59:39.036154286Z [error] 2026-05-28 16:59:39,018 INFO royal-casorios: [PALAVRA] tentativa ch=10 uid=7410040828 mid=1530698 text='Alho'
+2026-05-28T16:59:39.036158946Z [error] 2026-05-28 16:59:39,018 INFO royal-casorios: [PALAVRA] match ch=10 uid=7410040828 target='alho' tokens=['alho'] correct=True
+2026-05-28T16:59:39.036162313Z [error] 2026-05-28 16:59:39,018 INFO royal-casorios: [PALAVRA] VENCEDOR ch=10 uid=7410040828 mid=1530698
+2026-05-28T16:59:39.036165863Z [error] 2026-05-28 16:59:39,018 INFO royal-casorios: xp+208 uid=7410040828 chat=-1002556760909 reason=palavra_win level 1→2
+2026-05-28T16:59:40.099406722Z [error] 2026-05-28 16:59:40,081 INFO aiogram.event: Update id=861088693 is handled. Duration 1064 ms by bot id=8846613568
+2026-05-28T16:59:59.790095590Z [error] 2026-05-28 16:59:51,014 INFO aiogram.event: Update id=861088694 is handled. Duration 1 ms by bot id=8846613568
+2026-05-28T16:59:59.790101438Z [error] 2026-05-28 16:59:58,152 INFO royal-casorios: palavra spawned chat=-1002556760909 cid=12 type=spoiler_img dur=7 word=janela
+2026-05-28T17:00:09.257312101Z [error] 2026-05-28 17:00:08,975 INFO royal-casorios: [PALAVRA] VENCEDOR ch=12 uid=7410040828 mid=1530702
+2026-05-28T17:00:09.257319049Z [error] 2026-05-28 17:00:08,975 INFO royal-casorios: xp+213 uid=7410040828 chat=-1002556760909 reason=palavra_win level 2→2
+2026-05-28T17:00:09.257434417Z [error] 2026-05-28 17:00:08,974 INFO royal-casorios: [PALAVRA] tentativa ch=12 uid=7410040828 mid=1530702 text='Janela'
+2026-05-28T17:00:09.257441351Z [error] 2026-05-28 17:00:08,975 INFO royal-casorios: [PALAVRA] match ch=12 uid=7410040828 target='janela' tokens=['janela'] correct=True
+2026-05-28T17:00:10.275896482Z [error] 2026-05-28 17:00:10,034 INFO aiogram.event: Update id=861088695 is handled. Duration 1063 ms by bot id=8846613568
+2026-05-28T17:00:19.773471840Z [error] 2026-05-28 17:00:19,752 INFO royal-casorios: palavra spawned chat=-1002556760909 cid=13 type=spoiler_img dur=5 word=estrela
+2026-05-28T17:00:24.371443724Z [error] 2026-05-28 17:00:24,086 INFO royal-casorios: xp+214 uid=7410040828 chat=-1002556760909 reason=palavra_win level 2→3
+2026-05-28T17:00:24.371506004Z [error] 2026-05-28 17:00:24,086 INFO royal-casorios: [PALAVRA] tentativa ch=13 uid=7410040828 mid=1530705 text='Estrela'
+2026-05-28T17:00:24.371508956Z [error] 2026-05-28 17:00:24,086 INFO royal-casorios: [PALAVRA] match ch=13 uid=7410040828 target='estrela' tokens=['estrela'] correct=True
+2026-05-28T17:00:24.371511834Z [error] 2026-05-28 17:00:24,086 INFO royal-casorios: [PALAVRA] VENCEDOR ch=13 uid=7410040828 mid=1530705
+2026-05-28T17:00:25.388301987Z [error] 2026-05-28 17:00:25,110 INFO aiogram.event: Update id=861088696 is handled. Duration 1025 ms by bot id=8846613568
+2026-05-28T17:00:30.835453032Z [error] 2026-05-28 17:00:27,138 INFO aiogram.event: Update id=861088697 is handled. Duration 1 ms by bot id=8846613568
+2026-05-28T17:00:57.473111019Z [error] 2026-05-28 17:00:50,672 INFO royal-casorios: healthcheck activity_buf=0 pair_buf=0 admin_cache=0 photo_cache=0
+2026-05-28T17:00:57.473114007Z [error] 2026-05-28 17:00:55,203 INFO royal-casorios: identity_card refreshed rid=RYL-6549 uid=1759115970 chat=-1002556760909
+2026-05-28T17:00:59.105293295Z [error] 2026-05-28 17:00:59,089 INFO royal-casorios: identity_card refreshed rid=RYL-5773 uid=7410040828 chat=-1002556760909
+2026-05-28T17:01:01.784787034Z [error] 2026-05-28 17:01:01,691 INFO royal-casorios: identity_card refreshed rid=RYL-1443 uid=6802892565 chat=-1002556760909
+2026-05-28T17:01:04.183308421Z [error] 2026-05-28 17:01:04,178 INFO royal-casorios: identity_card refreshed rid=RYL-9186 uid=6414327790 chat=-1002556760909
+2026-05-28T17:01:05.390745739Z [error] 2026-05-28 17:01:05,379 INFO royal-casorios: identity sweep ok: checked=26 refreshed=4
+2026-05-28T17:02:16.795327731Z [error] 2026-05-28 17:02:14,232 INFO aiogram.event: Update id=861088698 is handled. Duration 2 ms by bot id=8846613568
+2026-05-28T17:02:16.795330940Z [error] 2026-05-28 17:02:15,608 INFO royal-casorios: identity_card refreshed rid=RYL-8309 uid=6284370835 chat=-1002556760909
+2026-05-28T17:03:15.754115058Z [error] 2026-05-28 17:03:05,989 INFO aiogram.event: Update id=861088699 is handled. Duration 1 ms by bot id=8846613568
+2026-05-28T17:03:18.036878695Z [error] 2026-05-28 17:03:18,023 INFO aiogram.event: Update id=861088700 is handled. Duration 1 ms by bot id=8846613568
+2026-05-28T17:03:20.425476949Z [error] 2026-05-28 17:03:20,419 INFO aiogram.event: Update id=861088701 is handled. Duration 1 ms by bot id=8846613568
+2026-05-28T17:03:28.352873624Z [error] 2026-05-28 17:03:28,350 INFO aiogram.event: Update id=861088702 is handled. Duration 1 ms by bot id=8846613568
+2026-05-28T17:03:58.356310474Z [error] 2026-05-28 17:03:51,084 INFO aiogram.event: Update id=861088703 is handled. Duration 1 ms by bot id=8846613568
+2026-05-28T17:04:01.624110899Z [error] 2026-05-28 17:04:01,606 INFO aiogram.event: Update id=861088704 is handled. Duration 1 ms by bot id=8846613568
+2026-05-28T17:04:05.224920616Z [error] 2026-05-28 17:04:05,167 INFO aiogram.event: Update id=861088705 is handled. Duration 1 ms by bot id=8846613568
+2026-05-28T17:04:05.382248503Z [error] 2026-05-28 17:04:05,332 INFO aiogram.event: Update id=861088706 is handled. Duration 2 ms by bot id=8846613568
+2026-05-28T17:04:05.382251797Z [error] 2026-05-28 17:04:05,332 INFO aiogram.event: Update id=861088707 is handled. Duration 2 ms by bot id=8846613568
+2026-05-28T17:04:08.693315720Z [error] 2026-05-28 17:04:08,658 INFO aiogram.event: Update id=861088708 is handled. Duration 1 ms by bot id=8846613568
+2026-05-28T17:04:58.726198083Z [error] 2026-05-28 17:04:50,616 INFO aiogram.event: Update id=861088709 is handled. Duration 1 ms by bot id=8846613568
+2026-05-28T17:05:28.912874636Z [error] 2026-05-28 17:05:24,974 INFO aiogram.event: Update id=861088710 is handled. Duration 1 ms by bot id=8846613568
+2026-05-28T17:05:58.841006271Z [error] 2026-05-28 17:05:50,674 INFO royal-casorios: healthcheck activity_buf=0 pair_buf=0 admin_cache=0 photo_cache=0
