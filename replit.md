@@ -23,6 +23,31 @@ A branch `main` LOCAL nunca é alterada no remoto — sempre fazemos `main:royal
 - `requirements.txt` — dependências (`aiogram`, `Pillow`)
 - Requer secret `BOT_TOKEN`
 
+## 🔧 Env vars
+
+- `BOT_TOKEN` (obrigatório) — token do BotFather
+- `DATABASE_PATH` (opcional, default `./data/royal_casorios.sqlite3`)
+- `TZ` (opcional, default `America/Sao_Paulo`)
+- `AUTO_HOURS` (opcional, default `9,15,21`)
+- **`TEST_CHAT_IDS`** (opcional, comma-separated) — chat_ids de grupos de
+  teste. Esses grupos **não** aparecem no picker de DM nem no fallback
+  do inline mode. Ex.: `TEST_CHAT_IDS="-1001234567890,-1009876543210"`
+
+## 💬 DM + inline mode
+
+- Os comandos pessoais (`/royalperfil`, `/royalficha`, `/royalranking`,
+  `/royalinventario`, `/royalsaldo`, `/royalmeuscasorios`, configs) rodam
+  tanto em grupo quanto em DM. Em DM, o bot resolve o "grupo ativo" via
+  `user_dm_settings` (migration v4).
+- 1 grupo elegível → auto-seleciona. 2+ → mostra picker. Troca via
+  `/royalgrupo`.
+- **Inline mode** (`@nomedobot` em qualquer chat) envia o card de perfil.
+  Usa file_id cacheado em memória populado quando `send_profile_card`
+  roda; sem cache, fallback texto + botão "Gerar foto na DM".
+- ⚠️ Inline mode **precisa estar habilitado no BotFather**:
+  `/setinline` → texto placeholder (ex.: "Enviar meu perfil Royal").
+  Sem isso o Telegram não dispara `inline_query`.
+
 ## User preferences
 - **Versões fixas (regra do usuário):**
   - **Telegram Bot API: 10** — usar sempre, não fazer downgrade

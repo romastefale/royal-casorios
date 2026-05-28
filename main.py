@@ -19,6 +19,7 @@ import logging
 import os
 import random
 import sqlite3
+import time
 import unicodedata
 from collections import defaultdict, deque
 from datetime import datetime, timedelta, timezone, date
@@ -36,7 +37,12 @@ from aiogram.types import (
     CallbackQuery,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    InlineQuery,
+    InlineQueryResultArticle,
+    InlineQueryResultCachedPhoto,
+    InlineQueryResultsButton,
     InputFile,
+    InputTextMessageContent,
     KeyboardButton,
     Message,
     ReactionTypeEmoji,
@@ -61,6 +67,14 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 logger = logging.getLogger("royal-casorios")
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+# Grupos de teste — separados por virgula. Esses chat_ids NAO aparecem
+# na lista de grupos do picker em DM nem na lista de inline mode.
+# Ex.: TEST_CHAT_IDS="-1001234567890,-1009876543210"
+TEST_CHAT_IDS: set[int] = {
+    int(x.strip())
+    for x in os.getenv("TEST_CHAT_IDS", "").split(",")
+    if x.strip().lstrip("-").isdigit()
+}
 
 DB_PATH = os.getenv("DATABASE_PATH", "./data/royal_casorios.sqlite3")
 TZ_NAME = os.getenv("TZ", "America/Sao_Paulo")
@@ -324,6 +338,21 @@ def migrate_to_v2(c: sqlite3.Cursor) -> None:
     )
 
 
+def migrate_to_v4(c: sqlite3.Cursor) -> None:
+    """Persistencia da escolha de 'grupo ativo' do user em DM. Quando o
+    user roda comandos em DM, esse eh o chat-dono usado por padrao.
+    NULL = sem escolha; sera perguntado via picker."""
+    c.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS user_dm_settings (
+            user_id INTEGER PRIMARY KEY,
+            active_chat_id INTEGER,
+            set_at TEXT
+        );
+        """
+    )
+
+
 def migrate_to_v3(c: sqlite3.Cursor) -> None:
     """Avatar do player (escolhido via /royalavatar). avatar_slug eh o
     identificador do PNG em assets/avatars/. avatar_season grava a label
@@ -345,6 +374,7 @@ MIGRATIONS = [
     (1, migrate_to_v1),
     (2, migrate_to_v2),
     (3, migrate_to_v3),
+    (4, migrate_to_v4),
 ]
 
 
@@ -1113,11 +1143,72 @@ def get_player_by_royal_id(chat_id: int, royal_id: str) -> dict | None:
     return dict(row) if row else None
 
 
+def is_test_chat(chat_id: int) -> bool:
+    """True se o chat_id estiver na lista TEST_CHAT_IDS (env). Esses chats
+    sao escondidos do picker em DM e do inline mode."""
+    return chat_id in TEST_CHAT_IDS
+
+
+def get_dm_active_chat(user_id: int) -> int | None:
+    """Le a escolha persistida do user (em DM, qual grupo eh o ativo)."""
+    cur.execute(
+        "SELECT active_chat_id FROM user_dm_settings WHERE user_id=?",
+        (user_id,),
+    )
+    row = cur.fetchone()
+    return row["active_chat_id"] if row and row["active_chat_id"] else None
+
+
+def set_dm_active_chat(user_id: int, chat_id: int) -> None:
+    cur.execute(
+        "INSERT INTO user_dm_settings (user_id, active_chat_id, set_at) "
+        "VALUES (?, ?, ?) "
+        "ON CONFLICT(user_id) DO UPDATE SET "
+        "active_chat_id=excluded.active_chat_id, set_at=excluded.set_at",
+        (user_id, chat_id, utc_iso()),
+    )
+    db.commit()
+
+
+def clear_dm_active_chat(user_id: int) -> None:
+    cur.execute(
+        "UPDATE user_dm_settings SET active_chat_id=NULL WHERE user_id=?",
+        (user_id,),
+    )
+    db.commit()
+
+
+def list_user_groups(user_id: int) -> list[tuple[int, str]]:
+    """Grupos onde o user tem player (chat_id, titulo). EXCLUI TEST_CHAT_IDS.
+    Ordenado por season_xp desc (mais ativo primeiro)."""
+    cur.execute(
+        """
+        SELECT p.chat_id AS chat_id,
+               COALESCE(c.title, '') AS title,
+               COALESCE(p.season_xp, 0) AS sxp
+        FROM players p
+        LEFT JOIN chats c ON c.chat_id = p.chat_id
+        WHERE p.user_id = ?
+        ORDER BY sxp DESC
+        """,
+        (user_id,),
+    )
+    out: list[tuple[int, str]] = []
+    for r in cur.fetchall():
+        cid = r["chat_id"]
+        if is_test_chat(cid):
+            continue
+        title = (r["title"] or "").strip() or f"Grupo {cid}"
+        out.append((cid, title))
+    return out
+
+
 def resolve_owner_chat(user_id: int, fallback_chat: int | None = None) -> int | None:
     """
     Resolve em qual grupo Royal um usuário tem perfil mais ativo.
     - Em grupo, retorna fallback_chat (chat atual) se o user tiver player lá.
-    - Em DM, retorna o chat com maior total_xp.
+    - Em DM, prioriza a escolha salva em user_dm_settings; senao, retorna
+      o chat com maior total_xp (excluindo TEST_CHAT_IDS).
     """
     if fallback_chat is not None:
         cur.execute(
@@ -1126,12 +1217,117 @@ def resolve_owner_chat(user_id: int, fallback_chat: int | None = None) -> int | 
         )
         if cur.fetchone():
             return fallback_chat
-    cur.execute(
-        "SELECT chat_id FROM players WHERE user_id=? ORDER BY total_xp DESC LIMIT 1",
-        (user_id,),
-    )
+    # DM: tenta escolha salva primeiro
+    saved = get_dm_active_chat(user_id)
+    if saved and not is_test_chat(saved):
+        cur.execute(
+            "SELECT 1 FROM players WHERE chat_id=? AND user_id=? LIMIT 1",
+            (saved, user_id),
+        )
+        if cur.fetchone():
+            return saved
+        # escolha invalida (user nao tem mais player la) — limpa
+        clear_dm_active_chat(user_id)
+    # Fallback: chat com maior XP, EXCLUI test chats
+    if TEST_CHAT_IDS:
+        placeholders = ",".join("?" for _ in TEST_CHAT_IDS)
+        cur.execute(
+            f"SELECT chat_id FROM players "
+            f"WHERE user_id=? AND chat_id NOT IN ({placeholders}) "
+            f"ORDER BY total_xp DESC LIMIT 1",
+            (user_id, *TEST_CHAT_IDS),
+        )
+    else:
+        cur.execute(
+            "SELECT chat_id FROM players WHERE user_id=? "
+            "ORDER BY total_xp DESC LIMIT 1",
+            (user_id,),
+        )
     row = cur.fetchone()
     return row["chat_id"] if row else None
+
+
+# Cache em memoria de file_id da ULTIMA foto de perfil enviada — usado pelo
+# inline mode pra reaproveitar o mesmo file_id sem renderizar de novo.
+# Key = (owner_chat, owner_uid). Value = (file_id, ts_unix).
+_profile_file_id_cache: dict[tuple[int, int], tuple[str, float]] = {}
+_PROFILE_FILE_ID_TTL = 60 * 60 * 6  # 6h
+
+
+def cache_profile_file_id(owner_chat: int, owner_uid: int, file_id: str) -> None:
+    _profile_file_id_cache[(owner_chat, owner_uid)] = (file_id, time.time())
+
+
+def get_cached_profile_file_id(owner_chat: int, owner_uid: int) -> str | None:
+    e = _profile_file_id_cache.get((owner_chat, owner_uid))
+    if not e:
+        return None
+    fid, ts = e
+    if time.time() - ts > _PROFILE_FILE_ID_TTL:
+        _profile_file_id_cache.pop((owner_chat, owner_uid), None)
+        return None
+    return fid
+
+
+def group_picker_kb(groups: list[tuple[int, str]],
+                    *, prefix: str = "g:pick") -> InlineKeyboardMarkup:
+    """Teclado inline com 1 botao por grupo (chat_id, titulo).
+    callback_data = f'{prefix}:{chat_id}'. Truncamos titulo a 40 chars."""
+    rows = []
+    for cid, title in groups[:20]:
+        label = title if len(title) <= 40 else title[:37] + "..."
+        rows.append([InlineKeyboardButton(
+            text=f"🏰 {label}",
+            callback_data=f"{prefix}:{cid}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+async def send_group_picker(message: Message,
+                            groups: list[tuple[int, str]],
+                            *, action_hint: str = "") -> None:
+    """Manda o card 'escolhe teu grupo' em DM."""
+    hint = f"\n<i>// {action_hint}</i>" if action_hint else ""
+    body = (
+        "<i>Voce participa de mais de um grupo Royal.\n"
+        "Escolhe qual eh o ativo pra DM:</i>"
+        f"{hint}"
+    )
+    await message.answer(
+        term_block("REINO", body, status="SELECT", status_color="CYAN",
+                   stamp="trocavel via /royalgrupo"),
+        reply_markup=group_picker_kb(groups))
+
+
+async def resolve_dm_chat(message: Message,
+                          *, action_hint: str = "") -> int | None:
+    """Resolve qual chat-dono usar pra este comando.
+    - Em grupo: retorna message.chat.id.
+    - Em DM: usa user_dm_settings; se faltar e o user tiver 1 grupo,
+      auto-seleciona; se tiver varios, manda o picker e retorna None.
+    Caller DEVE `return` imediatamente se receber None."""
+    if is_group(message):
+        return message.chat.id
+    if not message.from_user:
+        return None
+    uid = message.from_user.id
+    active = get_dm_active_chat(uid)
+    if active and not is_test_chat(active):
+        if get_player(active, uid):
+            return active
+        clear_dm_active_chat(uid)
+    groups = list_user_groups(uid)
+    if not groups:
+        await message.answer(term_block(
+            "REINO",
+            "<i>Voce ainda nao tem perfil em nenhum grupo Royal.\n"
+            "Manda umas mensagens no grupo Royal pra ser registrado ✨</i>",
+            status="SEM_REINO", status_color="AMBER"))
+        return None
+    if len(groups) == 1:
+        set_dm_active_chat(uid, groups[0][0])
+        return groups[0][0]
+    await send_group_picker(message, groups, action_hint=action_hint)
+    return None
 
 
 # =====================================================================
@@ -1629,11 +1825,18 @@ async def send_profile_card(chat_id_to: int, owner_chat: int, owner_uid: int):
         card = await asyncio.to_thread(render_profile_card, data, avatar_bytes)
         if card:
             caption = build_profile_caption(owner_chat, owner_uid)
-            await bot.send_photo(
+            sent = await bot.send_photo(
                 chat_id_to,
                 photo=BufferedInputFile(card, filename=f"perfil-{data.royal_id}.jpg"),
                 caption=caption,
             )
+            # Cacheia file_id pro inline mode reaproveitar sem re-renderizar
+            try:
+                if sent and sent.photo:
+                    cache_profile_file_id(
+                        owner_chat, owner_uid, sent.photo[-1].file_id)
+            except Exception:
+                pass
             return
     except Exception:
         logger.exception("render_profile_card path failed; caindo pro fallback")
@@ -2855,10 +3058,11 @@ async def royal_classe(message: Message):
 
 @dp.message(Command("royalinventario"))
 async def royal_inv(message: Message):
-    if not message.from_user or not is_group(message):
-        await message.answer(GROUP_ONLY_MSG)
+    if not message.from_user:
         return
-    chat_id = message.chat.id
+    chat_id = await resolve_dm_chat(message, action_hint="ver inventario")
+    if chat_id is None:
+        return
     uid = message.from_user.id
     ensure_player(chat_id, uid)
     db.commit()
@@ -2946,10 +3150,12 @@ def loja_keyboard() -> InlineKeyboardMarkup:
 
 @dp.message(Command("royalsaldo"))
 async def royal_saldo(message: Message):
-    if not message.from_user or not is_group(message):
-        await message.answer(GROUP_ONLY_MSG)
+    if not message.from_user:
         return
-    p = ensure_player(message.chat.id, message.from_user.id)
+    owner_chat = await resolve_dm_chat(message, action_hint="ver saldo")
+    if owner_chat is None:
+        return
+    p = ensure_player(owner_chat, message.from_user.id)
     db.commit()
     gold_br = f"{int(p['gold']):,}".replace(",", ".")
     body = (
@@ -2965,12 +3171,14 @@ async def royal_saldo(message: Message):
 
 @dp.message(Command("royalranking"))
 async def royal_ranking(message: Message):
-    if not is_group(message):
-        await message.answer(GROUP_ONLY_MSG)
+    if not message.from_user:
+        return
+    owner_chat = await resolve_dm_chat(message, action_hint="ver ranking")
+    if owner_chat is None:
         return
     if await deny_if_rate_limited(message, "RANKING", cooldown=15.0):
         return
-    await send_ranking(message.chat.id, target_chat_id=message.chat.id)
+    await send_ranking(owner_chat, target_chat_id=message.chat.id)
 
 
 async def send_ranking(source_chat_id: int, *, target_chat_id: int) -> None:
@@ -3153,6 +3361,148 @@ async def royal_dados(message: Message):
         ]))
 
 
+# === /royalgrupo (DM) — ver/trocar grupo ativo ===
+
+@dp.message(Command("royalgrupo"))
+async def royal_grupo(message: Message):
+    if not message.from_user:
+        return
+    if is_group(message):
+        await message.answer(term_block(
+            "REINO",
+            "<i>Esse comando configura o grupo ativo da sua DM.\n"
+            "Roda /royalgrupo no chat privado comigo.</i>",
+            status="DM_ONLY", status_color="AMBER"))
+        return
+    uid = message.from_user.id
+    groups = list_user_groups(uid)
+    if not groups:
+        await message.answer(term_block(
+            "REINO",
+            "<i>Voce ainda nao tem perfil em nenhum grupo Royal.</i>",
+            status="SEM_REINO", status_color="AMBER"))
+        return
+    active = get_dm_active_chat(uid)
+    active_title = next((t for c, t in groups if c == active), None)
+    rows = [
+        ("ATIVO", active_title or "—"),
+        ("GRUPOS", str(len(groups))),
+    ]
+    body = (
+        f"{term_pre(rows)}"
+        "<i>Escolhe abaixo qual grupo passa a ser o ativo na DM:</i>"
+    )
+    await message.answer(
+        term_block("REINO", body, status="CONFIG", status_color="CYAN",
+                   stamp="trocavel a qualquer hora"),
+        reply_markup=group_picker_kb(groups))
+
+
+@dp.callback_query(F.data.startswith("g:pick:"))
+async def cb_group_pick(cb: CallbackQuery):
+    if not cb.from_user or not cb.data:
+        await cb.answer()
+        return
+    try:
+        chat_id = int(cb.data.split(":", 2)[2])
+    except (ValueError, IndexError):
+        await cb.answer("ID invalido", show_alert=False)
+        return
+    uid = cb.from_user.id
+    if is_test_chat(chat_id) or not get_player(chat_id, uid):
+        await cb.answer("Grupo indisponivel.", show_alert=True)
+        return
+    set_dm_active_chat(uid, chat_id)
+    cur.execute("SELECT title FROM chats WHERE chat_id=?", (chat_id,))
+    r = cur.fetchone()
+    title = (r["title"] if r and r["title"] else f"Grupo {chat_id}")
+    await cb.answer(f"✅ Ativo: {title}", show_alert=False)
+    try:
+        if cb.message:
+            await cb.message.edit_text(term_block(
+                "REINO",
+                f"<b>>> ATIVO:</b> <i>{html.escape(title)}</i>\n"
+                "<i>// Pronto. Agora /royalperfil, /royalranking, /royalficha "
+                "e configs usam esse grupo por padrao.</i>",
+                status="OK", status_color="ACID",
+                stamp="troca via /royalgrupo"))
+    except TelegramBadRequest:
+        pass
+
+
+# === Inline mode — /royalperfil em qualquer chat ===
+
+@dp.inline_query()
+async def inline_profile(iq: InlineQuery):
+    """Permite o user enviar o card de perfil em qualquer chat via @bot.
+    Usa o grupo ativo da DM (user_dm_settings) ou auto-resolve."""
+    uid = iq.from_user.id if iq.from_user else 0
+    if not uid:
+        await iq.answer(results=[], cache_time=5, is_personal=True)
+        return
+    owner_chat = resolve_owner_chat(uid)
+    if not owner_chat:
+        await iq.answer(
+            results=[InlineQueryResultArticle(
+                id="no-profile",
+                title="🚫 Sem perfil Royal",
+                description="Manda mensagem no grupo Royal pra registrar.",
+                input_message_content=InputTextMessageContent(
+                    message_text=term_block(
+                        "REINO",
+                        "<i>Sem perfil no Reino ainda.</i>",
+                        status="SEM_REINO", status_color="AMBER"),
+                    parse_mode="HTML"),
+            )],
+            cache_time=10,
+            is_personal=True,
+            button=InlineQueryResultsButton(
+                text="🏰 Configurar grupo na DM",
+                start_parameter="grupo"),
+        )
+        return
+
+    p = get_player(owner_chat, uid)
+    royal_id = (p.get("royal_id") if p else None) or "RYL-????"
+    caption = build_profile_caption(owner_chat, uid)
+    if len(caption) > 1024:
+        caption = caption[:1020] + "..."
+    text_full = build_profile_text(owner_chat, uid)
+
+    results: list = []
+    file_id = get_cached_profile_file_id(owner_chat, uid)
+    if file_id:
+        results.append(InlineQueryResultCachedPhoto(
+            id=f"perfil-photo-{owner_chat}-{uid}",
+            photo_file_id=file_id,
+            caption=caption,
+            parse_mode="HTML",
+        ))
+    # Sempre adiciona o fallback de texto (cliente escolhe)
+    results.append(InlineQueryResultArticle(
+        id=f"perfil-text-{owner_chat}-{uid}",
+        title=f"📜 Meu perfil — {royal_id}",
+        description="Envia a ficha (texto) no chat atual.",
+        input_message_content=InputTextMessageContent(
+            message_text=text_full,
+            parse_mode="HTML"),
+    ))
+
+    button = None
+    if not file_id:
+        # Sem foto cacheada — guia o user pra gerar uma via /royalperfil na DM
+        button = InlineQueryResultsButton(
+            text="📸 Gerar foto do perfil (abrir o bot)",
+            start_parameter="cacheperfil")
+
+    await iq.answer(
+        results=results,
+        cache_time=30,
+        is_personal=True,
+        button=button,
+    )
+
+
 # === Comandos do Shipper com prefixo royal ===
 
 @dp.message(Command("royalativar", "noivado"))
@@ -3235,7 +3585,9 @@ async def royal_meus(message: Message):
     if not message.from_user:
         return
     uid = message.from_user.id
-    chat_id = message.chat.id
+    chat_id = await resolve_dm_chat(message, action_hint="ver meus casorios")
+    if chat_id is None:
+        return
     cur.execute("SELECT COUNT(*) AS total FROM couples WHERE chat_id=? AND (user1=? OR user2=?)",
                 (chat_id, uid, uid))
     total = cur.fetchone()["total"]
@@ -4002,6 +4354,12 @@ async def register_bot_commands():
         BotCommand(command="royal",             description="👑 Menu principal"),
         BotCommand(command="royalperfil",       description="📜 Meu perfil"),
         BotCommand(command="royalavatar",       description="👑 Escolher avatar"),
+        BotCommand(command="royalficha",        description="📜 Minha ficha"),
+        BotCommand(command="royalranking",      description="🏆 Ranking"),
+        BotCommand(command="royalinventario",   description="🎒 Inventário"),
+        BotCommand(command="royalsaldo",        description="💰 Saldo"),
+        BotCommand(command="royalmeuscasorios", description="📊 Meus casórios"),
+        BotCommand(command="royalgrupo",        description="🏰 Trocar grupo ativo"),
         BotCommand(command="royaltutorial",     description="📖 Como jogar"),
         BotCommand(command="royalajuda",        description="❓ Ajuda"),
         BotCommand(command="royalprivacidade",  description="🔒 Privacidade"),
