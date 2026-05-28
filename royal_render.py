@@ -131,20 +131,32 @@ def pick_palette(seed: str | int | None) -> dict:
 # ---------------------------------------------------------------------
 # Fonts — preferimos MONO pra dar cara de terminal/8-bit
 # ---------------------------------------------------------------------
+# Fontes BUNDLED no repo (fonts/) — prioritárias pra garantir suporte a
+# acentos PT-BR (ç ã í ó) no Railway, onde /usr/share/fonts pode não existir
+# ou o Pillow cair pro PILfont bitmap ASCII-only.
+_FONTS_DIR = Path(__file__).parent / "fonts"
 FONT_MONO = [
+    str(_FONTS_DIR / "DejaVuSansMono-Bold.ttf"),
     "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf",
+    str(_FONTS_DIR / "DejaVuSansMono.ttf"),
     "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
 ]
 FONT_MONO_REG = [
+    str(_FONTS_DIR / "DejaVuSansMono.ttf"),
     "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+    str(_FONTS_DIR / "DejaVuSansMono-Bold.ttf"),
     "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf",
 ]
 FONT_BOLD = [
+    str(_FONTS_DIR / "DejaVuSans-Bold.ttf"),
     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    str(_FONTS_DIR / "DejaVuSansMono-Bold.ttf"),
     "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf",
 ]
 FONT_REG = [
+    str(_FONTS_DIR / "DejaVuSans.ttf"),
     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    str(_FONTS_DIR / "DejaVuSansMono.ttf"),
     "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
 ]
 
@@ -714,10 +726,8 @@ def render_profile_card(data: ProfileCardData,
         name_font = load_font(name_size, mono=True, bold=True)
         draw.text((info_x, ay - 4), name_clean, font=name_font, fill=INK)
 
-        # underline gold sob o nome
+        # (sem underline — cortava letras com descender tipo @ no usuario)
         nw, nh = text_size(draw, name_clean, name_font)
-        pixel_rect(draw, (info_x, ay - 4 + nh + 6, info_x + nw, ay - 4 + nh + 10),
-                   GOLD_DIM)
 
         # Classe em "tag"
         class_font = load_font(20, mono=True, bold=True)
@@ -791,7 +801,7 @@ def render_profile_card(data: ProfileCardData,
             ("CARISMA",  data.attr_car, pal["chips"][3], SPRITE_MASK),
         ]
         attr_label_font = load_font(16, mono=True, bold=True)
-        attr_val_font = load_font(30, mono=True, bold=True)
+        attr_val_font = load_font(22, mono=True, bold=True)
         col_w = (attr_box[2] - attr_box[0] - 32) // 4
         for i, (lbl, val, accent, sprite) in enumerate(attrs):
             cx = attr_box[0] + 16 + i * col_w + col_w // 2
