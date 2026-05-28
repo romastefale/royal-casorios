@@ -269,3 +269,21 @@ id = "FLc30nGUXq1isFuWft7Ey"
 uri = "file://assets/rei_e_reino.png"
 type = "image"
 title = "🏰 O Rei discursa ao Reino — cena épica (1820×1024 pixel-art)"
+
+[[outputs]]
+id = "AYlEelVpySLLnJeA8Vdok"
+uri = "file://.local/preview/casorio_test.jpg"
+type = "image"
+title = "Casorio card — avatares ok"
+
+[[outputs]]
+id = "XA8Jx_tRrxyb0M6DcrYL3"
+uri = "file://.local/preview/casorio_test2.jpg"
+type = "image"
+title = "Casorio card — fallback (nome longo + avatar invalido)"
+
+[[outputs]]
+id = "V3PRrKlIxx0d1mi4liCsD"
+uri = "file://.local/preview/casorio_test3.jpg"
+type = "image"
+title = "Casorio card — edge: royal_id/name/level=None + nome longo"

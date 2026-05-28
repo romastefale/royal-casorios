@@ -53,8 +53,10 @@ from aiogram.types import (
 import royal_avatars
 from royal_words import PALAVRAS, CHARADAS
 from royal_render import (
+    CasorioPartner,
     ProfileCardData,
     RankingEntry,
+    render_casorio_card,
     render_levelup_card,
     render_palavra_spoiler_card,
     render_profile_card,
@@ -1168,6 +1170,41 @@ async def send_couple(chat_id: int, source: str = "auto") -> bool:
         "<i>🚨 Se alguém presente souber de alguma razão para que este casal não deva se unir no santo "
         "matrimônio, fale agora ou cale-se para sempre! 👀💍</i>"
     )
+
+    # === Card 1080x1080 do casorio (foto). Fallback pra texto se falhar. ===
+    try:
+        p1 = ensure_player(chat_id, u1)
+        p2 = ensure_player(chat_id, u2)
+        db.commit()
+        # `players` nao tem coluna `level` — derivar de total_xp via level_progress
+        lvl1, *_ = level_progress(p1["total_xp"] or 0)
+        lvl2, *_ = level_progress(p2["total_xp"] or 0)
+        partners = (
+            CasorioPartner(
+                royal_id=p1["royal_id"] or "RYL-????", name=n1,
+                level=int(lvl1 or 1),
+                avatar_slug=p1["avatar_slug"]),
+            CasorioPartner(
+                royal_id=p2["royal_id"] or "RYL-????", name=n2,
+                level=int(lvl2 or 1),
+                avatar_slug=p2["avatar_slug"]),
+        )
+        card = await asyncio.to_thread(
+            render_casorio_card, partners[0], partners[1],
+            current_season_label(), source,
+            datetime.now(TZ).strftime("%d/%m/%Y %H:%M"))
+        if card:
+            # Caption tem limite de 1024 chars — text atual cabe folgado.
+            await bot.send_photo(
+                chat_id,
+                photo=BufferedInputFile(card, filename=f"casorio-{couple_id}.jpg"),
+                caption=text,
+                reply_markup=vote_keyboard(couple_id),
+            )
+            return True
+    except Exception:
+        logger.exception("send_couple: render do card falhou, fallback texto")
+
     await safe_send(chat_id, text, reply_markup=vote_keyboard(couple_id))
     return True
 

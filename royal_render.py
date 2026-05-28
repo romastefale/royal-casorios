@@ -1308,3 +1308,196 @@ def render_palavra_spoiler_card(word: str,
     except Exception:
         logger.exception("ROYAL_PALAVRA_SPOILER_RENDER_FAILED word=%r", word)
         return None
+
+
+# =====================================================================
+# CASORIO CARD — anuncia par formado (2 avatares + coracao pixel)
+# Mesmo padrao dos demais: 1080x1080, sem cache (evento unico).
+# Fontes >=16 em qualquer lugar pra evitar letra pequena.
+# =====================================================================
+
+@dataclass(frozen=True)
+class CasorioPartner:
+    royal_id: str
+    name: str
+    level: int
+    avatar_slug: str | None = None
+
+
+def render_casorio_card(p1: CasorioPartner, p2: CasorioPartner,
+                        season_label: str = "",
+                        source: str = "auto",
+                        date_str: str = "") -> bytes | None:
+    """Card 1080x1080 do casorio: dois avatares lado-a-lado com pixel-heart
+    no meio, nomes e Royal IDs embaixo. Sem cache (evento unico). Retorna
+    JPEG bytes ou None se Pillow falhar."""
+    try:
+        # Normaliza defensivamente — caller pode passar None em royal_id/level
+        def _norm(p: CasorioPartner) -> CasorioPartner:
+            return CasorioPartner(
+                royal_id=p.royal_id or "RYL-????",
+                name=p.name or "?",
+                level=int(p.level) if p.level is not None else 1,
+                avatar_slug=p.avatar_slug,
+            )
+        p1 = _norm(p1)
+        p2 = _norm(p2)
+        # Paleta determinada pelo par (estavel pro mesmo casal)
+        pal_seed = "::".join(sorted([p1.royal_id, p2.royal_id]))
+        pal = pick_palette(pal_seed)
+        W = H = CARD_SIZE
+        img = Image.new("RGB", (W, H), BG_DEEP)
+        draw = ImageDraw.Draw(img)
+
+        # Estatica de fundo (CRT corrompido)
+        rng = random.Random(hash(pal_seed) & 0xFFFF)
+        for _ in range(1400):
+            x = rng.randrange(W); y = rng.randrange(H)
+            c = rng.choice([(20, 16, 22), (16, 14, 20), (28, 22, 30),
+                            (40, 20, 30)])
+            pixel_rect(draw, (x, y, x + 3, y + 3), c)
+
+        # Painel principal
+        OUT_PAD = 28
+        panel_box = (OUT_PAD, OUT_PAD, W - OUT_PAD, H - OUT_PAD)
+        pixel_rect(draw, panel_box, BG)
+        chunky_border(draw, panel_box, outer=BLACK, inner=HOT, thick=8)
+
+        center_x = W // 2
+
+        # ===== Header =====
+        header_box = (OUT_PAD + 28, OUT_PAD + 28,
+                      W - OUT_PAD - 28, OUT_PAD + 110)
+        pixel_rect(draw, header_box, PANEL)
+        pixel_rect(draw, (header_box[0], header_box[1],
+                          header_box[2], header_box[1] + 4), HOT)
+        pixel_rect(draw, (header_box[0], header_box[3] - 4,
+                          header_box[2], header_box[3]), HOT)
+
+        title_font = load_font(26, mono=True, bold=True)
+        title = "> CASORIO.SYS  // CONFIRMADO"
+        draw.text((header_box[0] + 22, header_box[1] + 24),
+                  title, font=title_font, fill=HOT)
+
+        # Source/season a direita
+        if season_label:
+            season_font = load_font(18, mono=True, bold=False)
+            season_txt = f">> {season_label.upper()}"
+            sw, _ = text_size(draw, season_txt, season_font)
+            draw.text((header_box[2] - 22 - sw, header_box[1] + 30),
+                      season_txt, font=season_font, fill=DIM)
+
+        # Blinker
+        pixel_rect(draw, (header_box[2] - 18, header_box[3] - 18,
+                          header_box[2] - 10, header_box[3] - 10), HOT)
+
+        # ===== Dois avatares lado a lado =====
+        # Layout: avatar A em (80, 200) 340x340, avatar B em (660, 200) 340x340.
+        # Sobra 240px no meio (420-660) pro pixel-heart gigante.
+        AVATAR_SIZE = 340
+        AY = 200
+        AX_L = 80
+        AX_R = W - 80 - AVATAR_SIZE  # 660
+
+        for cx0, partner in ((AX_L, p1), (AX_R, p2)):
+            # Moldura chunky preta + dourada
+            pixel_rect(draw, (cx0 - 6, AY - 6,
+                              cx0 + AVATAR_SIZE + 6, AY + AVATAR_SIZE + 6),
+                       BLACK)
+            pixel_rect(draw, (cx0 - 3, AY - 3,
+                              cx0 + AVATAR_SIZE + 3, AY + AVATAR_SIZE + 3),
+                       HOT)
+            pixel_rect(draw, (cx0, AY, cx0 + AVATAR_SIZE, AY + AVATAR_SIZE),
+                       BLACK)
+            resolved = royal_avatars.resolve_slug(
+                partner.avatar_slug, partner.royal_id)
+            portrait = royal_avatars.load_avatar(resolved, AVATAR_SIZE)
+            if portrait is not None:
+                img.paste(portrait, (cx0, AY), portrait)
+            else:
+                # Fallback: tag textual no centro do quadro
+                f_font = load_font(20, mono=True, bold=True)
+                ft = "[ SEM AVATAR ]"
+                fw, fh = text_size(draw, ft, f_font)
+                draw.text((cx0 + (AVATAR_SIZE - fw) // 2,
+                           AY + (AVATAR_SIZE - fh) // 2),
+                          ft, font=f_font, fill=DIM)
+
+        # ===== Coracao pixel gigante no meio =====
+        # Heart 7px wide na malha. scale 14 → 98px wide. Centro horiz = 540.
+        heart_scale = 14
+        heart_w = 7 * heart_scale  # 98
+        heart_x = center_x - heart_w // 2
+        heart_y = AY + (AVATAR_SIZE // 2) - (heart_scale * 3)
+        # Sombra preta atras pra dar profundidade
+        draw_pixel_heart(draw, heart_x + 6, heart_y + 6,
+                         heart_scale, color=BLACK, empty=False)
+        draw_pixel_heart(draw, heart_x, heart_y,
+                         heart_scale, color=HOT, empty=False)
+
+        # Tag ">>" cima e baixo do coracao (decor)
+        tag_font = load_font(28, mono=True, bold=True)
+        for tag_txt, ty in (("//", heart_y - 60), ("//", heart_y + 7 * heart_scale + 20)):
+            tw, _ = text_size(draw, tag_txt, tag_font)
+            draw.text((center_x - tw // 2, ty),
+                      tag_txt, font=tag_font, fill=DIM)
+
+        # ===== Nomes + Royal IDs embaixo dos avatares =====
+        info_y = AY + AVATAR_SIZE + 32
+        for cx0, partner in ((AX_L, p1), (AX_R, p2)):
+            # Nome centralizado na coluna do avatar. Limita 12 chars pra
+            # caber sem virar letra pequena.
+            name_clean = ellipsize(partner.name or "?", 12).upper()
+            name_size = 38 if len(name_clean) <= 8 else 30 if len(name_clean) <= 11 else 26
+            name_font = load_font(name_size, mono=True, bold=True)
+            nw, nh = text_size(draw, name_clean, name_font)
+            draw.text((cx0 + (AVATAR_SIZE - nw) // 2, info_y),
+                      name_clean, font=name_font, fill=INK)
+
+            # Royal ID + LV embaixo
+            sub_font = load_font(20, mono=True, bold=True)
+            sub_txt = f"{partner.royal_id}  ·  LV{partner.level:02d}"
+            sw, sh = text_size(draw, sub_txt, sub_font)
+            draw.text((cx0 + (AVATAR_SIZE - sw) // 2, info_y + nh + 14),
+                      sub_txt, font=sub_font, fill=GOLD_DIM)
+
+        # ===== Footer (status do casal) =====
+        foot_box = (OUT_PAD + 60, H - OUT_PAD - 140,
+                    W - OUT_PAD - 60, H - OUT_PAD - 50)
+        pixel_rect(draw, foot_box, PANEL)
+        pixel_rect(draw, (foot_box[0], foot_box[1],
+                          foot_box[2], foot_box[1] + 3), HOT)
+
+        line1_font = load_font(22, mono=True, bold=True)
+        line1 = f">> PAR FORMADO  ::  {source.upper()}"
+        l1w, l1h = text_size(draw, line1, line1_font)
+        draw.text((center_x - l1w // 2, foot_box[1] + 14),
+                  line1, font=line1_font, fill=HOT)
+
+        line2_font = load_font(18, mono=True, bold=False)
+        line2 = "[ casados ate o divorcio cair na votacao ]"
+        l2w, _ = text_size(draw, line2, line2_font)
+        draw.text((center_x - l2w // 2, foot_box[1] + 14 + l1h + 12),
+                  line2, font=line2_font, fill=DIM)
+
+        if date_str:
+            ds_font = load_font(16, mono=True, bold=False)
+            dw, _ = text_size(draw, date_str, ds_font)
+            draw.text((W - OUT_PAD - 60 - dw, H - OUT_PAD - 32),
+                      date_str, font=ds_font, fill=DIM)
+
+        # ===== Pos-processamento (mesmo padrao dos demais) =====
+        img = img.convert("RGBA")
+        apply_scanlines(img, every=3, alpha=55)
+        vimg = img.convert("RGB")
+        apply_vignette(vimg, strength=170)
+        img = vimg.convert("RGBA")
+        apply_grain(img, intensity=18)
+        img = img.convert("RGB")
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=90, optimize=True)
+        return buf.getvalue()
+    except Exception:
+        logger.exception("ROYAL_CASORIO_CARD_RENDER_FAILED p1=%s p2=%s",
+                         p1.royal_id, p2.royal_id)
+        return None
