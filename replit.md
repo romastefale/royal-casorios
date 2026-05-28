@@ -342,6 +342,15 @@ regenerado só ao mudar nome/avatar.
 
 ---
 
+> ⚠️ **Ordem de handlers (regressão real já corrigida):** o catch-all
+> `track` (`@dp.message(F.chat.type.in_({"group","supergroup"}))`) roda ANTES de
+> alguns `@dp.message(Command(...))`. Em aiogram o 1º handler que casa **vence e
+> PARA a propagação** — então comando registrado DEPOIS de um catch-all **nunca
+> dispara em grupo**. Fix: `track` tem filtro `~(F.text & F.text.startswith("/"))`
+> p/ não casar comandos (deixa propagar). Ao adicionar comando novo, registre-o
+> ANTES do bloco "ULTIMO @dp.message" **ou** garanta que os catch-alls excluem
+> comandos.
+
 ## 📋 Menus (BotCommands)
 
 Registrados em `register_bot_commands()`. Telegram atualiza o autocomplete `/` na 1ª inicialização

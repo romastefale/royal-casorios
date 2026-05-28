@@ -21,6 +21,7 @@ import os
 import random
 import re
 import sqlite3
+import sys
 import time
 import unicodedata
 from collections import defaultdict, deque
@@ -143,7 +144,10 @@ class _JsonFormatter(logging.Formatter):
             return f'{{"lvl":"{record.levelname}","msg":"<unserializable>"}}'
 
 
-_root_handler = logging.StreamHandler()
+# stdout (nao stderr): no Railway TUDO que sai no stderr eh pintado como
+# [error] no dashboard, mesmo sendo INFO. stdout sai como [info]. Erros
+# reais (logger.exception) continuam visiveis no texto, com traceback.
+_root_handler = logging.StreamHandler(sys.stdout)
 _root_handler.setFormatter(_JsonFormatter() if LOG_JSON
                             else logging.Formatter(_HUMAN_FMT))
 logging.basicConfig(level=logging.INFO, handlers=[_root_handler], force=True)
@@ -7417,7 +7421,14 @@ async def handle_music_bot_post(message: Message):
                              chat_id, message.message_id)
 
 
-@dp.message(F.chat.type.in_({"group", "supergroup"}))
+@dp.message(
+    F.chat.type.in_({"group", "supergroup"}),
+    # NAO casar comandos: este catch-all roda ANTES de alguns
+    # @dp.message(Command(...)) (royalpresentear/paldica/conquistas/
+    # missoes/evento). Em aiogram o 1o handler que casa vence e PARA a
+    # propagacao — sem este filtro, esses comandos nunca rodavam em grupo.
+    ~(F.text & F.text.startswith("/")),
+)
 async def track(message: Message):
     if not message.from_user:
         return
