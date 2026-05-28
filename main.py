@@ -4131,6 +4131,7 @@ async def royal_inv(message: Message):
             self_avatar_slug=self_slug,
             saldo=saldo,
             slots=tuple(slots[:8]),
+            owner_uid=int(message.from_user.id),
         )
         png = await asyncio.to_thread(render_inventario_card, data)
         if png and bot is not None:
@@ -4231,6 +4232,7 @@ async def royal_loja(message: Message):
             viewer_avatar_slug=p.get("avatar_slug"),
             saldo=saldo,
             slots=slots,
+            owner_uid=int(message.from_user.id),
         )
         png = await asyncio.to_thread(render_loja_card, data)
         if png and bot is not None:
@@ -4301,6 +4303,7 @@ async def royal_saldo(message: Message):
             saldo=saldo,
             level=int(lvl),
             season_xp=int(p.get("season_xp") or 0),
+            owner_uid=int(message.from_user.id),
         )
         png = await asyncio.to_thread(render_saldo_card, data)
         if png and bot is not None:
@@ -5046,6 +5049,7 @@ async def royal_encalhar(message: Message):
             name=get_anon_name(chat_id, message.from_user.id),
             avatar_slug=p.get("avatar_slug"),
             opted_out=True,
+            owner_uid=int(message.from_user.id),
         )
         png = await asyncio.to_thread(render_shipper_card, data)
         if png and bot is not None:
@@ -5087,6 +5091,7 @@ async def royal_desencalhar(message: Message):
             name=get_anon_name(chat_id, message.from_user.id),
             avatar_slug=p.get("avatar_slug"),
             opted_out=False,
+            owner_uid=int(message.from_user.id),
         )
         png = await asyncio.to_thread(render_shipper_card, data)
         if png and bot is not None:
@@ -5150,6 +5155,7 @@ async def royal_meus(message: Message):
             total_casorios=int(total),
             top_partners=tuple(partners_data),
             season_label=current_season_label(),
+            owner_uid=int(uid),
         )
         png = await asyncio.to_thread(render_meuscasorios_card, data)
         if png and bot is not None:

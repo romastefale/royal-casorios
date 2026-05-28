@@ -2574,12 +2574,14 @@ class MeusCasoriosData:
     total_casorios: int
     top_partners: tuple[PartnerMini, ...]   # ate 5
     season_label: str = ""
+    # user_id Telegram global — discrimina cache entre chats diferentes
+    owner_uid: int = 0
 
 
 def render_meuscasorios_card(data: MeusCasoriosData) -> bytes | None:
     """Card pessoal de casórios: avatar central + número gigante de total
     + grade horizontal com 5 mini-portraits dos top parceiros."""
-    cache_key = ("meus_casorios", data.self_royal_id,
+    cache_key = ("meus_casorios", data.owner_uid, data.self_royal_id,
                  data.self_name, data.self_avatar_slug,
                  data.total_casorios,
                  tuple((p.royal_id, p.name, p.avatar_slug, p.total)
@@ -2778,12 +2780,13 @@ class InventarioData:
     self_avatar_slug: str | None
     saldo: int            # ouro atual
     slots: tuple[InventarioSlot, ...]    # itens com qty > 0
+    owner_uid: int = 0    # user_id Telegram (anti-colisão cross-chat)
 
 
 def render_inventario_card(data: InventarioData) -> bytes | None:
     """Mochila: avatar+saldo no topo, grid 4x2 de slots com itens."""
-    cache_key = ("inventario", data.self_royal_id, data.self_name,
-                 data.self_avatar_slug, data.saldo,
+    cache_key = ("inventario", data.owner_uid, data.self_royal_id,
+                 data.self_name, data.self_avatar_slug, data.saldo,
                  tuple((s.item_id, s.qty, s.equipped) for s in data.slots))
     cached = cache_get(cache_key)
     if cached:
@@ -2997,13 +3000,14 @@ class SaldoData:
     saldo: int
     level: int = 0
     season_xp: int = 0
+    owner_uid: int = 0    # user_id Telegram (anti-colisão cross-chat)
 
 
 def render_saldo_card(data: SaldoData) -> bytes | None:
     """Cofre: avatar + nome + saldo em destaque (font gigante)."""
-    cache_key = ("saldo", data.self_royal_id, data.self_name,
-                 data.self_avatar_slug, data.saldo, data.level,
-                 data.season_xp)
+    cache_key = ("saldo", data.owner_uid, data.self_royal_id,
+                 data.self_name, data.self_avatar_slug, data.saldo,
+                 data.level, data.season_xp)
     cached = cache_get(cache_key)
     if cached:
         return cached
@@ -3156,12 +3160,13 @@ class LojaData:
     viewer_avatar_slug: str | None
     saldo: int
     slots: tuple[LojaSlot, ...]
+    owner_uid: int = 0    # user_id Telegram (anti-colisão cross-chat)
 
 
 def render_loja_card(data: LojaData) -> bytes | None:
     """Vitrine: header com saldo + grid 4x2 com preço por item."""
-    cache_key = ("loja", data.viewer_royal_id, data.viewer_name,
-                 data.viewer_avatar_slug, data.saldo,
+    cache_key = ("loja", data.owner_uid, data.viewer_royal_id,
+                 data.viewer_name, data.viewer_avatar_slug, data.saldo,
                  tuple((s.item_id, s.price, s.affordable) for s in data.slots))
     cached = cache_get(cache_key)
     if cached:
@@ -3739,11 +3744,12 @@ class ShipperData:
     name: str
     avatar_slug: str | None
     opted_out: bool   # True = encalhado, False = no jogo
+    owner_uid: int = 0    # user_id Telegram (anti-colisão cross-chat)
 
 
 def render_shipper_card(data: ShipperData) -> bytes | None:
     """Status do shipper: avatar + selo gigante OPT_IN/OPT_OUT."""
-    cache_key = ("shipper", data.royal_id, data.name,
+    cache_key = ("shipper", data.owner_uid, data.royal_id, data.name,
                  data.avatar_slug, data.opted_out)
     cached = cache_get(cache_key)
     if cached:
