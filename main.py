@@ -668,6 +668,31 @@ def upsert_user(chat_id: int, user_id: int, name: str, username: str | None) -> 
     )
 
 
+def refresh_user_identity(chat_id: int, user_id: int, name: str,
+                          username: str | None) -> None:
+    """Atualiza apenas display_name/username/last_seen SEM incrementar
+    message_count. Usar antes de renderizar perfil/cartao p/ garantir que
+    o nome vivo do Telegram seja escrito no DB, evitando que get_name caia
+    pro fallback str(user_id) (digitos) e dispare anonize() no proprio dono.
+
+    Diferente de upsert_user, NAO conta como atividade — pode ser chamado
+    a partir de DM/callback sem distorcer ranking/shipper do grupo.
+    """
+    if not name:
+        return
+    cur.execute(
+        """
+        INSERT INTO users (user_id, chat_id, display_name, username, message_count, last_seen)
+        VALUES (?, ?, ?, ?, 0, ?)
+        ON CONFLICT(user_id, chat_id) DO UPDATE SET
+            display_name=excluded.display_name,
+            username=excluded.username,
+            last_seen=excluded.last_seen
+        """,
+        (user_id, chat_id, name, username, utc_iso()),
+    )
+
+
 def get_name(chat_id: int, user_id: int) -> str:
     cur.execute("SELECT display_name FROM users WHERE chat_id=? AND user_id=?",
                 (chat_id, user_id))
@@ -2385,6 +2410,8 @@ async def royal_perfil(message: Message):
         return
     # /royalperfil RYL-0042
     parts = (message.text or "").split(maxsplit=1)
+    live_name = display_name(message)
+    live_username = message.from_user.username
     if len(parts) > 1:
         royal_id = parts[1].strip().upper()
         lookup_chat = (message.chat.id if is_group(message)
@@ -2396,12 +2423,20 @@ async def royal_perfil(message: Message):
         if not p:
             await message.answer(f"😶 Nobre <b>{html.escape(royal_id)}</b> não encontrado neste reino.")
             return
+        # Se o alvo for o proprio requisitante, refresca o nome vivo p/ evitar
+        # ANON-X quando users.display_name esta vazio
+        if p["user_id"] == message.from_user.id:
+            refresh_user_identity(p["chat_id"], p["user_id"], live_name, live_username)
+            db.commit()
         await send_profile_card(message.chat.id, p["chat_id"], p["user_id"])
         return
 
     # Sem argumento: perfil proprio
     if is_group(message):
         ensure_chat(message.chat.id, message.chat.title)
+        # Garante users.display_name fresco — evita fallback p/ str(user_id)
+        # que dispararia anonize() no proprio dono e mostraria "ANON-X"
+        refresh_user_identity(message.chat.id, message.from_user.id, live_name, live_username)
         ensure_player(message.chat.id, message.from_user.id)
         db.commit()
         await send_profile_card(message.chat.id, message.chat.id, message.from_user.id)
@@ -2412,6 +2447,9 @@ async def royal_perfil(message: Message):
                 "😶 Você ainda não tem perfil no Reino.\n"
                 "Envie uma mensagem no grupo Royal para começar!")
             return
+        # Idem: refresca o nome no chat-dono (grupo) sem inflar message_count
+        refresh_user_identity(owner_chat, message.from_user.id, live_name, live_username)
+        db.commit()
         await send_profile_card(message.chat.id, owner_chat, message.from_user.id)
 
 
@@ -3022,6 +3060,10 @@ async def hub_cb(cb: CallbackQuery):
                 await cb.answer("Você ainda não tem perfil. Mande mensagem no grupo Royal.",
                                 show_alert=True)
                 return
+            # Refresca nome vivo do Telegram p/ evitar ANON-X no proprio dono
+            live = cb.from_user.full_name or cb.from_user.first_name or ""
+            refresh_user_identity(target_chat, cb.from_user.id, live, cb.from_user.username)
+            db.commit()
             await send_profile_card(cb.message.chat.id, target_chat, cb.from_user.id)
             await cb.answer()
             return
