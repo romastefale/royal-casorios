@@ -98,6 +98,7 @@ saldo, palavras, configs por usuário, etc).
 - **`GH_TOKEN`** (opcional) — Personal Access Token do GitHub com scope `gist`. Habilita upload automático dos logs pro gist secreto a cada 5min. Sem isso, só DM do owner recebe.
 - **`LOG_DUMP_INTERVAL_SEC`** (opcional, default `300`) — intervalo entre dumps automáticos.
 - **`LOG_DUMP_ENABLED`** (opcional, default `1`) — `0` desliga o job de auto-dump (mantém `/royallog` manual).
+- **`LOG_JSON`** (opcional, default `0`) — `1` faz o stdout root sair em JSON (1 linha por record com `ts`/`lvl`/`logger`/`msg` + extras + `exc`). Ring buffer de `/royallog` **sempre** sai em texto humano (independe da flag). Ativa em Railway pra ingest em Logtail/Better Stack/Loki/etc.
 - **`STASH_CHAT_ID`** (opcional, override) — chat_id de canal privado
   pra upload silencioso do **identity card**. **Hardcoded** em
   `main.py` como `-1003941532741` (canal privado só do dono +
@@ -165,6 +166,13 @@ o autocomplete `/` automaticamente na 1ª inicialização com novo token.
 - **Versões fixas (regra do usuário):**
   - **Telegram Bot API: 10** — usar sempre, não fazer downgrade
   - **aiogram: 3.28.2** (última estável, lançada em 10/05/2026)
+- **Sincronia obrigatória com o código:** sempre que mexer no bot, **revisar e atualizar quando aplicável**:
+  - `/start` (handler `start_cmd` em `main.py` ~3958) — lista de rotas pessoais e inline mode
+  - `/royalajuda` (constante `ROYAL_HELP` em `main.py` ~4059) — manual completo de comandos
+  - `/royaltutorial` (`tutorial_block()`) — explicação do gameplay
+  - `replit.md` — seções de env vars, persistência, doutrina visual, menus
+  - `register_bot_commands()` (BotCommands do menu `/`) — se adicionou comando novo
+  Se a mudança for puramente infra interna (cache, retry, log format), só atualizar `replit.md` (e mencionar no commit que /start/help/tutorial foram auditados e não precisaram mudar).
 
 ## 🎛️ UI: botões coloridos (Bot API 10) + helpers de UX
 
