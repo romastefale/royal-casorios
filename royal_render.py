@@ -3558,3 +3558,319 @@ def render_boss_status_card(data: BossStatusData) -> bytes | None:
         logger.exception("ROYAL_BOSS_STATUS_CARD_RENDER_FAILED bid=%r",
                          data.boss_id)
         return None
+
+
+# =====================================================================
+# PALAVRA ATIVA CARD — desafio em curso: tipo + puzzle + tempo + recompensa
+# =====================================================================
+
+@dataclass(frozen=True)
+class PalavraActiveData:
+    challenge_id: int
+    ch_type: str          # anagrama|letras|charada|spoiler_img
+    display: str          # texto da puzzle (ou hint p/ charada)
+    mins_left: int
+    attempts: int
+    reward_xp: int
+    reward_gold: int
+
+
+def render_palavra_active_card(data: PalavraActiveData) -> bytes | None:
+    """Transmissão ativa: tipo (ANAGRAMA/CHARADA/...) + puzzle gigante."""
+    cache_key = ("palavra_active", data.challenge_id, data.ch_type,
+                 data.display, data.mins_left, data.attempts,
+                 data.reward_xp, data.reward_gold)
+    cached = cache_get(cache_key)
+    if cached:
+        return cached
+    try:
+        type_labels = {
+            "anagrama":    ("ANAGRAMA.SYS",      ACID),
+            "letras":      ("LETRAS_FALTANDO.SYS", CYAN),
+            "charada":     ("CHARADA.SYS",       AMBER),
+            "spoiler_img": ("SPOILER_IMG.SYS",   PURPLE),
+        }
+        lbl, accent = type_labels.get(data.ch_type, ("DESAFIO.SYS", ACID))
+        W = H = CARD_SIZE
+        img = Image.new("RGB", (W, H), BG_DEEP)
+        draw = ImageDraw.Draw(img)
+
+        # estática verde (transmissão)
+        rng = random.Random(int(
+            hashlib.sha1(f"palavra:{data.challenge_id}".encode()).hexdigest()[:8],
+            16))
+        for _ in range(1300):
+            x = rng.randrange(W); y = rng.randrange(H)
+            c = rng.choice([(16, 14, 20), (20, 24, 18), (28, 22, 30),
+                            (14, 30, 18)])
+            pixel_rect(draw, (x, y, x + 3, y + 3), c)
+
+        OUT_PAD = 28
+        panel_box = (OUT_PAD, OUT_PAD, W - OUT_PAD, H - OUT_PAD)
+        pixel_rect(draw, panel_box, BG)
+        chunky_border(draw, panel_box, outer=BLACK, inner=accent, thick=8)
+
+        # Header
+        hbox = (OUT_PAD + 28, OUT_PAD + 28,
+                W - OUT_PAD - 28, OUT_PAD + 116)
+        pixel_rect(draw, hbox, PANEL)
+        pixel_rect(draw, (hbox[0], hbox[1], hbox[2], hbox[1] + 4), accent)
+        pixel_rect(draw, (hbox[0], hbox[3] - 4, hbox[2], hbox[3]), accent)
+        tf = load_font(30, mono=True, bold=True)
+        draw.text((hbox[0] + 22, hbox[1] + 22),
+                  "PALAVRA.SYS", font=tf, fill=accent)
+        sf = load_font(16, mono=True, bold=False)
+        sub = ">> TRANSMITINDO"
+        sw, _ = text_size(draw, sub, sf)
+        draw.text((hbox[2] - 22 - sw, hbox[1] + 30),
+                  sub, font=sf, fill=DIM)
+
+        # Type tag
+        tag_y = hbox[3] + 24
+        tag_box = (OUT_PAD + 60, tag_y, W - OUT_PAD - 60, tag_y + 70)
+        pixel_rect(draw, tag_box, BG_DEEP)
+        chunky_border(draw, tag_box, outer=BLACK, inner=accent, thick=4)
+        tag_font = load_font(34, mono=True, bold=True)
+        tw, th = text_size_smart(draw, lbl, tag_font)
+        draw_text_smart(draw,
+                        ((W - tw) // 2,
+                         tag_box[1] + (tag_box[3] - tag_box[1] - th) // 2 - 2),
+                        lbl, tag_font, accent)
+
+        # Puzzle gigante (auto-shrink se grande demais)
+        puz_y = tag_box[3] + 36
+        puz_h = 380
+        puz_box = (OUT_PAD + 40, puz_y, W - OUT_PAD - 40, puz_y + puz_h)
+        pixel_rect(draw, puz_box, PANEL)
+        pixel_rect(draw, (puz_box[0], puz_box[1],
+                          puz_box[2], puz_box[1] + 4), accent)
+
+        # quebra display em até 4 linhas (charada vira frase, anagrama é 1 linha)
+        puzzle_text = (data.display or "").upper()
+        max_w = puz_box[2] - puz_box[0] - 40
+        # escolhe font conforme tamanho
+        for size in (84, 72, 60, 48, 40, 34, 28):
+            pf = load_font(size, mono=True, bold=True)
+            # quebra por palavra
+            words = puzzle_text.split()
+            lines: list[str] = []
+            cur = ""
+            for wd in words:
+                trial = (cur + " " + wd).strip()
+                tw_test, _ = text_size(draw, trial, pf)
+                if tw_test <= max_w:
+                    cur = trial
+                else:
+                    if cur:
+                        lines.append(cur)
+                    cur = wd
+            if cur:
+                lines.append(cur)
+            line_h = size + 8
+            total_h = line_h * len(lines)
+            if total_h <= puz_h - 40 and len(lines) <= 5:
+                break
+        # render linhas centralizadas
+        ly = puz_y + (puz_h - total_h) // 2
+        for ln_txt in lines:
+            lw, _ = text_size(draw, ln_txt, pf)
+            draw.text((puz_box[0] + (puz_box[2] - puz_box[0] - lw) // 2, ly),
+                      ln_txt, font=pf, fill=INK)
+            ly += line_h
+
+        # Footer: tempo + tentativas + reward
+        ft_y = puz_box[3] + 30
+        ft_box = (OUT_PAD + 28, ft_y, W - OUT_PAD - 28, ft_y + 120)
+        pixel_rect(draw, ft_box, PANEL)
+        pixel_rect(draw, (ft_box[0], ft_box[1],
+                          ft_box[2], ft_box[1] + 4), accent)
+
+        # 3 colunas: TEMPO / TENTATIVAS / REWARD
+        col_w = (ft_box[2] - ft_box[0]) // 3
+        lbl_f = load_font(13, mono=True, bold=False)
+        val_f = load_font(34, mono=True, bold=True)
+
+        def col(idx: int, lbl_txt: str, val_txt: str, color):
+            cx0 = ft_box[0] + col_w * idx
+            draw.text((cx0 + 24, ft_box[1] + 18),
+                      lbl_txt, font=lbl_f, fill=DIM)
+            vw, _ = text_size_smart(draw, val_txt, val_f)
+            draw_text_smart(draw, (cx0 + 24, ft_box[1] + 44),
+                            val_txt, val_f, color)
+
+        col(0, ">> TEMPO",      f"~{data.mins_left}m", AMBER)
+        col(1, ">> TENTATIVAS", f"{data.attempts}",    CYAN)
+        col(2, ">> RECOMPENSA",
+            f"{data.reward_xp}xp", accent)
+
+        # rodapé reward gold
+        foot_f = load_font(13, mono=True, bold=False)
+        gold_txt = f"+ {data.reward_gold}🪙 PARA O VENCEDOR"
+        gw, _ = text_size_smart(draw, gold_txt, foot_f)
+        draw_text_smart(draw,
+                        ((W - gw) // 2, H - OUT_PAD - 48),
+                        gold_txt, foot_f, GOLD)
+
+        img = img.convert("RGBA")
+        apply_scanlines(img, every=3, alpha=55)
+        vimg = img.convert("RGB")
+        apply_vignette(vimg, strength=170)
+        img = vimg.convert("RGBA")
+        apply_grain(img, intensity=20)
+        img = img.convert("RGB")
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=90, optimize=True)
+        payload = buf.getvalue()
+        cache_put(cache_key, payload)
+        return payload
+    except Exception:
+        logger.exception("ROYAL_PALAVRA_ACTIVE_CARD_RENDER_FAILED cid=%r",
+                         data.challenge_id)
+        return None
+
+
+# =====================================================================
+# SHIPPER CARD — opt_in / opt_out de casórios (encalhar/desencalhar)
+# =====================================================================
+
+@dataclass(frozen=True)
+class ShipperData:
+    royal_id: str
+    name: str
+    avatar_slug: str | None
+    opted_out: bool   # True = encalhado, False = no jogo
+
+
+def render_shipper_card(data: ShipperData) -> bytes | None:
+    """Status do shipper: avatar + selo gigante OPT_IN/OPT_OUT."""
+    cache_key = ("shipper", data.royal_id, data.name,
+                 data.avatar_slug, data.opted_out)
+    cached = cache_get(cache_key)
+    if cached:
+        return cached
+    try:
+        pal = pick_palette(data.royal_id)
+        accent = HOT if data.opted_out else MAGENTA
+        seal_label = "ENCALHADO.SYS" if data.opted_out else "NO_JOGO.SYS"
+        status_text = "OPT_OUT" if data.opted_out else "OPT_IN"
+        emoji_line = "🚫💔" if data.opted_out else "💘🔄"
+
+        W = H = CARD_SIZE
+        img = Image.new("RGB", (W, H), BG_DEEP)
+        draw = ImageDraw.Draw(img)
+
+        # static
+        rng = random.Random(int(
+            hashlib.sha1(f"ship:{data.royal_id}:{int(data.opted_out)}"
+                         .encode()).hexdigest()[:8], 16))
+        for _ in range(1100):
+            x = rng.randrange(W); y = rng.randrange(H)
+            c = rng.choice([(16, 14, 20), (24, 16, 22), (28, 22, 30),
+                            (40, 14, 18) if data.opted_out
+                            else (40, 18, 36)])
+            pixel_rect(draw, (x, y, x + 3, y + 3), c)
+
+        OUT_PAD = 28
+        panel_box = (OUT_PAD, OUT_PAD, W - OUT_PAD, H - OUT_PAD)
+        pixel_rect(draw, panel_box, BG)
+        chunky_border(draw, panel_box, outer=BLACK, inner=accent, thick=8)
+
+        # Header
+        hbox = (OUT_PAD + 28, OUT_PAD + 28,
+                W - OUT_PAD - 28, OUT_PAD + 110)
+        pixel_rect(draw, hbox, PANEL)
+        pixel_rect(draw, (hbox[0], hbox[1], hbox[2], hbox[1] + 4), accent)
+        tf = load_font(28, mono=True, bold=True)
+        draw.text((hbox[0] + 22, hbox[1] + 22),
+                  "SHIPPER.SYS", font=tf, fill=accent)
+        sf = load_font(16, mono=True, bold=False)
+        sub = f">> {status_text}"
+        sw, _ = text_size(draw, sub, sf)
+        draw.text((hbox[2] - 22 - sw, hbox[1] + 30),
+                  sub, font=sf, fill=DIM)
+
+        # Avatar central
+        av_size = 220
+        av_x = (W - av_size) // 2
+        av_y = OUT_PAD + 150
+        resolved = royal_avatars.resolve_slug(
+            data.avatar_slug, data.royal_id)
+        try:
+            av_img = royal_avatars.load_avatar(resolved, size=av_size)
+            if av_img is not None:
+                # frame chunky
+                fbox = (av_x - 12, av_y - 12,
+                        av_x + av_size + 12, av_y + av_size + 12)
+                pixel_rect(draw, fbox, BG_DEEP)
+                chunky_border(draw, fbox, outer=BLACK,
+                              inner=accent, thick=6)
+                img.paste(av_img, (av_x, av_y),
+                          av_img if av_img.mode == "RGBA" else None)
+                # se opt_out, marca um "X" vermelho sobre o avatar
+                if data.opted_out:
+                    od = ImageDraw.Draw(img)
+                    od.line([(av_x + 12, av_y + 12),
+                             (av_x + av_size - 12, av_y + av_size - 12)],
+                            fill=HOT, width=10)
+                    od.line([(av_x + av_size - 12, av_y + 12),
+                             (av_x + 12, av_y + av_size - 12)],
+                            fill=HOT, width=10)
+        except Exception:
+            pass
+
+        # Nome
+        name_y = av_y + av_size + 40
+        nf = load_font(28, mono=True, bold=True)
+        nm_txt = f"{data.royal_id} · {data.name}"
+        nw, _ = text_size_smart(draw, nm_txt, nf)
+        draw_text_smart(draw, ((W - nw) // 2, name_y),
+                        nm_txt, nf, INK)
+
+        # Selo gigante
+        seal_y = name_y + 56
+        seal_box = (OUT_PAD + 50, seal_y, W - OUT_PAD - 50, seal_y + 130)
+        pixel_rect(draw, seal_box, BG_DEEP)
+        chunky_border(draw, seal_box, outer=BLACK,
+                      inner=accent, thick=6)
+        sealf = load_font(46, mono=True, bold=True)
+        slw, slh = text_size_smart(draw, seal_label, sealf)
+        # auto-shrink
+        if slw > seal_box[2] - seal_box[0] - 40:
+            sealf = load_font(36, mono=True, bold=True)
+            slw, slh = text_size_smart(draw, seal_label, sealf)
+        draw_text_smart(draw,
+                        ((W - slw) // 2,
+                         seal_box[1] + (130 - slh) // 2 - 2),
+                        seal_label, sealf, accent)
+
+        # Footer emoji + comando
+        ef = load_font(40, mono=True, bold=False)
+        ew, _ = text_size_smart(draw, emoji_line, ef)
+        draw_text_smart(draw,
+                        ((W - ew) // 2, H - OUT_PAD - 110),
+                        emoji_line, ef, INK)
+
+        ff = load_font(13, mono=True, bold=False)
+        hint = ("> /royaldesencalhar pra voltar"
+                if data.opted_out
+                else "> /royalencalhar pra sair do jogo")
+        hw, _ = text_size(draw, hint, ff)
+        draw.text(((W - hw) // 2, H - OUT_PAD - 50),
+                  hint, font=ff, fill=DIM)
+
+        img = img.convert("RGBA")
+        apply_scanlines(img, every=3, alpha=55)
+        vimg = img.convert("RGB")
+        apply_vignette(vimg, strength=170)
+        img = vimg.convert("RGBA")
+        apply_grain(img, intensity=20)
+        img = img.convert("RGB")
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=90, optimize=True)
+        payload = buf.getvalue()
+        cache_put(cache_key, payload)
+        return payload
+    except Exception:
+        logger.exception("ROYAL_SHIPPER_CARD_RENDER_FAILED rid=%r",
+                         data.royal_id)
+        return None

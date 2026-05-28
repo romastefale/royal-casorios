@@ -75,8 +75,10 @@ from royal_render import (
     render_loja_card,
     render_loja_drop_card,
     render_meuscasorios_card,
+    render_palavra_active_card,
     render_palavra_spoiler_card,
     render_profile_card,
+    render_shipper_card,
     render_ranking_card,
     render_saldo_card,
     BossStatusData,
@@ -86,8 +88,10 @@ from royal_render import (
     LojaData,
     LojaSlot,
     MeusCasoriosData,
+    PalavraActiveData,
     PartnerMini,
     SaldoData,
+    ShipperData,
 )
 import hashlib
 
@@ -4662,6 +4666,45 @@ async def royal_palavra_status(message: Message):
             "<i>Sem transmissão ativa. Aguarde o próximo sinal.</i>",
             status="STANDBY", status_color="AMBER"))
         return
+    if message.from_user:
+        await react_to(message.chat.id, message.message_id, "🔤")
+    # === CARD VISUAL (card-first com text fallback) ===
+    try:
+        await safe_typing(message.chat.id, "upload_photo")
+        try:
+            ends_at = datetime.fromisoformat(ch["ends_at"])
+            mins_left = max(0, int((ends_at - utc_now()).total_seconds() / 60))
+        except Exception:
+            mins_left = ch.get("duration_min", 5)
+        # display: charada usa hint, demais usa display
+        if ch["type"] == "charada":
+            disp = ch.get("hint") or ""
+        elif ch["type"] == "spoiler_img":
+            disp = "TOQUE A IMAGEM PRA REVELAR"
+        else:
+            disp = ch.get("display") or ""
+        data = PalavraActiveData(
+            challenge_id=int(ch["id"]),
+            ch_type=ch["type"],
+            display=disp,
+            mins_left=mins_left,
+            attempts=int(ch.get("attempts_count") or 0),
+            reward_xp=XP_PALAVRA_WIN_BONUS,
+            reward_gold=GOLD_PALAVRA_WIN,
+        )
+        png = await asyncio.to_thread(render_palavra_active_card, data)
+        if png and bot is not None:
+            caption = (f"<i>Transmissão ativa — "
+                       f"<b>~{mins_left}min</b> restantes</i>")
+            if len(caption) > 1024:
+                caption = caption[:1020] + "…"
+            await bot.send_photo(
+                message.chat.id,
+                BufferedInputFile(png, filename="palavra.jpg"),
+                caption=caption)
+            return
+    except Exception:
+        logger.exception("[ROYALPALAVRA] card render failed; fallback texto")
     await message.answer(format_challenge_text(ch))
 
 
@@ -4992,6 +5035,31 @@ async def royal_encalhar(message: Message):
     cur.execute("UPDATE users SET opt_out=1 WHERE chat_id=? AND user_id=?",
                 (chat_id, message.from_user.id))
     db.commit()
+    await react_to(message.chat.id, message.message_id, "🚫")
+    # === CARD VISUAL (card-first com text fallback) ===
+    try:
+        await safe_typing(message.chat.id, "upload_photo")
+        p = get_player(chat_id, message.from_user.id) or {}
+        rid = p.get("royal_id") or "RYL-????"
+        data = ShipperData(
+            royal_id=rid,
+            name=get_anon_name(chat_id, message.from_user.id),
+            avatar_slug=p.get("avatar_slug"),
+            opted_out=True,
+        )
+        png = await asyncio.to_thread(render_shipper_card, data)
+        if png and bot is not None:
+            caption = ("<i>🚫💔 modo encalhado ativado — "
+                       "sem casórios automáticos.</i>")
+            if len(caption) > 1024:
+                caption = caption[:1020] + "…"
+            await bot.send_photo(
+                message.chat.id,
+                BufferedInputFile(png, filename="encalhar.jpg"),
+                caption=caption)
+            return
+    except Exception:
+        logger.exception("[ROYALENCALHAR] card render failed; fallback texto")
     await message.answer(term_block(
         "SHIPPER",
         "🚫💔 <i>Modo encalhado(a) ativado.</i>\n"
@@ -5008,6 +5076,31 @@ async def royal_desencalhar(message: Message):
     cur.execute("UPDATE users SET opt_out=0 WHERE chat_id=? AND user_id=?",
                 (chat_id, message.from_user.id))
     db.commit()
+    await react_to(message.chat.id, message.message_id, "💘")
+    # === CARD VISUAL (card-first com text fallback) ===
+    try:
+        await safe_typing(message.chat.id, "upload_photo")
+        p = get_player(chat_id, message.from_user.id) or {}
+        rid = p.get("royal_id") or "RYL-????"
+        data = ShipperData(
+            royal_id=rid,
+            name=get_anon_name(chat_id, message.from_user.id),
+            avatar_slug=p.get("avatar_slug"),
+            opted_out=False,
+        )
+        png = await asyncio.to_thread(render_shipper_card, data)
+        if png and bot is not None:
+            caption = "<i>💘🔄 de volta ao jogo dos casórios!</i>"
+            if len(caption) > 1024:
+                caption = caption[:1020] + "…"
+            await bot.send_photo(
+                message.chat.id,
+                BufferedInputFile(png, filename="desencalhar.jpg"),
+                caption=caption,
+                **effect_kw(message.chat.type, EFFECT_HEART))
+            return
+    except Exception:
+        logger.exception("[ROYALDESENCALHAR] card render failed; fallback texto")
     await message.answer(term_block(
         "SHIPPER",
         "🔄💘 <i>De volta ao jogo dos casórios!</i>",
