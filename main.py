@@ -331,7 +331,7 @@ boss_attack_cooldowns: dict[tuple[int, int], float] = {}
 
 private_menu = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="👑 Reino")],
+        [KeyboardButton(text="👑 Reino"), KeyboardButton(text="📖 Tutorial")],
         [KeyboardButton(text="📊 Meus casórios"), KeyboardButton(text="❓ Como funciona")],
     ],
     resize_keyboard=True,
@@ -1891,6 +1891,109 @@ async def close_season(chat_id: int, old_code: str | None, new_code: str) -> Non
 # HANDLERS — COMANDOS GERAIS
 # =====================================================================
 
+# ---------------------------------------------------------------------
+# TUTORIAL.SYS — ensina a jogar passo a passo (usado em /start, /help,
+# /royalajuda e /royaltutorial). Cada passo num blockquote expandable
+# pro user abrir só o que quiser ler.
+# ---------------------------------------------------------------------
+
+ROYAL_TUTORIAL = (
+    "<b>// TUTORIAL.SYS · COMO JOGAR</b>\n"
+    "<i>Toca em cada passo pra expandir ▾</i>\n\n"
+
+    "<blockquote expandable>"
+    "<b>>> PASSO 1 · CHEGADA</b>\n"
+    "Entra num grupo onde o Royal tá ativo. Manda <code>/royal</code> "
+    "pra abrir o terminal principal e ver o que rola no reino.\n"
+    "<i>// se for admin do grupo, use /royalativar primeiro.</i>"
+    "</blockquote>"
+
+    "<blockquote expandable>"
+    "<b>>> PASSO 2 · GANHE XP</b>\n"
+    f"Você ganha <b>{XP_PER_MESSAGE} XP</b> por mensagem e "
+    f"<b>{XP_PER_REPLY} XP</b> por reply.\n"
+    f">> cooldown: {XP_COOLDOWN_MSG_SECONDS}s msg / "
+    f"{XP_COOLDOWN_REPLY_SECONDS}s reply.\n"
+    "Quanto mais você conversa, mais sobe."
+    "</blockquote>"
+
+    "<blockquote expandable>"
+    "<b>>> PASSO 3 · SUA FICHA</b>\n"
+    "Usa <code>/royalperfil</code> pra ver seu cartão de identidade — "
+    "level, atributos, ranking, casórios, florins.\n"
+    "<i>// cada nobre tem um RYL ID único.</i>"
+    "</blockquote>"
+
+    "<blockquote expandable>"
+    "<b>>> PASSO 4 · LEVEL UP</b>\n"
+    f"Cada nível te dá <b>{PTS_PER_LEVEL} ponto(s)</b> de atributo.\n"
+    "Usa <code>/royalup</code> pra distribuir em:\n"
+    "• 💪 FORÇA — mais dano no boss\n"
+    "• 🏃 DESTREZA — mais XP em palavras\n"
+    "• 🛡️ VITALIDADE — mais HP\n"
+    "• ✨ CARISMA — mais chance em casórios"
+    "</blockquote>"
+
+    "<blockquote expandable>"
+    "<b>>> PASSO 5 · ESCOLHA UMA CLASSE</b>\n"
+    "<code>/royalclasse</code> — define teu papel no reino.\n"
+    "Cada classe tem um bônus passivo. Escolha com cuidado, "
+    "<i>vale pra temporada inteira.</i>"
+    "</blockquote>"
+
+    "<blockquote expandable>"
+    "<b>>> PASSO 6 · PALAVRA DA HORA</b>\n"
+    "A cada <b>60 min</b> o bot solta um desafio no grupo "
+    "(anagrama, letras faltando ou charada).\n"
+    f"<i>Primeiro a acertar leva <b>{XP_PALAVRA_WIN_BONUS} XP</b> "
+    f"+ <b>{GOLD_PALAVRA_WIN} 🪙</b>.</i>\n"
+    ">> só responder no chat. /royalpalavra mostra o ativo."
+    "</blockquote>"
+
+    "<blockquote expandable>"
+    "<b>>> PASSO 7 · BOSS DA SEMANA</b>\n"
+    f"Todo <b>domingo às {BOSS_SPAWN_HOUR}h</b> nasce um boss. "
+    "Todo mundo do grupo ataca junto.\n"
+    "Usa <code>/royalboss</code> pra ver HP e dar o golpe.\n"
+    "<i>// recompensa em XP + florins se derrubarem.</i>"
+    "</blockquote>"
+
+    "<blockquote expandable>"
+    "<b>>> PASSO 8 · CASORIOS</b>\n"
+    "<b>3x ao dia</b> o bot escolhe um par e abre votação ❤️/🤮.\n"
+    "Casamentos ativos dão <b>+10% XP</b> e contam pro ranking.\n"
+    ">> <code>/royalmeuscasorios</code> · <code>/royalcasorios</code>\n"
+    "<i>// /royalencalhar pra sair da fila.</i>"
+    "</blockquote>"
+
+    "<blockquote expandable>"
+    "<b>>> PASSO 9 · LOJA &amp; INVENTARIO</b>\n"
+    "Florins 🪙 vêm de palavras, boss e eventos.\n"
+    "<code>/royalloja</code> compra itens, "
+    "<code>/royalinventario</code> equipa.\n"
+    "<i>// alguns itens dão buff passivo.</i>"
+    "</blockquote>"
+
+    "<blockquote expandable>"
+    "<b>>> PASSO 10 · TEMPORADAS</b>\n"
+    "O reino segue as estações do ano. Cada temporada zera o "
+    "ranking, mas <b>seu nível total fica.</b>\n"
+    ">> <code>/royalranking</code> pra ver o top 10 atual."
+    "</blockquote>"
+
+    "<i>>> pronto, nobre. boa caçada ⚔️</i>"
+)
+
+
+def tutorial_block() -> str:
+    """Retorna tutorial envolvido em term_block."""
+    return term_block(
+        "TUTORIAL", ROYAL_TUTORIAL,
+        status="ONBOARDING", status_color="CYAN",
+        stamp=current_season_label(),
+    )
+
+
 @dp.message(CommandStart())
 async def start_cmd(message: Message):
     if message.chat.type != "private":
@@ -1905,6 +2008,7 @@ async def start_cmd(message: Message):
         "• 💍 /royalcasorios — ranking de casórios\n"
         "• ⚔️ /royalpalavra — desafio ativo\n"
         "• 🐉 /royalboss — boss semanal\n"
+        "• 📖 /royaltutorial — aprender a jogar\n"
         "• ❓ /royalajuda — manual completo"
         "</blockquote>"
         "<i>Toca num botão abaixo pra navegar 👇</i>"
@@ -1915,6 +2019,8 @@ async def start_cmd(message: Message):
         reply_markup=private_menu,
         **effect_kw(message.chat.type, EFFECT_PARTY),
     )
+    # Tutorial completo logo em seguida (primeira impressão = ensina o jogo)
+    await message.answer(tutorial_block())
 
 
 # === /royal — HUB ===
@@ -1965,12 +2071,20 @@ ROYAL_HELP = (
 
 @dp.message(Command("royalajuda"))
 async def royal_ajuda(message: Message):
+    # Tutorial primeiro (ensina), depois manual de comandos (referência)
+    await message.answer(tutorial_block())
     await message.answer(ROYAL_HELP)
 
 
 @dp.message(Command("help"))
 async def help_cmd(message: Message):
+    await message.answer(tutorial_block())
     await message.answer(ROYAL_HELP)
+
+
+@dp.message(Command("royaltutorial"))
+async def royal_tutorial_cmd(message: Message):
+    await message.answer(tutorial_block())
 
 
 # === /royalperfil ===
@@ -2508,6 +2622,11 @@ async def royal_casorios(message: Message):
 @dp.message(F.text == "📊 Meus casórios")
 async def btn_meus(message: Message):
     await royal_meus(message)
+
+
+@dp.message(F.text == "📖 Tutorial")
+async def btn_tutorial(message: Message):
+    await message.answer(tutorial_block())
 
 
 @dp.message(F.text == "❓ Como funciona")
@@ -3175,11 +3294,13 @@ async def register_bot_commands():
         BotCommand(command="royaldesencalhar",  description="💘 Voltar pros casórios"),
         BotCommand(command="royalcasar",        description="💍 (admin) Forçar casório"),
         BotCommand(command="royalativar",       description="🔧 (admin) Ativar bot"),
+        BotCommand(command="royaltutorial",     description="📖 Como jogar"),
         BotCommand(command="royalajuda",        description="❓ Ajuda completa"),
     ]
     private_cmds = [
         BotCommand(command="royal",             description="👑 Menu principal"),
         BotCommand(command="royalperfil",       description="📜 Meu perfil"),
+        BotCommand(command="royaltutorial",     description="📖 Como jogar"),
         BotCommand(command="royalajuda",        description="❓ Ajuda"),
         BotCommand(command="royalprivacidade",  description="🔒 Privacidade"),
         BotCommand(command="royaldados",        description="📦 Meus dados"),
