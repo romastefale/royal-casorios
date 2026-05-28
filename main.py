@@ -66,13 +66,18 @@ from royal_render import (
     RankingEntry,
     render_boss_kill_card,
     render_casorio_card,
+    render_casorios_ranking_card,
     render_classe_card,
     render_identity_card,
     render_levelup_card,
     render_loja_drop_card,
+    render_meuscasorios_card,
     render_palavra_spoiler_card,
     render_profile_card,
     render_ranking_card,
+    CouplePodiumEntry,
+    MeusCasoriosData,
+    PartnerMini,
 )
 import hashlib
 
@@ -4844,6 +4849,8 @@ async def royal_meus(message: Message):
     chat_id = await resolve_dm_chat(message, action_hint="ver meus casorios")
     if chat_id is None:
         return
+    await react_to(message.chat.id, message.message_id, "👀")
+    await safe_typing(message.chat.id, "upload_photo")
     cur.execute("SELECT COUNT(*) AS total FROM couples WHERE chat_id=? AND (user1=? OR user2=?)",
                 (chat_id, uid, uid))
     total = cur.fetchone()["total"]
@@ -4854,6 +4861,43 @@ async def royal_meus(message: Message):
         GROUP BY partner ORDER BY total DESC LIMIT 5
         """, (uid, chat_id, uid, uid))
     rows = cur.fetchall()
+    # === CARD VISUAL (card-first com text fallback) ===
+    try:
+        self_p = get_player(chat_id, uid) or {}
+        self_rid = self_p.get("royal_id") or "RYL-????"
+        self_name = get_anon_name(chat_id, uid)
+        self_slug = self_p.get("avatar_slug")
+        partners_data: list[PartnerMini] = []
+        for r in rows:
+            pp = get_player(chat_id, r["partner"]) or {}
+            partners_data.append(PartnerMini(
+                royal_id=pp.get("royal_id") or "RYL-????",
+                name=get_anon_name(chat_id, r["partner"]),
+                avatar_slug=pp.get("avatar_slug"),
+                total=int(r["total"]),
+            ))
+        data = MeusCasoriosData(
+            self_royal_id=self_rid,
+            self_name=self_name,
+            self_avatar_slug=self_slug,
+            total_casorios=int(total),
+            top_partners=tuple(partners_data),
+            season_label=current_season_label(),
+        )
+        png = await asyncio.to_thread(render_meuscasorios_card, data)
+        if png and bot is not None:
+            caption = (f"<i>Seus casórios no reino — "
+                       f"<b>{total}</b> ao todo.</i>")
+            await bot.send_photo(
+                message.chat.id,
+                BufferedInputFile(png, filename=f"meuscasorios-{self_rid}.jpg"),
+                caption=cap1024(caption),
+                parse_mode="HTML",
+            )
+            return
+    except Exception:
+        logger.exception("render_meuscasorios_card path failed; fallback texto")
+    # === Fallback texto (mantido como salvaguarda) ===
     body = f"<i>Você já participou de <b>{total}</b> casórios. 😳</i>"
     if rows:
         body += "\n\n<b>>> TOP PARES</b>\n" + "\n".join(
@@ -4868,6 +4912,8 @@ async def royal_meus(message: Message):
 @dp.message(Command("royalcasorios", "divorcios"))
 async def royal_casorios(message: Message):
     chat_id = message.chat.id
+    if message.from_user:
+        await react_to(message.chat.id, message.message_id, "👀")
     cur.execute(
         """
         SELECT user1, user2, COUNT(*) AS total FROM couples
@@ -4880,6 +4926,44 @@ async def royal_casorios(message: Message):
             "<i>Ainda não existem casórios suficientes pra ranking.</i>",
             status="VAZIO", status_color="AMBER"))
         return
+    # === CARD VISUAL (card-first com text fallback) ===
+    try:
+        await safe_typing(message.chat.id, "upload_photo")
+        entries: list[CouplePodiumEntry] = []
+        for i, row in enumerate(rows, start=1):
+            p1 = get_player(chat_id, row["user1"]) or {}
+            p2 = get_player(chat_id, row["user2"]) or {}
+            entries.append(CouplePodiumEntry(
+                rank=i,
+                p1_royal_id=p1.get("royal_id") or "RYL-????",
+                p1_name=get_anon_name(chat_id, row["user1"]),
+                p1_avatar_slug=p1.get("avatar_slug"),
+                p2_royal_id=p2.get("royal_id") or "RYL-????",
+                p2_name=get_anon_name(chat_id, row["user2"]),
+                p2_avatar_slug=p2.get("avatar_slug"),
+                total=int(row["total"]),
+            ))
+        season = current_season_label()
+        png = await asyncio.to_thread(
+            render_casorios_ranking_card, season, tuple(entries))
+        if png and bot is not None:
+            top = entries[0]
+            caption = (
+                f"<b>👑 ROYAL COUPLES // {html.escape(season)}</b>\n"
+                f"<i>1º lugar: {html.escape(top.p1_name)} ♥ "
+                f"{html.escape(top.p2_name)} — "
+                f"<b>{top.total}x</b></i>"
+            )
+            await bot.send_photo(
+                message.chat.id,
+                BufferedInputFile(png, filename="royal_casorios.jpg"),
+                caption=cap1024(caption),
+                parse_mode="HTML",
+            )
+            return
+    except Exception:
+        logger.exception("render_casorios_ranking_card path failed; fallback texto")
+    # === Fallback texto ===
     medals = ["🥇", "🥈", "🥉"] + ["🏅"] * 7
     lines = []
     for i, row in enumerate(rows, start=1):

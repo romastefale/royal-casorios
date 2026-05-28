@@ -377,3 +377,27 @@ id = "fOy7ldcs92hXfUUXmQEVN"
 uri = "file://attached_assets/tofu_test.png"
 type = "image"
 title = "Teste anti-tofu — display names Unicode estilizados"
+
+[[outputs]]
+id = "FIgb53yu4RJ86-YomfnqS"
+uri = "file://attached_assets/casorios_preview/01_casorios_ranking_top10.jpg"
+type = "image"
+title = "/royalcasorios — Top 10 casais (pódio + lista)"
+
+[[outputs]]
+id = "3OnYQ86NCkyuWaIxzCPHN"
+uri = "file://attached_assets/casorios_preview/02_casorios_ranking_1casal.jpg"
+type = "image"
+title = "/royalcasorios — Edge case: só 1 casal"
+
+[[outputs]]
+id = "rWj3FS30iRzPqOnP0KAbM"
+uri = "file://attached_assets/casorios_preview/03_meuscasorios_com_pares.jpg"
+type = "image"
+title = "/royalmeuscasorios — Perfil com 5 parceiros"
+
+[[outputs]]
+id = "vMjWRq-A0sugKMjrfbEb4"
+uri = "file://attached_assets/casorios_preview/04_meuscasorios_vazio.jpg"
+type = "image"
+title = "/royalmeuscasorios — Edge case: zero parceiros"

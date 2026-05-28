@@ -2326,3 +2326,432 @@ def render_loja_drop_card(data: LojaDropData) -> bytes | None:
         logger.exception("ROYAL_LOJA_DROP_CARD_RENDER_FAILED rid=%r item=%r",
                          data.royal_id, data.item_name)
         return None
+
+
+# =====================================================================
+# CASORIOS RANKING CARD — top-10 casais do grupo (pódio 3 + lista 4-10)
+# =====================================================================
+
+@dataclass(frozen=True)
+class CouplePodiumEntry:
+    rank: int
+    p1_royal_id: str
+    p1_name: str
+    p1_avatar_slug: str | None
+    p2_royal_id: str
+    p2_name: str
+    p2_avatar_slug: str | None
+    total: int
+
+
+def render_casorios_ranking_card(
+        season_label: str,
+        entries: tuple[CouplePodiumEntry, ...]) -> bytes | None:
+    """Pódio top-3 casais (dois retratos + heart no meio) + lista 4-10."""
+    if not entries:
+        return None
+    cache_key = ("casorios_rank", season_label,
+                 tuple((e.rank,
+                        e.p1_royal_id, e.p1_name, e.p1_avatar_slug,
+                        e.p2_royal_id, e.p2_name, e.p2_avatar_slug,
+                        e.total)
+                       for e in entries[:10]))
+    cached = cache_get(cache_key)
+    if cached:
+        return cached
+    try:
+        pal = pick_palette(season_label)
+        img = Image.new("RGB", (CARD_SIZE, CARD_SIZE), BG_DEEP)
+        draw = ImageDraw.Draw(img)
+
+        # estática de fundo
+        rng = random.Random(hash(("couples", season_label)) & 0xFFFF)
+        for _ in range(1200):
+            x = rng.randrange(CARD_SIZE)
+            y = rng.randrange(CARD_SIZE)
+            c = rng.choice([(20, 16, 22), (16, 14, 20), (28, 22, 30)])
+            pixel_rect(draw, (x, y, x + 3, y + 3), c)
+
+        OUT_PAD = 28
+        panel_box = (OUT_PAD, OUT_PAD,
+                     CARD_SIZE - OUT_PAD, CARD_SIZE - OUT_PAD)
+        pixel_rect(draw, panel_box, BG)
+        chunky_border(draw, panel_box, outer=BLACK, inner=HOT, thick=8)
+
+        # Header
+        header_box = (OUT_PAD + 28, OUT_PAD + 28,
+                      CARD_SIZE - OUT_PAD - 28, OUT_PAD + 110)
+        pixel_rect(draw, header_box, PANEL)
+        pixel_rect(draw, (header_box[0], header_box[1],
+                          header_box[2], header_box[1] + 4), HOT)
+        pixel_rect(draw, (header_box[0], header_box[3] - 4,
+                          header_box[2], header_box[3]), HOT)
+        title_font = load_font(28, mono=True, bold=True)
+        season_font = load_font(20, mono=True, bold=False)
+        draw.text((header_box[0] + 22, header_box[1] + 22),
+                  "ROYAL.COUPLES.SYS", font=title_font, fill=pal["header"])
+        season_txt = f">> {season_label.upper()}"
+        sw, _ = text_size(draw, season_txt, season_font)
+        draw.text((header_box[2] - 22 - sw, header_box[1] + 28),
+                  season_txt, font=season_font, fill=DIM)
+        # heart cursor no canto
+        draw_pixel_heart(draw, header_box[2] - 18,
+                         header_box[1] + 28, 2, color=HOT)
+
+        # Pódio: posições 2-1-3 (1º maior, centro)
+        medal_colors = {1: GOLD, 2: (180, 180, 180), 3: (180, 100, 60)}
+        order = [(2, 0), (1, 1), (3, 2)]
+        top3 = {e.rank: e for e in entries if e.rank <= 3}
+
+        col_w = (CARD_SIZE - OUT_PAD * 2 - 80) // 3
+        col_gap = 20
+        base_x = OUT_PAD + 40
+        podium_y = OUT_PAD + 200
+
+        for rank, col in order:
+            e = top3.get(rank)
+            cx0 = base_x + col * (col_w + col_gap)
+            cx1 = cx0 + col_w
+            heights = {1: 320, 2: 240, 3: 200}
+            ph = heights[rank]
+            podium_top = podium_y + (320 - ph) + 280
+            podium_bot = OUT_PAD + 28 + 800
+
+            # bloco pódio
+            pixel_rect(draw, (cx0, podium_top, cx1, podium_bot), PANEL)
+            pixel_rect(draw, (cx0, podium_top, cx1, podium_top + 6),
+                       medal_colors[rank])
+            num_font = load_font(120, mono=True, bold=True)
+            num = str(rank)
+            nw, nh = text_size(draw, num, num_font)
+            draw.text((cx0 + (col_w - nw) // 2, podium_top + 20),
+                      num, font=num_font, fill=medal_colors[rank])
+
+            # caixa do casal acima do pódio
+            box_top = podium_top - 200
+            pixel_rect(draw, (cx0, box_top, cx1, podium_top - 12), PANEL)
+            pixel_rect(draw, (cx0, box_top, cx1, box_top + 4),
+                       medal_colors[rank])
+            if e:
+                # Dois retratos lado-a-lado com heart no meio (escala c/ rank)
+                port_size = {1: 96, 2: 84, 3: 76}[rank]
+                heart_scale = {1: 6, 2: 5, 3: 4}[rank]
+                heart_w = 7 * heart_scale
+                total_w = port_size * 2 + heart_w + 24
+                start_x = cx0 + (col_w - total_w) // 2
+                ports_y = box_top - port_size - 16
+
+                for idx, (rid, slug) in enumerate(
+                        [(e.p1_royal_id, e.p1_avatar_slug),
+                         (e.p2_royal_id, e.p2_avatar_slug)]):
+                    resolved = royal_avatars.resolve_slug(slug, rid)
+                    portrait = royal_avatars.load_avatar(resolved, port_size)
+                    pxc = start_x + idx * (port_size + heart_w + 24)
+                    pyc = ports_y
+                    pixel_rect(draw,
+                               (pxc - 3, pyc - 3,
+                                pxc + port_size + 3, pyc + port_size + 3),
+                               BLACK)
+                    pixel_rect(draw,
+                               (pxc - 1, pyc - 1,
+                                pxc + port_size + 1, pyc + port_size + 1),
+                               medal_colors[rank])
+                    if portrait is not None:
+                        img.paste(portrait, (pxc, pyc), portrait)
+                # heart no meio
+                hx = start_x + port_size + 12
+                hy = ports_y + (port_size - 6 * heart_scale) // 2
+                draw_pixel_heart(draw, hx, hy, heart_scale, color=HOT)
+
+                medal_txt = {1: "1ST", 2: "2ND", 3: "3RD"}[rank]
+                mt_font = load_font(16, mono=True, bold=True)
+                mw, _ = text_size(draw, medal_txt, mt_font)
+                draw.text((cx0 + (col_w - mw) // 2, box_top + 12),
+                          medal_txt, font=mt_font, fill=medal_colors[rank])
+
+                # par "Nome1 ❤ Nome2" — ellipsize curto
+                n1 = ellipsize(e.p1_name, 8).upper()
+                n2 = ellipsize(e.p2_name, 8).upper()
+                pair_txt = f"{n1} ♥ {n2}"
+                ns = 16 if len(pair_txt) <= 20 else 14
+                name_font = load_font(ns, mono=True, bold=True)
+                nw2, _ = text_size_smart(draw, pair_txt, name_font)
+                if nw2 > col_w - 12:
+                    pair_txt = f"{n1[:6]} ♥ {n2[:6]}"
+                    nw2, _ = text_size_smart(draw, pair_txt, name_font)
+                draw_text_smart(draw,
+                                (cx0 + (col_w - nw2) // 2, box_top + 40),
+                                pair_txt, name_font, INK)
+
+                # IDs em DIM
+                id_font = load_font(12, mono=True, bold=False)
+                ids = f"{e.p1_royal_id} + {e.p2_royal_id}"
+                idw, _ = text_size(draw, ids, id_font)
+                if idw > col_w - 12:
+                    ids = f"{e.p1_royal_id}"
+                    idw, _ = text_size(draw, ids, id_font)
+                draw.text((cx0 + (col_w - idw) // 2, box_top + 72),
+                          ids, font=id_font, fill=DIM)
+
+                # Total casórios — destaque
+                tot_font = load_font(22, mono=True, bold=True)
+                tot_txt = f"{format_br(e.total)}x ♥"
+                tw, _ = text_size_smart(draw, tot_txt, tot_font)
+                draw_text_smart(draw,
+                                (cx0 + (col_w - tw) // 2, box_top + 100),
+                                tot_txt, tot_font, pal["xp"])
+
+                lv_font = load_font(12, mono=True, bold=False)
+                lv_txt = "CASORIOS"
+                lvw, _ = text_size(draw, lv_txt, lv_font)
+                draw.text((cx0 + (col_w - lvw) // 2, box_top + 130),
+                          lv_txt, font=lv_font, fill=DIM)
+            else:
+                empty_font = load_font(16, mono=True, bold=False)
+                draw.text((cx0 + 20, box_top + 60),
+                          "[ VAGO ]", font=empty_font, fill=DIM)
+
+        # Lista 4-10 no rodapé (2 colunas)
+        rest = [e for e in entries if e.rank > 3][:7]
+        if rest:
+            rest_y = OUT_PAD + 28 + 820
+            rest_font = load_font(15, mono=True, bold=False)
+            for i, e in enumerate(rest):
+                col = i % 2
+                row = i // 2
+                rx = OUT_PAD + 40 + col * (
+                    (CARD_SIZE - OUT_PAD * 2 - 80) // 2 + 20)
+                ry = rest_y + row * 22
+                n1 = ellipsize(e.p1_name, 8)
+                n2 = ellipsize(e.p2_name, 8)
+                line = f" {e.rank:02d}. {n1}♥{n2} {format_br(e.total)}x"
+                draw_text_smart(draw, (rx, ry), line, rest_font, DIM)
+
+        # Footer
+        foot_font = load_font(12, mono=True, bold=False)
+        foot_left = f"> CASAIS={len(entries)}"
+        foot_right = f"v0.1 // {pal['name']}_MODE"
+        draw.text((OUT_PAD + 60, CARD_SIZE - OUT_PAD - 50),
+                  foot_left, font=foot_font, fill=DIM)
+        fw, _ = text_size(draw, foot_right, foot_font)
+        draw.text((CARD_SIZE - OUT_PAD - 60 - fw, CARD_SIZE - OUT_PAD - 50),
+                  foot_right, font=foot_font, fill=pal["footer"])
+
+        img = img.convert("RGBA")
+        apply_scanlines(img, every=3, alpha=55)
+        vimg = img.convert("RGB")
+        apply_vignette(vimg, strength=160)
+        img = vimg.convert("RGBA")
+        apply_grain(img, intensity=18)
+        img = img.convert("RGB")
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=90, optimize=True)
+        payload = buf.getvalue()
+        cache_put(cache_key, payload)
+        return payload
+    except Exception:
+        logger.exception("ROYAL_CASORIOS_RANKING_CARD_RENDER_FAILED")
+        return None
+
+
+# =====================================================================
+# MEUS CASORIOS CARD — perfil pessoal: avatar central + total + top 5
+# =====================================================================
+
+@dataclass(frozen=True)
+class PartnerMini:
+    royal_id: str
+    name: str
+    avatar_slug: str | None
+    total: int
+
+
+@dataclass(frozen=True)
+class MeusCasoriosData:
+    self_royal_id: str
+    self_name: str
+    self_avatar_slug: str | None
+    total_casorios: int
+    top_partners: tuple[PartnerMini, ...]   # ate 5
+    season_label: str = ""
+
+
+def render_meuscasorios_card(data: MeusCasoriosData) -> bytes | None:
+    """Card pessoal de casórios: avatar central + número gigante de total
+    + grade horizontal com 5 mini-portraits dos top parceiros."""
+    cache_key = ("meus_casorios", data.self_royal_id,
+                 data.self_name, data.self_avatar_slug,
+                 data.total_casorios,
+                 tuple((p.royal_id, p.name, p.avatar_slug, p.total)
+                       for p in data.top_partners),
+                 data.season_label)
+    cached = cache_get(cache_key)
+    if cached:
+        return cached
+    try:
+        pal = pick_palette(data.self_royal_id)
+        W = H = CARD_SIZE
+        img = Image.new("RGB", (W, H), BG_DEEP)
+        draw = ImageDraw.Draw(img)
+
+        # estática de fundo
+        rng = random.Random(hash(data.self_royal_id) & 0xFFFF)
+        for _ in range(1100):
+            x = rng.randrange(W)
+            y = rng.randrange(H)
+            c = rng.choice([(20, 16, 22), (16, 14, 20), (28, 22, 30)])
+            pixel_rect(draw, (x, y, x + 3, y + 3), c)
+
+        OUT_PAD = 28
+        panel_box = (OUT_PAD, OUT_PAD, W - OUT_PAD, H - OUT_PAD)
+        pixel_rect(draw, panel_box, BG)
+        chunky_border(draw, panel_box, outer=BLACK, inner=HOT, thick=8)
+
+        # Header
+        header_box = (OUT_PAD + 28, OUT_PAD + 28,
+                      W - OUT_PAD - 28, OUT_PAD + 110)
+        pixel_rect(draw, header_box, PANEL)
+        pixel_rect(draw, (header_box[0], header_box[1],
+                          header_box[2], header_box[1] + 4), HOT)
+        pixel_rect(draw, (header_box[0], header_box[3] - 4,
+                          header_box[2], header_box[3]), HOT)
+        title_font = load_font(28, mono=True, bold=True)
+        draw.text((header_box[0] + 22, header_box[1] + 22),
+                  "MEUS.CASORIOS.SYS", font=title_font, fill=pal["header"])
+        if data.season_label:
+            season_font = load_font(20, mono=True, bold=False)
+            season_txt = f">> {data.season_label.upper()}"
+            sw, _ = text_size(draw, season_txt, season_font)
+            draw.text((header_box[2] - 22 - sw, header_box[1] + 28),
+                      season_txt, font=season_font, fill=DIM)
+        draw_pixel_heart(draw, header_box[2] - 18,
+                         header_box[1] + 28, 2, color=HOT)
+
+        # Avatar central GRANDE (220px)
+        port_size = 220
+        port_x = (W - port_size) // 2
+        port_y = OUT_PAD + 160
+        resolved = royal_avatars.resolve_slug(
+            data.self_avatar_slug, data.self_royal_id)
+        portrait = royal_avatars.load_avatar(resolved, port_size)
+        # Moldura
+        pixel_rect(draw, (port_x - 6, port_y - 6,
+                          port_x + port_size + 6, port_y + port_size + 6),
+                   BLACK)
+        pixel_rect(draw, (port_x - 3, port_y - 3,
+                          port_x + port_size + 3, port_y + port_size + 3),
+                   pal["header"])
+        if portrait is not None:
+            img.paste(portrait, (port_x, port_y), portrait)
+
+        # Nome + royal_id abaixo do avatar
+        name_font = load_font(24, mono=True, bold=True)
+        name = ellipsize(data.self_name, 22).upper()
+        nw, _ = text_size_smart(draw, name, name_font)
+        draw_text_smart(draw, ((W - nw) // 2, port_y + port_size + 16),
+                        name, name_font, INK)
+        id_font = load_font(16, mono=True, bold=False)
+        idw, _ = text_size(draw, data.self_royal_id, id_font)
+        draw.text(((W - idw) // 2, port_y + port_size + 48),
+                  data.self_royal_id, font=id_font, fill=DIM)
+
+        # Painel de TOTAL casórios — grande e centrado
+        tot_panel_y = port_y + port_size + 86
+        tot_panel = (OUT_PAD + 80, tot_panel_y,
+                     W - OUT_PAD - 80, tot_panel_y + 110)
+        pixel_rect(draw, tot_panel, PANEL)
+        pixel_rect(draw, (tot_panel[0], tot_panel[1],
+                          tot_panel[2], tot_panel[1] + 4), HOT)
+        pixel_rect(draw, (tot_panel[0], tot_panel[3] - 4,
+                          tot_panel[2], tot_panel[3]), HOT)
+        label_font = load_font(14, mono=True, bold=False)
+        draw.text((tot_panel[0] + 18, tot_panel[1] + 12),
+                  ">> CASORIOS TOTAIS", font=label_font, fill=DIM)
+        big_font = load_font(56, mono=True, bold=True)
+        big_txt = format_br(data.total_casorios)
+        bw, bh = text_size_smart(draw, big_txt, big_font)
+        draw_text_smart(draw,
+                        (tot_panel[0] + (tot_panel[2] - tot_panel[0] - bw) // 2,
+                         tot_panel[1] + 36),
+                        big_txt, big_font, pal["xp"])
+
+        # Painel TOP PARES — 5 mini-portraits em fila
+        top_y = tot_panel[3] + 24
+        top_panel = (OUT_PAD + 28, top_y,
+                     W - OUT_PAD - 28, top_y + 220)
+        pixel_rect(draw, top_panel, PANEL)
+        pixel_rect(draw, (top_panel[0], top_panel[1],
+                          top_panel[2], top_panel[1] + 4), pal["footer"])
+        head_font = load_font(16, mono=True, bold=True)
+        draw.text((top_panel[0] + 18, top_panel[1] + 12),
+                  ">> TOP PARES", font=head_font, fill=pal["footer"])
+
+        partners = list(data.top_partners)[:5]
+        if partners:
+            mini_size = 80
+            n = len(partners)
+            slot_w = (top_panel[2] - top_panel[0] - 40) // 5
+            for i, p in enumerate(partners):
+                slot_x0 = top_panel[0] + 20 + i * slot_w
+                cx = slot_x0 + (slot_w - mini_size) // 2
+                cy = top_panel[1] + 44
+                mini_resolved = royal_avatars.resolve_slug(
+                    p.avatar_slug, p.royal_id)
+                mini = royal_avatars.load_avatar(mini_resolved, mini_size)
+                pixel_rect(draw, (cx - 2, cy - 2,
+                                  cx + mini_size + 2, cy + mini_size + 2),
+                           BLACK)
+                pixel_rect(draw, (cx - 1, cy - 1,
+                                  cx + mini_size + 1, cy + mini_size + 1),
+                           pal["footer"])
+                if mini is not None:
+                    img.paste(mini, (cx, cy), mini)
+                # nome curto abaixo
+                pn_font = load_font(11, mono=True, bold=True)
+                pn = ellipsize(p.name, 8).upper()
+                pnw, _ = text_size_smart(draw, pn, pn_font)
+                draw_text_smart(draw,
+                                (slot_x0 + (slot_w - pnw) // 2,
+                                 cy + mini_size + 8),
+                                pn, pn_font, INK)
+                # total Nx
+                pt_font = load_font(12, mono=True, bold=True)
+                pt = f"{p.total}x ♥"
+                ptw, _ = text_size_smart(draw, pt, pt_font)
+                draw_text_smart(draw,
+                                (slot_x0 + (slot_w - ptw) // 2,
+                                 cy + mini_size + 26),
+                                pt, pt_font, HOT)
+        else:
+            empty_font = load_font(16, mono=True, bold=False)
+            etxt = "[ NENHUM PAR REGISTRADO AINDA ]"
+            ew, _ = text_size(draw, etxt, empty_font)
+            draw.text(((W - ew) // 2, top_panel[1] + 90),
+                      etxt, font=empty_font, fill=DIM)
+
+        # Footer
+        foot_font = load_font(12, mono=True, bold=False)
+        foot_left = "> /royalmeuscasorios"
+        foot_right = f"v0.1 // {pal['name']}_MODE"
+        draw.text((OUT_PAD + 60, H - OUT_PAD - 50),
+                  foot_left, font=foot_font, fill=DIM)
+        fw, _ = text_size(draw, foot_right, foot_font)
+        draw.text((W - OUT_PAD - 60 - fw, H - OUT_PAD - 50),
+                  foot_right, font=foot_font, fill=pal["footer"])
+
+        img = img.convert("RGBA")
+        apply_scanlines(img, every=3, alpha=55)
+        vimg = img.convert("RGB")
+        apply_vignette(vimg, strength=170)
+        img = vimg.convert("RGBA")
+        apply_grain(img, intensity=18)
+        img = img.convert("RGB")
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=90, optimize=True)
+        payload = buf.getvalue()
+        cache_put(cache_key, payload)
+        return payload
+    except Exception:
+        logger.exception("ROYAL_MEUS_CASORIOS_CARD_RENDER_FAILED rid=%r",
+                         data.self_royal_id)
+        return None
