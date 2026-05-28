@@ -964,9 +964,14 @@ _LEVEL_TABLE: list[int] = []  # cumulative XP to reach level (index = level)
 
 
 def _build_level_table(max_level: int = 200) -> None:
-    """Constroi tabela de XP cumulativo. Level 1 = 0 XP."""
+    """Constroi tabela de XP cumulativo. _LEVEL_TABLE[n] = XP total p/ estar no nivel n.
+
+    Index 0 = sentinela. Index 1 = 0 (player comeca em level 1 com 0 XP).
+    A partir do index 2, cada entrada acumula int(100 * n^1.5).
+    """
     _LEVEL_TABLE.clear()
-    _LEVEL_TABLE.append(0)  # nivel 1
+    _LEVEL_TABLE.append(0)  # sentinela (index 0)
+    _LEVEL_TABLE.append(0)  # nivel 1 comeca em 0 XP (index 1)
     total = 0
     for n in range(2, max_level + 2):
         total += int(100 * (n ** 1.5))
@@ -1134,7 +1139,7 @@ async def notify_level_up_dm(user_id: int, royal_id: str, name: str,
             render_levelup_card, royal_id, name, new_level, class_name)
         caption = term_block(
             "LEVEL_UP",
-            f"<b>NIVEL {new_level:02d} ATINGIDO</b>\n"
+            f"<b>NÍVEL {new_level:02d} ATINGIDO</b>\n"
             f"<i>+1 ponto de atributo. Use /royalup no grupo pra distribuir.</i>",
             status="ALERTA", status_color="HOT",
         )
@@ -1398,8 +1403,8 @@ def build_profile_caption(chat_id: int, user_id: int) -> str:
     # Ficha completa em blockquote expandable (clica pra abrir)
     # com <pre> pros atributos em grade monospace
     stats_grid = (
-        f"FOR {f_:>2}    DES {d_:>2}\n"
-        f"VIT {v_:>2}    CAR {c_:>2}"
+        f"FORÇA     {f_:>2}    DESTREZA  {d_:>2}\n"
+        f"VITAL     {v_:>2}    CARISMA   {c_:>2}"
     )
     ficha = (
         f"<blockquote expandable>"
@@ -2438,10 +2443,10 @@ async def royal_up(message: Message):
 
 def up_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="💪 FOR", callback_data="r:up:for"),
-        InlineKeyboardButton(text="🏃 DES", callback_data="r:up:des"),
-        InlineKeyboardButton(text="❤️ VIT", callback_data="r:up:vit"),
-        InlineKeyboardButton(text="✨ CAR", callback_data="r:up:car"),
+        InlineKeyboardButton(text="💪 FORÇA",    callback_data="r:up:for"),
+        InlineKeyboardButton(text="🏃 DESTREZA", callback_data="r:up:des"),
+        InlineKeyboardButton(text="❤️ VITAL",    callback_data="r:up:vit"),
+        InlineKeyboardButton(text="✨ CARISMA",  callback_data="r:up:car"),
     ]])
 
 

@@ -30,3 +30,9 @@ id = "pChRB5EN589pK-7YbJ5HG"
 uri = "file://previews/levelup_preview_BIG.jpg"
 type = "image"
 title = "Level-up — sem mais sobreposição"
+
+[[outputs]]
+id = "8IvQSQfMC2jAk_IUvZh5F"
+uri = "file://previews/perfil_v2_8bit.jpg"
+type = "image"
+title = "Card v2 — palavras inteiras + ícones 8-bit + XP corrigido"

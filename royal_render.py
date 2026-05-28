@@ -378,6 +378,132 @@ def draw_pixel_heart(draw, x, y, scale, color=HOT, empty=False):
                        hl)
 
 
+# =====================================================================
+# 8-BIT ICONS — sprites simples estilo Stardew/SNES
+# =====================================================================
+# Cada sprite eh uma lista de strings com '.' (vazio), '#' (cor principal)
+# e 'o' (highlight mais claro, opcional). Tamanho 10x10 unidades por
+# default. Renderizadas via draw_sprite() com pixel_rect (sem antialias).
+
+SPRITE_SWORD = [   # FORCA — espada vertical com guarda
+    "....##....",
+    "....##....",
+    "....##....",
+    "....##....",
+    "....##....",
+    ".########.",
+    "....##....",
+    "....##....",
+    "....##....",
+    "...####...",
+]
+SPRITE_BOOT = [    # DESTREZA — bota lateral
+    "..........",
+    "..........",
+    "..####....",
+    "..#####...",
+    "..######..",
+    "..#######.",
+    "..########",
+    ".#########",
+    "##########",
+    "##########",
+]
+SPRITE_HEART = [   # VITAL — coracao cheio
+    ".##..##...",
+    "########..",
+    "########..",
+    ".######...",
+    "..####....",
+    "...##.....",
+    "..........",
+    "..........",
+    "..........",
+    "..........",
+]
+SPRITE_MASK = [    # CARISMA — mascara de teatro
+    "..######..",
+    ".########.",
+    "##.####.##",
+    "##.####.##",
+    "##.####.##",
+    ".########.",
+    ".########.",
+    "..######..",
+    "...####...",
+    "....##....",
+]
+SPRITE_TROPHY = [  # POSICAO — trofeu
+    "#########.",
+    "#.#####.#.",
+    "#.#####.#.",
+    ".#######..",
+    "..#####...",
+    "...###....",
+    "...###....",
+    "..#####...",
+    ".#######..",
+    "#########.",
+]
+SPRITE_BOOK = [    # PALAVRAS — livro/pergaminho
+    "##########",
+    "#........#",
+    "#.######.#",
+    "#........#",
+    "#.######.#",
+    "#........#",
+    "#.######.#",
+    "#........#",
+    "#.######.#",
+    "##########",
+]
+SPRITE_RINGS = [   # CASORIOS — dois aneis entrelacados
+    "..........",
+    ".####.....",
+    "#....#....",
+    "#..####...",
+    "#.##..#...",
+    ".##.#..#..",
+    "...#..##..",
+    "...#..#.#.",
+    "....####.#",
+    ".........#",
+]
+SPRITE_COIN = [    # FLORINS — moeda com F dentro
+    "..######..",
+    ".########.",
+    "##.####.##",
+    "##.####.##",
+    "##.#....##",
+    "##.######.",
+    "##.####.##",
+    "##.####.##",
+    ".########.",
+    "..######..",
+]
+
+
+def draw_sprite(draw, x: int, y: int, sprite: list[str],
+                scale: int, color, highlight=None):
+    """Desenha sprite 8-bit a partir de strings.
+
+    '#' = cor principal, 'o' = highlight (se None usa cor *1.4).
+    Sem antialiasing — todos os pixels alinhados.
+    """
+    if highlight is None:
+        highlight = tuple(min(255, int(c * 1.35)) for c in color)
+    for row, line in enumerate(sprite):
+        for col, ch in enumerate(line):
+            if ch == "#":
+                px = x + col * scale
+                py = y + row * scale
+                pixel_rect(draw, (px, py, px + scale, py + scale), color)
+            elif ch == "o":
+                px = x + col * scale
+                py = y + row * scale
+                pixel_rect(draw, (px, py, px + scale, py + scale), highlight)
+
+
 def apply_scanlines(img: Image.Image, every: int = 3, alpha: int = 70):
     """Linhas escuras horizontais a cada `every` px = CRT."""
     overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
@@ -564,16 +690,16 @@ def render_profile_card(data: ProfileCardData,
                 img.paste(face, (fx, fy), face)
                 # micro-label discreto acima do thumbnail
                 face_tag_font = load_font(11, mono=True, bold=True)
-                ft = "[FACE]"
+                ft = "[FOTO]"
                 ftw, _ = text_size(draw, ft, face_tag_font)
                 draw.text((fx + (face_outer - ftw) // 2, fy - 18),
                           ft, font=face_tag_font, fill=DIM)
             except Exception:
                 logger.warning("face thumbnail failed", exc_info=True)
 
-        # tag "[ SIGIL ]" debaixo do avatar
+        # tag "[ BRASAO ]" debaixo do avatar
         tag_font = load_font(16, mono=True, bold=True)
-        tag = "[ SIGIL ]"
+        tag = "[ BRASÃO ]"
         tw, _ = text_size(draw, tag, tag_font)
         draw.text((ax + (avatar_size - tw) // 2, ay + avatar_size + 14),
                   tag, font=tag_font, fill=GOLD_DIM)
@@ -604,7 +730,7 @@ def render_profile_card(data: ProfileCardData,
         lvl_label_font = load_font(18, mono=True, bold=False)
         lvl_num_font = load_font(64, mono=True, bold=True)
         lvl_y = ay - 4 + nh + 70
-        draw.text((info_x, lvl_y), "NIVEL", font=lvl_label_font, fill=DIM)
+        draw.text((info_x, lvl_y), "NÍVEL", font=lvl_label_font, fill=DIM)
         draw.text((info_x + 110, lvl_y - 18),
                   f"{data.level:02d}", font=lvl_num_font, fill=pal["level"])
         if data.pts_available > 0:
@@ -659,32 +785,37 @@ def render_profile_card(data: ProfileCardData,
             pixel_rect(draw, (dx, dash_y, dx + 8, dash_y + 2), DIM)
 
         attrs = [
-            ("FOR", data.attr_for, pal["chips"][0]),
-            ("DES", data.attr_des, pal["chips"][1]),
-            ("VIT", data.attr_vit, pal["chips"][2]),
-            ("CAR", data.attr_car, pal["chips"][3]),
+            ("FORÇA",    data.attr_for, pal["chips"][0], SPRITE_SWORD),
+            ("DESTREZA", data.attr_des, pal["chips"][1], SPRITE_BOOT),
+            ("VITAL",    data.attr_vit, pal["chips"][2], SPRITE_HEART),
+            ("CARISMA",  data.attr_car, pal["chips"][3], SPRITE_MASK),
         ]
-        attr_label_font = load_font(18, mono=True, bold=True)
-        attr_val_font = load_font(40, mono=True, bold=True)
+        attr_label_font = load_font(16, mono=True, bold=True)
+        attr_val_font = load_font(30, mono=True, bold=True)
         col_w = (attr_box[2] - attr_box[0] - 32) // 4
-        for i, (lbl, val, accent) in enumerate(attrs):
+        for i, (lbl, val, accent, sprite) in enumerate(attrs):
             cx = attr_box[0] + 16 + i * col_w + col_w // 2
-            # colored chip atras
-            chip_x0 = cx - 50
-            chip_x1 = cx + 50
-            chip_y0 = attr_box[1] + 64
-            chip_y1 = attr_box[1] + 138
+            # colored chip atras (mais largo p/ caber palavras inteiras)
+            chip_x0 = cx - 92
+            chip_x1 = cx + 92
+            chip_y0 = attr_box[1] + 54
+            chip_y1 = attr_box[1] + 156
             pixel_rect(draw, (chip_x0, chip_y0, chip_x1, chip_y1), BG)
             # borda accent top
             pixel_rect(draw, (chip_x0, chip_y0, chip_x1, chip_y0 + 4), accent)
+            # icone 8-bit no topo (grid 10x10 * scale 3 = 30x30 px)
+            sprite_scale = 3
+            sprite_w = 10 * sprite_scale
+            draw_sprite(draw, cx - sprite_w // 2, chip_y0 + 10,
+                        sprite, sprite_scale, accent)
             # label
             lw, _ = text_size(draw, lbl, attr_label_font)
-            draw.text((cx - lw // 2, chip_y0 + 12),
+            draw.text((cx - lw // 2, chip_y0 + 46),
                       lbl, font=attr_label_font, fill=accent)
             # valor
             vstr = f"{val:02d}"
             vw, _ = text_size(draw, vstr, attr_val_font)
-            draw.text((cx - vw // 2, chip_y0 + 32),
+            draw.text((cx - vw // 2, chip_y0 + 68),
                       vstr, font=attr_val_font, fill=INK)
 
         # ===== Painel STATUS =====
@@ -698,21 +829,27 @@ def render_profile_card(data: ProfileCardData,
             pixel_rect(draw, (dx, dash_y, dx + 8, dash_y + 2), DIM)
 
         stats = [
-            ("RANK", f"#{data.rank}/{data.total_players}"),
-            ("PALAVRAS", str(data.palavras_won)),
-            ("CASORIOS", str(data.casorios)),
-            ("FLORINS", format_br(data.gold)),
+            ("POSIÇÃO",  f"#{data.rank}/{data.total_players}", SPRITE_TROPHY, pal["chips"][0]),
+            ("PALAVRAS", str(data.palavras_won),                SPRITE_BOOK,   pal["chips"][1]),
+            ("CASÓRIOS", str(data.casorios),                    SPRITE_RINGS,  pal["chips"][2]),
+            ("FLORINS",  format_br(data.gold),                  SPRITE_COIN,   pal["chips"][3]),
         ]
-        st_label_font = load_font(16, mono=True, bold=False)
-        st_val_font = load_font(28, mono=True, bold=True)
+        st_label_font = load_font(14, mono=True, bold=False)
+        st_val_font = load_font(26, mono=True, bold=True)
         cell_w = (status_box[2] - status_box[0] - 32) // 4
-        for i, (lbl, val) in enumerate(stats):
+        for i, (lbl, val, sprite, accent) in enumerate(stats):
             cx = status_box[0] + 16 + i * cell_w + cell_w // 2
+            # icone 8-bit
+            sprite_scale = 2
+            sprite_w = 10 * sprite_scale
+            draw_sprite(draw, cx - sprite_w // 2, status_box[1] + 52,
+                        sprite, sprite_scale, accent)
+            # label
             lw, _ = text_size(draw, lbl, st_label_font)
-            draw.text((cx - lw // 2, status_box[1] + 60),
+            draw.text((cx - lw // 2, status_box[1] + 80),
                       lbl, font=st_label_font, fill=DIM)
             vw, _ = text_size(draw, val, st_val_font)
-            draw.text((cx - vw // 2, status_box[1] + 88),
+            draw.text((cx - vw // 2, status_box[1] + 108),
                       val, font=st_val_font, fill=pal["xp"])
 
         # ===== Rodape: footer terminal =====
