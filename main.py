@@ -2140,6 +2140,14 @@ def _get_identity_card_file_id(chat_id: int, user_id: int) -> str | None:
 # ensure_player + sweep + manual disparam simultaneamente.
 _identity_card_locks: dict[tuple[int, int], asyncio.Lock] = {}
 
+# F04: semaforo global pra cappar concorrencia da fase cara
+# (render PIL em thread + send_photo pro STASH). Sem isso, um pico
+# de inline_profile + ensure_player + sweep simultaneo pode disparar
+# 50+ renders/uploads em paralelo, estourar CPU do worker do Railway
+# e levar TelegramRetryAfter em massa no STASH chat. 3 simultaneos
+# eh suficiente pra throughput e suave o bastante pra nao floodar.
+_IDENTITY_RENDER_SEM = asyncio.Semaphore(3)
+
 
 def _identity_lock(chat_id: int, user_id: int) -> asyncio.Lock:
     key = (chat_id, user_id)
@@ -2192,17 +2200,20 @@ async def ensure_identity_card_async(chat_id: int, user_id: int,
                         "pulando upload (rid=%s)", royal_id)
             return current_fid
         try:
-            data = IdentityCardData(
-                royal_id=royal_id, name=name, avatar_slug=avatar_slug,
-                username=username)
-            card = await asyncio.to_thread(render_identity_card, data)
-            if not card:
-                return current_fid
-            sent = await bot.send_photo(
-                STASH_CHAT_ID,
-                photo=BufferedInputFile(card, filename=f"id-{royal_id}.jpg"),
-                disable_notification=True,
-            )
+            # F04: cappa renders+uploads concorrentes pra evitar tempest
+            # de inline_profile + sweep + ensure_player no mesmo segundo.
+            async with _IDENTITY_RENDER_SEM:
+                data = IdentityCardData(
+                    royal_id=royal_id, name=name, avatar_slug=avatar_slug,
+                    username=username)
+                card = await asyncio.to_thread(render_identity_card, data)
+                if not card:
+                    return current_fid
+                sent = await bot.send_photo(
+                    STASH_CHAT_ID,
+                    photo=BufferedInputFile(card, filename=f"id-{royal_id}.jpg"),
+                    disable_notification=True,
+                )
             if not sent or not sent.photo:
                 return current_fid
             new_fid = sent.photo[-1].file_id
