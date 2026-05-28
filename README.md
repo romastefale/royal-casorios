@@ -6,6 +6,22 @@ Bot de Telegram de RPG retro-futurista para grupos. Construído com **aiogram 3.
 
 ---
 
+## 🆕 Novidades (mai/2026)
+
+**Visual do cartão de perfil:**
+- 🎨 **8 sprites 8-bit estilo Stardew** desenhados pixel-por-pixel em grids 10×10 (`SPRITE_SWORD`, `BOOT`, `HEART`, `MASK`, `TROPHY`, `BOOK`, `RINGS`, `COIN`) renderizados via helper genérico `draw_sprite()` acima de cada label
+- 📝 **Abreviações → palavras inteiras:** `FOR/DES/VIT/CAR` → `FORÇA/DESTREZA/VITAL/CARISMA`, `NIVEL`→`NÍVEL`, `RANK`→`POSIÇÃO`, `CASORIOS`→`CASÓRIOS`, `[SIGIL]`→`[BRASÃO]`, `[FACE]`→`[FOTO]`. Chip alargado p/ 184 px, fonte ajustada (40→30 attrs, 28→26 status)
+
+**Bugs corrigidos:**
+- 🐛 **XP off-by-one** em `_build_level_table`: cartão mostrava `XP -282 / 519` no level 1. Adicionado sentinela `append(0)` no índice 1. Level 1 começa em 0 XP e exige 282 p/ subir.
+- 🐛 **`ANON-X` aparecendo como nome do próprio dono** no cartão: `/royalperfil` não populava `users.display_name`, então quando o jogador nunca falava no grupo o fallback caía pro `user_id` numérico e o `anonize()` disparava. Novo helper `refresh_user_identity()` corrige isso sem inflar `message_count` (ver §13).
+
+**Cascata de nome público do user:**
+- `full_name` → `first_name` → `@username` → `ANON-<sufixo>` (último recurso)
+- Aplicado em `display_name(message)` helper + callbacks `r:perfil` e baú
+
+---
+
 ## Índice
 1. [Como rodar](#como-rodar)
 2. [Arquitetura](#arquitetura)
@@ -325,11 +341,26 @@ Política: **nunca** vazar `user_id` numérico do Telegram em caption, mensagem 
 - Alocação sequencial via tabela `royal_id_seq`
 - Único identificador público
 
+### Cascata de nome público (`display_name(message)`)
+Helper define o que vai parar em `users.display_name`:
+1. `full_name` (Telegram display name completo) — preferido
+2. `first_name` (só primeiro nome)
+3. `@username` (handle público) — fallback
+4. `""` vazio → chamador decide ANON via `anonize`
+
+Mesma cascata aplicada inline nos callbacks (`r:perfil` no hub, claim de baú).
+
 ### Helper `anonize(name, royal_id)`
 Se `name` é numérico (= user_id leakado) ou vazio, retorna `ANON-NN` derivado determinístico do `royal_id` (`ANON-1`…`ANON-99`).
 
 ### Helper `get_anon_name(chat_id, user_id)`
 JOIN único em `users + players`, já aplica `anonize` automaticamente. **Sempre** use isso para renderizar nome de terceiros.
+
+### Helper `refresh_user_identity(chat_id, user_id, name, username)`
+Atualiza **só** `display_name`/`username`/`last_seen` em `users`. **Não** incrementa `message_count` — pode ser chamado a partir de DM ou callback sem distorcer ranking/shipper do grupo. Use sempre antes de renderizar perfil/cartão p/ garantir que o nome vivo do Telegram esteja no DB e o `anonize` não dispare pro próprio dono. Aplicado em:
+- `/royalperfil` sem arg (branches grupo + DM)
+- `/royalperfil RYL-XXXX` quando target == requisitante
+- Callback `r:perfil` do hub inline
 
 ### Cobertura (11/11 sites)
 | # | Onde | Função |
@@ -406,8 +437,24 @@ Render roda em `asyncio.to_thread(...)` para não travar o loop.
 Fallback se nenhum truetype existir: `ImageFont.load_default(size=scaled)` (Pillow ≥ 10.1).
 
 ### Avatar híbrido
-1. **Brasão principal:** `procedural_sigil()` 10×10, ~55 % densidade, espelhado horizontalmente — determinístico por `royal_id`
-2. **Thumbnail:** foto real 92×92 pixelizada (downscale 36×36 → quantize 16 cores → upscale NEAREST), tag `[FACE]`
+1. **Brasão principal:** `procedural_sigil()` 10×10, ~55 % densidade, espelhado horizontalmente — determinístico por `royal_id`. Tag `[ BRASÃO ]`
+2. **Thumbnail:** foto real 92×92 pixelizada (downscale 36×36 → quantize 16 cores → upscale NEAREST), tag `[ FOTO ]`
+
+### Sprites 8-bit estilo Stardew (`draw_sprite`)
+8 sprites desenhados pixel-por-pixel em grids 10×10, renderizados acima de cada label nos painéis ATRIBUTOS (scale 3 = 30 px) e STATUS (scale 2 = 20 px):
+
+| Sprite | Label | Cor (variante por paleta) |
+|---|---|---|
+| `SPRITE_SWORD` ⚔️ | FORÇA | acento header |
+| `SPRITE_BOOT` 👢 | DESTREZA | acento header |
+| `SPRITE_HEART` ❤️ | VITAL | HOT |
+| `SPRITE_MASK` 🎭 | CARISMA | CYAN |
+| `SPRITE_TROPHY` 🏆 | POSIÇÃO | GOLD |
+| `SPRITE_BOOK` 📜 | PALAVRAS | acento header |
+| `SPRITE_RINGS` 💍 | CASÓRIOS | HOT |
+| `SPRITE_COIN` 🪙 | FLORINS | GOLD |
+
+Helper `draw_sprite(draw, x, y, sprite, scale, color, highlight=None)` em `royal_render.py:489` — basta criar matriz 10×10 com `0/1/2` (0 = transparente, 1 = base, 2 = highlight opcional) e chamar com qualquer escala/cor.
 
 ### Pós-processamento (sempre)
 1. `apply_scanlines(every=3, alpha=55–70)` — CRT

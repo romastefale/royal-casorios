@@ -4,6 +4,15 @@ Telegram bot construído com aiogram (Python 3.12). Roda como worker (sem fronte
 
 **Deploy:** Railway (config em `railway.json`). No Replit fazemos apenas o código — não é necessário rodar/configurar workflow aqui.
 
+### Push para o repositório (Railway escuta a branch `royalRPG`)
+**Use `GITHUB_TOKEN`** (auto-provisionado pelo Replit nesta workspace, sempre disponível). **NÃO** use `GH_TOKEN` — não existe como secret aqui.
+
+```bash
+git push "https://x-access-token:${GITHUB_TOKEN}@github.com/romastefale/royal-casorios.git" main:royalRPG
+```
+
+A branch `main` LOCAL nunca é alterada no remoto — sempre fazemos `main:royalRPG` para o Railway pegar o deploy.
+
 ## Estrutura
 - `main.py` — código principal do bot
 - `royal_render.py` — gerador de cards 1080×1080 (Pillow puro, sem Chromium)
