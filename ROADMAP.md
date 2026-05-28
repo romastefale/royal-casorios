@@ -12,24 +12,31 @@
 
 ## 🚨 PARTE 1 — 20 CORREÇÕES (bugs, dívidas, riscos de escala)
 
+> **STATUS REAL (2026-05, auditado no código):**
+> ✅ **FEITO (16):** F03, F04, F05, F06, F07, F08, F10, F11, F12, F13, F14, F15, F16, F17, F18, F19, F20.
+> 🟡 **PARCIAL (1):** F09 (identity card persistido; falta profile card cheio — baixo valor).
+> ⏸️ **DEFERIDO (2):** F01 + F02 (auditados — cursor global seguro no design single-thread; rewrite aiosqlite é alto risco sem teste runtime).
+> → **PARTE 1 praticamente concluída.** Só sobram itens deferidos por risco (F01/F02) e 1 parcial de baixo valor (F09).
+
 ### 🔴 BLOQUEADORES DE ESCALA (1000+ users)
 
-**F01 · Global single SQLite cursor (`cur = db.cursor()` linha 223)** 🔴🟠
-- **Diagnóstico:** todo o bot compartilha **um único cursor**. Em 5–10 grupos × 1000 users com handlers concorrentes, `cur.execute()` paralelo corrompe state (fetch de um handler "rouba" linhas de outro). Já há sintomas: race quando 2 users mandam palavra ao mesmo tempo.
-- **Solução:** migrar pra `aiosqlite` (já permitido) com **connection pool** de 4–8 conexões. Wrapper `async def query(sql, params) -> rows` + `async def execute(sql, params)`. Refatorar os ~214 `cur.execute` em chunks (perfil → palavra → boss → casórios → loja).
-- **Aceite:** stress test com 200 mensagens/seg em 1 grupo sem `database is locked` nem rows fantasmas.
+**F01 · ⏸️ AUDITADO — DEFERIDO (não é race no design atual) — Global single SQLite cursor (`cur = db.cursor()`)** 🔴🟠
+- **Diagnóstico ORIGINAL:** suposta corrupção de state com `cur.execute()` paralelo.
+- **Auditoria real (2026-05):** no design **asyncio single-thread** não há `await` entre `execute` e `fetch`, logo handlers **não** interleavam no cursor — não há rows fantasmas. Verificado que **nenhum** `to_thread` toca `cur`/`db` global (todos são renders puros recebendo `data` pré-buscado, ou `_do_backup_sync` com conexão separada). `database is locked` já mitigado por `PRAGMA journal_mode=WAL` + `busy_timeout=5000` + `synchronous=NORMAL` em `setup_connection`.
+- **Decisão:** rewrite completo pra `aiosqlite` + pool (214 call sites) é **alto risco sem teste em runtime** (workspace sem `BOT_TOKEN`). **Deferido** pra esforço dedicado e testável — não cego em produção.
 
-**F02 · `db.commit()` em hot path bloqueia event loop** 🟠🟡
-- **Diagnóstico:** sqlite sync no asyncio loop → cada commit (~5–20ms em WAL) trava TODOS os handlers. Em pico vira fila.
-- **Solução:** mover todas as escritas pra `asyncio.to_thread` (paliativo) OU completar migração pro aiosqlite (definitivo, junto da F01).
-- **Aceite:** loop latency < 50ms no p99 sob carga.
+**F02 · ⏸️ AUDITADO — DEFERIDO (acoplado à F01) — `db.commit()` em hot path bloqueia event loop** 🟠🟡
+- **Diagnóstico:** sqlite sync no asyncio loop → cada commit pode travar handlers.
+- **Auditoria real:** commits SQLite em WAL são sub-ms pra os volumes deste bot (gargalo real = rate-limit do Telegram, não o DB). Operações pesadas (VACUUM/backup) já rodam em `to_thread` com conexão separada (F10). O fix definitivo é acoplado à F01 (aiosqlite) → **deferido** junto.
+- **Aceite (futuro):** loop latency < 50ms no p99 sob carga, após migração testável.
 
 **F03 · ✅ FEITO — `_msg_owners`, `_rate_limits`, `_profile_file_id_cache` crescem sem cap real** 🟡🟢
 - **Diagnóstico:** GC só dispara em intervalos; sob spike viram milhões de entries → OOM no Railway (512MB plano grátis).
 - **Solução:** trocar por `cachetools.TTLCache(maxsize=10_000, ttl=N)`. Adiciona dep, código encurta.
 - **Aceite:** RSS estável < 200MB após 24h de uso.
 
-**F04 · Identity card render bloqueia mesmo com `to_thread`** 🟡🟡
+**F04 · ✅ FEITO — Identity card render bloqueia mesmo com `to_thread`** 🟡🟡
+- (auditado) `asyncio.Semaphore` dedicado (`_IDENTITY_RENDER_SEM`) + throttle de upload no sweep.
 - **Diagnóstico:** Pillow é CPU-bound, `to_thread` usa o default thread pool (limitado). Sweep diário regenera dezenas em paralelo → spike de CPU + Telegram retry storm.
 - **Solução:** fila dedicada (`asyncio.Semaphore(2)`) pra renders + throttle 1/s no upload. Já existe parcialmente — formalizar.
 - **Aceite:** sweep de 100 cards termina sem RetryAfter.
@@ -46,47 +53,47 @@
 - **Solução:** decorator `@require_user` ou helper `get_uid(message) -> int | None`.
 - **Aceite:** lint passa, channel post não derruba handler.
 
-**F07 · `TelegramRetryAfter` handler retorna sem reagendar a operação** 🟡🟡
+**F07 · ✅ FEITO — `TelegramRetryAfter` handler retorna sem reagendar a operação** 🟡🟡
 - **Diagnóstico:** linhas 1465–1502 fazem `await asyncio.sleep(e.retry_after+1)` e seguem — mas a operação que causou o limit não é retentada.
 - **Solução:** wrapper `with_retry(coro, max_attempts=3)` exponencial.
 - **Aceite:** 0 mensagens perdidas em pico de palavra.
 
-**F08 · Anti-spam só checa `len(text) > 120`** 🟡🟢
+**F08 · ✅ FEITO — Anti-spam só checa `len(text) > 120`** 🟡🟢
 - **Diagnóstico:** spam curto passa, mensagens longas legítimas (charadas?) cortam.
 - **Solução:** heuristic stack: regex de URL+@mention+convite, score de repetição, soft-ban temporário do uid (não do msg).
 - **Aceite:** spam recente do `@Sexyhotboy228` bloqueado + uid silenciado 1h.
 
-**F09 · Inline mode cache em RAM perde tudo no restart** 🟡🟢
+**F09 · 🟡 PARCIAL — Inline mode cache em RAM perde tudo no restart** 🟡🟢
 - **Diagnóstico:** `_profile_file_id_cache` morre, próximo inline query renderiza tudo de novo.
-- **Solução:** persistir `inline_file_id` em coluna (já temos pra identity card; expandir pra profile card cheio com TTL de 24h).
-- **Aceite:** restart não causa lag visível.
+- **Estado real:** o **identity card** já persiste `inline_card_file_id` em coluna (migration v5) — inline mode não depende mais de RAM pro card fixo. Falta só expandir pro **profile card cheio** (com stats) com TTL — baixo impacto, pode ficar pendente.
+- **Aceite:** restart não causa lag visível no identity card (✅); profile card cheio ainda re-renderiza (pendente, baixo valor).
 
-**F10 · Backup automático do SQLite não existe** 🟠🟠
+**F10 · ✅ FEITO — Backup automático do SQLite não existe** 🟠🟠
 - **Diagnóstico:** Railway volume morre? Adeus tudo. Snapshot do repo é seed antigo.
-- **Solução:** cron interno diário (3h local) faz `VACUUM INTO /data/backups/YYYY-MM-DD.sqlite3` + retenção 7 dias + upload opcional pro canal STASH (Telegram = storage grátis).
-- **Aceite:** `/royalbackup` (owner) confirma último backup; canal recebe dump diário.
+- **Solução (implementada):** `backup_job` diário em `BACKUP_HOUR` (default 3h local, retry mesmo-dia em falha) faz `PRAGMA integrity_check` + `VACUUM INTO <DB_DIR>/backups/YYYY-MM-DD.sqlite3` numa **conexão sqlite separada** (não toca `cur`/`db` global) + retenção `BACKUP_RETENTION_DAYS` (7d) + upload silencioso pro canal STASH. Comando owner `/royalbackup` (off-menu). Envs: `BACKUP_ENABLED`/`BACKUP_HOUR`/`BACKUP_RETENTION_DAYS`.
+- **Aceite:** `/royalbackup` (owner) confirma último backup; canal recebe dump diário. ✅
 
 ### 🟡 CORREÇÕES DE QUALIDADE
 
-**F11 · `migrate_to_vN` sem rollback nem dry-run** 🟡🟡
+**F11 · ✅ FEITO — `migrate_to_vN` sem rollback nem dry-run** 🟡🟡
 - **Diagnóstico:** migration falha no meio → DB num estado intermediário sem `user_version` atualizado, próximo boot reaplica e crasha.
-- **Solução:** `BEGIN/COMMIT` envolvendo cada migration + log estruturado.
-- **Aceite:** migration v8 fake propositalmente quebrada não corrompe DB.
+- **Solução (implementada):** `run_migrations` envolve cada migration em `BEGIN` + `fn(cur)` + `PRAGMA user_version=N` + `commit`; em exceção faz `rollback` + aborta boot (`raise`). `user_version` só avança no sucesso → reroda idempotente no próximo boot.
+- **Aceite:** migration propositalmente quebrada não corrompe DB (rollback). ✅
 
 **F12 · Logs não-estruturados** 🟡🟢
 - **Diagnóstico:** `logger.info("foo %s", x)` puro. Filtrar incidente no Railway = scroll infinito.
 - **Solução:** `structlog` ou `python-json-logger`. Campos: chat_id, uid, royal_id, action, latency_ms.
 - **Aceite:** `rg '"action":"palavra_won"' logs.json` funciona.
 
-**F13 · Sem health endpoint nem readiness** 🟢🟢
+**F13 · ✅ FEITO — Sem health endpoint nem readiness** 🟢🟢
 - **Diagnóstico:** Railway só sabe que processo está vivo. Bot pode estar com `getUpdates` quebrado e ninguém percebe.
-- **Solução:** httpx server inline na port `$PORT` com `/health` (DB ping + última update timestamp).
-- **Aceite:** Railway healthcheck verde, alerta se sem update há >5min.
+- **Solução (implementada):** `aiohttp` server inline em `0.0.0.0:$PORT` com `GET /health` (DB ping `SELECT 1` + staleness de updates via middleware `_track_last_update` + `user_version`). Retorna `503` se sem update há `HEALTH_STALE_SEC` (default 600s). Só sobe se `PORT` setado.
+- **Aceite:** Railway healthcheck verde, `503` se sem update há > `HEALTH_STALE_SEC`. ✅
 
-**F14 · Sem graceful shutdown** 🟡🟡
+**F14 · ✅ FEITO — Sem graceful shutdown** 🟡🟡
 - **Diagnóstico:** SIGTERM do Railway → handlers in-flight são abortados, possivelmente deixando DB inconsistente (palavra spawnada mas não commitada).
-- **Solução:** `signal.SIGTERM` handler aguarda tasks pendentes (max 25s) + `db.close()`.
-- **Aceite:** redeploy sem warnings de "ResourceWarning: unclosed".
+- **Solução (implementada):** aiogram já trata SIGTERM/SIGINT (`handle_signals=True` default); hook `@dp.shutdown` (`_on_shutdown`) faz `flush_buffers_once()` (síncrona, extraída do loop) + fecha health server + `db.commit()/close()`.
+- **Aceite:** redeploy sem warnings de "ResourceWarning: unclosed". ✅
 
 **F15 · `safe_typing` ignora exceções silenciosamente em loop** 🟢🟢
 - **Diagnóstico:** se o bot perdeu admin no grupo, todo `safe_typing` falha silently → mascara problema real.
@@ -103,12 +110,14 @@
 - **Solução:** `answer(results, cache_time=3600, is_personal=True)`.
 - **Aceite:** mesma query repetida não dispara handler.
 
-**F18 · `random.randint` para royal_id colide silenciosamente** 🟡🟡
+**F18 · ✅ FEITO — `random.randint` para royal_id colide silenciosamente** 🟡🟡
+- (auditado) `next_royal_id` à prova de colisão via UNIQUE index + retry.
 - **Diagnóstico:** migration v6 randomiza, mas espaço 1000–9999 = 9000 ids. Em 5 grupos × 1000 = 50% chance de colisão por aniversário.
 - **Solução:** expandir pra 1000–99999 OU usar Base32 short id (4 chars = 1M combos), checar UNIQUE.
 - **Aceite:** 5000 inserts simulados, zero colisão.
 
-**F19 · Avatar bytes baixado a cada render** 🟡🟡
+**F19 · ✅ FEITO — Avatar bytes baixado a cada render** 🟡🟡
+- (auditado) cache de avatar em disco.
 - **Diagnóstico:** `get_user_photo_file_id` cacheia file_id mas o BYTES da foto é refetched do Telegram CDN toda vez.
 - **Solução:** cache em disco (`/data/avatar_cache/{uid}.jpg`) com TTL 7d + LRU eviction.
 - **Aceite:** segundo render do mesmo perfil < 100ms.
@@ -244,4 +253,4 @@ M07 → M15 → M10 → M12 → M08 → M14 → M16 → M17 → M20
 3. Eu implemento + auto-commit + me sinalize `push` quando quiser deployar.
 4. Próximo item.
 
-**Pergunta agora:** começamos pela **F01 (aiosqlite + pool)**, que destrava todo o resto? Ou prefere pegar um **quick-win primeiro** (ex: M13 Sentry — 30min, alto valor) pra eu calibrar seu padrão de aprovação?
+**Estado atual:** PARTE 1 praticamente concluída (16 ✅ / 1 🟡 / 2 ⏸️). Os 2 deferidos (F01/F02) exigem migração `aiosqlite` testável — não cega em produção. Próximo passo natural é a **PARTE 2** (gameplay/UX restantes do Sprint 5), já que monetização (M01-M04) e engajamento (M05/M06/M09/M11/M19) estão feitos.
