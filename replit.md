@@ -72,13 +72,10 @@ saldo, palavras, configs por usuário, etc).
 - **`TEST_CHAT_IDS`** (opcional, comma-separated) — chat_ids de grupos de
   teste. Esses grupos **não** aparecem no picker de DM nem no fallback
   do inline mode. Ex.: `TEST_CHAT_IDS="-1001234567890,-1009876543210"`
-- **`STASH_CHAT_ID`** (opcional) — chat_id de um canal/grupo privado
-  controlado pelo dono do bot (bot precisa ser admin). Usado pra upload
-  silencioso do **identity card** e capturar o `file_id` que o inline
-  mode reusa. Sem essa env var, o identity card **não é cacheado** e
-  o inline cai no fallback de texto. Ex.: `STASH_CHAT_ID="-1001234567890"`.
-  Setup: cria um canal privado → adiciona o bot como admin → pega o
-  chat_id (use @userinfobot ou similar) → seta a env var.
+- **`STASH_CHAT_ID`** (opcional, override) — chat_id de canal privado
+  pra upload silencioso do **identity card**. **Hardcoded** em
+  `main.py` como `-1003941532741` (canal privado só do dono +
+  bot). Só seta a env var se precisar trocar o canal.
 
 ## 🪪 Identity Card (inline mode)
 

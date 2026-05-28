@@ -87,13 +87,13 @@ TEST_CHAT_IDS: set[int] = {
     if x.strip().lstrip("-").isdigit()
 }
 
-# STASH_CHAT_ID — chat_id de um canal/grupo privado controlado pelo dono do
-# bot (bot precisa ser admin). Usado pra fazer upload silencioso do identity
-# card e capturar o file_id pro inline mode. Sem essa env var, o identity
-# card NAO eh cacheado e o inline cai no fallback de texto atual.
+# STASH_CHAT_ID — canal privado do dono do bot (so romastefale + bot).
+# Usado pra upload silencioso do identity card e capturar file_id.
+# Hardcoded porque eh privado e nao muda. Override por env var se precisar.
+_STASH_DEFAULT = -1003941532741
 _stash_raw = os.getenv("STASH_CHAT_ID", "").strip()
 STASH_CHAT_ID: int | None = (
-    int(_stash_raw) if _stash_raw.lstrip("-").isdigit() else None
+    int(_stash_raw) if _stash_raw.lstrip("-").isdigit() else _STASH_DEFAULT
 )
 
 DB_PATH = os.getenv("DATABASE_PATH", "./data/royal_casorios.sqlite3")
