@@ -180,6 +180,30 @@ uri = "file://assets/avatars/h04-southasian-f-young.png"
 type = "image"
 title = "generated_image"
 
+[[generated]]
+id = "fTFP_F4HD43jAfHQeHApV"
+uri = "file://assets/avatars/x01-lobo.png"
+type = "image"
+title = "generated_image"
+
+[[generated]]
+id = "z_T5mdYpcLrPsDxeMNcLZ"
+uri = "file://assets/avatars/x02-coruja.png"
+type = "image"
+title = "generated_image"
+
+[[generated]]
+id = "KX4B6_GW1n5w_gzrIRI-f"
+uri = "file://assets/avatars/x03-leao.png"
+type = "image"
+title = "generated_image"
+
+[[generated]]
+id = "-OvFPlzR19ZHBgW5wus45"
+uri = "file://assets/avatars/x04-raposa.png"
+type = "image"
+title = "generated_image"
+
 [[outputs]]
 id = "lZuJpSYjVgcWzQ1P2u5tV"
 uri = "file://previews/perfil_preview.jpg"
@@ -220,4 +244,4 @@ title = "Card v2 — palavras inteiras + ícones 8-bit + XP corrigido"
 id = "OCBDsLdyVfmZmpzwFdL_c"
 uri = "file://assets/avatars_mosaic_preview.png"
 type = "image"
-title = "Mosaico quadrado 1862×1862 (6×6, alta resolução)"
+title = "Mosaico final 6×6 — 36 avatares completos"
