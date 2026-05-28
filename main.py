@@ -497,10 +497,14 @@ def current_week_marker(d: datetime | None = None) -> str:
 # =====================================================================
 
 def display_name(message: Message) -> str:
+    """Nome publico do user: display name (full_name/first_name) e, se nao
+    tiver, fallback pro @username. Se nem isso, retorna string vazia — o
+    chamador (refresh_user_identity/anonize) decide o ANON-X final."""
     user = message.from_user
     if not user:
-        return "Usuário"
-    return user.full_name or user.first_name or "Usuário"
+        return ""
+    return (user.full_name or user.first_name
+            or (f"@{user.username}" if user.username else ""))
 
 
 def mention(user_id: int, name: str) -> str:
@@ -1930,7 +1934,8 @@ async def handle_chest_claim(cb: CallbackQuery, chest_id: int) -> None:
 
     slot = n + 1
     xp, gold = CHEST_REWARDS[slot - 1]
-    name = (cb.from_user.full_name or cb.from_user.first_name or "anon")[:32]
+    name = (cb.from_user.full_name or cb.from_user.first_name
+            or (f"@{cb.from_user.username}" if cb.from_user.username else "anon"))[:32]
 
     cur.execute(
         "INSERT OR IGNORE INTO chest_claims "
@@ -3061,7 +3066,8 @@ async def hub_cb(cb: CallbackQuery):
                                 show_alert=True)
                 return
             # Refresca nome vivo do Telegram p/ evitar ANON-X no proprio dono
-            live = cb.from_user.full_name or cb.from_user.first_name or ""
+            live = (cb.from_user.full_name or cb.from_user.first_name
+                    or (f"@{cb.from_user.username}" if cb.from_user.username else ""))
             refresh_user_identity(target_chat, cb.from_user.id, live, cb.from_user.username)
             db.commit()
             await send_profile_card(cb.message.chat.id, target_chat, cb.from_user.id)
