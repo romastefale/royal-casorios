@@ -5,4 +5,10 @@ generated = []
 id = "lZuJpSYjVgcWzQ1P2u5tV"
 uri = "file://previews/perfil_preview.jpg"
 type = "image"
-title = "ROYAL.TERMINAL // perfil 8-bit dystopian"
+title = "RYL-0042 · paleta PLASMA (violeta glitch)"
+
+[[outputs]]
+id = "lvi6qBkwZVDZn2mROA6k1"
+uri = "file://previews/perfil_preview_2.jpg"
+type = "image"
+title = "RYL-0099 · paleta TOXIC (verde + ferrugem)"

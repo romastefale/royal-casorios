@@ -516,6 +516,51 @@ GROUP_ONLY_MSG = (
 )
 
 
+# =====================================================================
+# UX VOZ — terminal retro-futurista dystopian (combina com royal_render)
+# Use term_block() pra QUALQUER resposta de texto do bot. Fica leve
+# (sem render de imagem) mas mantem identidade visual do reino.
+# =====================================================================
+
+def term_block(title: str, body: str, *,
+               status: str = "OK",
+               status_color: str = "ACID",
+               stamp: str | None = None) -> str:
+    """
+    Resposta padrao em formato terminal retro:
+
+        > TITLE.SYS  // <status>
+        ─────────────────────────
+        body (pode usar <b>, <i>, <code>, <pre>, etc.)
+        <i>[ stamp ]</i>
+
+    Usa <code> no header e <blockquote expandable> quando o body for grande.
+    `status_color`: ACID (verde), HOT (vermelho), AMBER (laranja), CYAN.
+    """
+    status_emoji = {
+        "ACID": "🟢", "HOT": "🔴", "AMBER": "🟡", "CYAN": "🔵",
+    }.get(status_color, "🟢")
+    head = f"<code>&gt; {html.escape(title.upper())}.SYS</code>  {status_emoji} <i>{html.escape(status)}</i>"
+    parts = [head, body.strip()]
+    if stamp:
+        parts.append(f"<i>[ {html.escape(stamp)} ]</i>")
+    return "\n".join(parts)
+
+
+def term_pre(rows: list[tuple[str, str]]) -> str:
+    """Tabela 2-col em <pre> (monospace) — chave alinhada esquerda, valor direita."""
+    if not rows:
+        return ""
+    key_w = max(len(k) for k, _ in rows)
+    val_w = max(len(str(v)) for _, v in rows)
+    width = key_w + val_w + 6  # 6 = padding " :: "
+    lines = []
+    for k, v in rows:
+        pad = " " * (width - key_w - len(str(v)) - 4)
+        lines.append(f"{k.upper():<{key_w}} ::{pad}{v}")
+    return "<pre>" + html.escape("\n".join(lines)) + "</pre>"
+
+
 def ensure_chat(chat_id: int, title: str | None = None) -> None:
     cur.execute(
         """
@@ -1271,12 +1316,14 @@ def hub_keyboard_main() -> InlineKeyboardMarkup:
 
 
 def hub_text() -> str:
-    return (
-        f"👑 <b>Reino Royal</b>  ·  {current_season_label()}\n"
-        f"\n"
-        f"<i>Bem-vindo de volta, nobre.</i>\n"
-        f"Toque num botão pra navegar pela corte 👇"
+    body = (
+        "<b>// REINO ROYAL</b> — terminal de comando ativo.\n"
+        "<i>Bem-vindo de volta, nobre.</i>\n"
+        "<blockquote>Toque num botão abaixo pra navegar pela corte 👇</blockquote>"
     )
+    return term_block("ROYAL", body,
+                      status="CONECTADO",
+                      stamp=current_season_label())
 
 
 # =====================================================================
@@ -1982,10 +2029,14 @@ async def royal_saldo(message: Message):
         return
     p = ensure_player(message.chat.id, message.from_user.id)
     db.commit()
-    await message.answer(
-        f"🪙 Suas arcas guardam <b>{p['gold']}</b> florins.\n"
+    gold_br = f"{int(p['gold']):,}".replace(",", ".")
+    body = (
+        f"🪙 Suas arcas guardam <b><code>{gold_br}</code></b> florins.\n"
         f"<i>Gasta com sabedoria em /royalloja.</i>"
     )
+    await message.answer(term_block("FLORINS", body,
+                                    status="SALDO_OK",
+                                    stamp=f"ID {p.get('royal_id', 'RYL-????')}"))
 
 
 # === /royalranking ===
@@ -2081,9 +2132,15 @@ async def royal_priv(message: Message):
                 else "🏆 Estou no ranking")
     stats_btn = ("🙈 Stats detalhados ocultos" if hide_stats
                  else "📊 Stats detalhados visíveis")
+    rows = [
+        ("RANKING", "OCULTO" if hide_rank else "VISIVEL"),
+        ("STATS DETALHADOS", "OCULTOS" if hide_stats else "VISIVEIS"),
+    ]
+    body = f"{term_pre(rows)}<i>Toca nos botões pra alternar.</i>"
     await message.answer(
-        "🔒 <b>Privacidade</b>\n\n"
-        "<i>Toca pra alternar:</i>",
+        term_block("PRIVACIDADE", body,
+                   status="CONFIG", status_color="CYAN",
+                   stamp="dados sob seu controle"),
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text=rank_btn, callback_data="r:priv:rank")],
             [InlineKeyboardButton(text=stats_btn, callback_data="r:priv:stats")],

@@ -35,8 +35,52 @@ GOLD = (192, 152, 64)            # ouro fosco, decadente
 GOLD_DIM = (124, 96, 38)
 RUST = (140, 70, 40)             # ferrugem
 PURPLE = (110, 70, 132)          # ametista corrompida
+AMBER = (220, 140, 60)           # CRT ambar
+MAGENTA = (200, 90, 160)         # plasma glitch
+NEON_BLUE = (80, 140, 220)       # holograma frio
+JADE = (60, 180, 130)            # bioluminescente
 WHITE = (240, 232, 220)
 BLACK = (0, 0, 0)
+
+
+# ---------------------------------------------------------------------
+# Variantes de paleta (retro-futurist dark). 1 por player.
+# Seleciona por hash do royal_id pra manter consistencia entre renders.
+# ---------------------------------------------------------------------
+PALETTE_VARIANTS = [
+    # 0 — toxic hospital (verde acido + ferrugem)
+    {"name": "TOXIC",   "header": ACID,    "footer": RUST,
+     "level": GOLD,     "xp": ACID,
+     "chips": [RUST, CYAN, HOT, PURPLE]},
+    # 1 — CRT ambar (terminal antigo)
+    {"name": "AMBER",   "header": AMBER,   "footer": RUST,
+     "level": AMBER,    "xp": AMBER,
+     "chips": [AMBER, GOLD, HOT, JADE]},
+    # 2 — plasma violet (glitch sintetico)
+    {"name": "PLASMA",  "header": MAGENTA, "footer": PURPLE,
+     "level": MAGENTA,  "xp": MAGENTA,
+     "chips": [PURPLE, MAGENTA, HOT, CYAN]},
+    # 3 — arctic monitor (frio clinico)
+    {"name": "ARCTIC",  "header": NEON_BLUE, "footer": CYAN,
+     "level": CYAN,     "xp": NEON_BLUE,
+     "chips": [CYAN, NEON_BLUE, HOT, PURPLE]},
+    # 4 — biolab (verde jade + ouro)
+    {"name": "BIOLAB",  "header": JADE,    "footer": ACID,
+     "level": GOLD,     "xp": JADE,
+     "chips": [JADE, ACID, HOT, AMBER]},
+    # 5 — sangue real (vinho real corrompido)
+    {"name": "BLOOD",   "header": HOT,     "footer": RUST,
+     "level": GOLD,     "xp": HOT,
+     "chips": [HOT, GOLD, AMBER, RUST]},
+]
+
+
+def pick_palette(seed: str | int | None) -> dict:
+    """Retorna 1 variante de paleta determinada pelo seed (royal_id)."""
+    if seed is None:
+        return PALETTE_VARIANTS[0]
+    h = abs(hash(str(seed))) % len(PALETTE_VARIANTS)
+    return PALETTE_VARIANTS[h]
 
 
 # ---------------------------------------------------------------------
@@ -328,8 +372,10 @@ def _draw_label_value(draw, *, x, y, label, value,
 
 def render_profile_card(data: ProfileCardData,
                         avatar_bytes: bytes | None) -> bytes | None:
-    """Renderiza cartao 8-bit dystopian. Retorna bytes JPEG ou None."""
+    """Renderiza cartao 8-bit dystopian. Retorna bytes JPEG ou None.
+    Paleta varia por royal_id (5+ variantes retro-futuristas dark)."""
     try:
+        pal = pick_palette(data.royal_id)
         # fundo base
         img = Image.new("RGB", (CARD_SIZE, CARD_SIZE), BG_DEEP)
         draw = ImageDraw.Draw(img)
@@ -359,10 +405,10 @@ def render_profile_card(data: ProfileCardData,
 
         title_font = load_font(26, mono=True, bold=True)
         season_font = load_font(20, mono=True, bold=False)
-        # "ROYAL.TERMINAL // ID#0042"
-        title = f"ROYAL.TERMINAL // ID#{data.royal_id.replace('RYL-', '')}"
+        title = (f"ROYAL.TERMINAL // ID#{data.royal_id.replace('RYL-', '')} "
+                 f"// {pal['name']}")
         draw.text((header_box[0] + 22, header_box[1] + 22),
-                  title, font=title_font, fill=ACID)
+                  title, font=title_font, fill=pal["header"])
         # season a direita
         season_txt = f">> {data.season.upper()}"
         sw, _ = text_size(draw, season_txt, season_font)
@@ -414,7 +460,7 @@ def render_profile_card(data: ProfileCardData,
         lvl_y = ay - 4 + nh + 70
         draw.text((info_x, lvl_y), "NIVEL", font=lvl_label_font, fill=DIM)
         draw.text((info_x + 110, lvl_y - 18),
-                  f"{data.level:02d}", font=lvl_num_font, fill=GOLD)
+                  f"{data.level:02d}", font=lvl_num_font, fill=pal["level"])
         if data.pts_available > 0:
             pts_font = load_font(18, mono=True, bold=True)
             pts_txt = f"!! +{data.pts_available} PTS"
@@ -432,7 +478,7 @@ def render_profile_card(data: ProfileCardData,
                   xp_val, font=xp_val_font, fill=INK)
         draw_chunky_bar(draw, (info_x, xp_y + 28, info_x + info_w, xp_y + 56),
                         data.xp_in_level, data.xp_needed,
-                        fill=ACID, bg=PANEL_HI, segments=20)
+                        fill=pal["xp"], bg=PANEL_HI, segments=20)
 
         # HP em coracoes pixel art
         hp_y = xp_y + 80
@@ -467,10 +513,10 @@ def render_profile_card(data: ProfileCardData,
             pixel_rect(draw, (dx, dash_y, dx + 8, dash_y + 2), DIM)
 
         attrs = [
-            ("FOR", data.attr_for, RUST),
-            ("DES", data.attr_des, CYAN),
-            ("VIT", data.attr_vit, HOT),
-            ("CAR", data.attr_car, PURPLE),
+            ("FOR", data.attr_for, pal["chips"][0]),
+            ("DES", data.attr_des, pal["chips"][1]),
+            ("VIT", data.attr_vit, pal["chips"][2]),
+            ("CAR", data.attr_car, pal["chips"][3]),
         ]
         attr_label_font = load_font(18, mono=True, bold=True)
         attr_val_font = load_font(40, mono=True, bold=True)
@@ -521,19 +567,19 @@ def render_profile_card(data: ProfileCardData,
                       lbl, font=st_label_font, fill=DIM)
             vw, _ = text_size(draw, val, st_val_font)
             draw.text((cx - vw // 2, status_box[1] + 88),
-                      val, font=st_val_font, fill=ACID)
+                      val, font=st_val_font, fill=pal["xp"])
 
         # ===== Rodape: footer terminal =====
         foot_font = load_font(14, mono=True, bold=False)
         foot_left = (
             f"> LOG: {format_br(data.msg_count)} TX  ::  SINCE {data.joined_str}"
         )
-        foot_right = "v0.1.ALPHA // DYSTOPIA_MODE"
+        foot_right = f"v0.1.ALPHA // {pal['name']}_MODE"
         draw.text((OUT_PAD + 60, CARD_SIZE - OUT_PAD - 50),
                   foot_left, font=foot_font, fill=DIM)
         fw, _ = text_size(draw, foot_right, foot_font)
         draw.text((CARD_SIZE - OUT_PAD - 60 - fw, CARD_SIZE - OUT_PAD - 50),
-                  foot_right, font=foot_font, fill=RUST)
+                  foot_right, font=foot_font, fill=pal["footer"])
 
         # ===== Pos processamento CRT =====
         img = img.convert("RGBA")
