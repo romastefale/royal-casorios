@@ -80,10 +80,10 @@
 - **Solução (implementada):** `run_migrations` envolve cada migration em `BEGIN` + `fn(cur)` + `PRAGMA user_version=N` + `commit`; em exceção faz `rollback` + aborta boot (`raise`). `user_version` só avança no sucesso → reroda idempotente no próximo boot.
 - **Aceite:** migration propositalmente quebrada não corrompe DB (rollback). ✅
 
-**F12 · Logs não-estruturados** 🟡🟢
+**F12 · ✅ FEITO — Logs não-estruturados** 🟡🟢
 - **Diagnóstico:** `logger.info("foo %s", x)` puro. Filtrar incidente no Railway = scroll infinito.
-- **Solução:** `structlog` ou `python-json-logger`. Campos: chat_id, uid, royal_id, action, latency_ms.
-- **Aceite:** `rg '"action":"palavra_won"' logs.json` funciona.
+- **Solução (implementada):** `_JsonFormatter` custom + flag `LOG_JSON` (env, default `0`). `LOG_JSON=1` faz o stdout sair em JSON (1 linha/record com `ts`/`lvl`/`logger`/`msg` + extras + `exc`). Ring buffer do `/royallog` sempre sai em texto humano (independe da flag).
+- **Aceite:** `LOG_JSON=1` → linhas JSON filtráveis no Railway/Logtail/Loki. ✅
 
 **F13 · ✅ FEITO — Sem health endpoint nem readiness** 🟢🟢
 - **Diagnóstico:** Railway só sabe que processo está vivo. Bot pode estar com `getUpdates` quebrado e ninguém percebe.
@@ -95,7 +95,8 @@
 - **Solução (implementada):** aiogram já trata SIGTERM/SIGINT (`handle_signals=True` default); hook `@dp.shutdown` (`_on_shutdown`) faz `flush_buffers_once()` (síncrona, extraída do loop) + fecha health server + `db.commit()/close()`.
 - **Aceite:** redeploy sem warnings de "ResourceWarning: unclosed". ✅
 
-**F15 · `safe_typing` ignora exceções silenciosamente em loop** 🟢🟢
+**F15 · ✅ FEITO — `safe_typing` ignora exceções silenciosamente em loop** 🟢🟢
+- (auditado) `_typing_fail_streak` por chat — loga alerta após N falhas consecutivas no mesmo chat, reseta no 1º sucesso.
 - **Diagnóstico:** se o bot perdeu admin no grupo, todo `safe_typing` falha silently → mascara problema real.
 - **Solução:** contador rolling, log estruturado a cada N falhas seguidas no mesmo chat.
 - **Aceite:** alerta após 10 typings consecutivos falhando.
@@ -131,26 +132,36 @@
 
 ## 🚀 PARTE 2 — 20 MELHORIAS (features, monetização, qualidade)
 
+> **STATUS REAL (2026-05, auditado no código):**
+> ✅ **FEITO (9):** M01, M02 (florins, não Stars), M03, M04, M05, M06, M09, M11, M19.
+> ⏳ **PENDENTE (10):** M07 (web app), M08 (stories), M10 (guildas), M12 (boss raid), M14 (Prometheus), M15 (admin dashboard), M16 (A/B), M17 (testes), M18 (CI), M20 (i18n).
+> 🚫 **VETADO (1):** M13 (Sentry).
+> → Monetização (Sprint 3) e Engajamento (Sprint 4) **concluídos**. Resta o Sprint 5 (diferencial competitivo) + infra (CI/testes/métricas).
+
 ### 💰 MONETIZAÇÃO (Bot API 10 — Stars, Gifts, Paid Media)
 
-**M01 · Loja com Telegram Stars** 🟠🟡
+**M01 · ✅ FEITO — Loja com Telegram Stars** 🟠🟡
 - **Por quê:** monetiza sem gateway. Stars = moeda virtual paga em USD/EUR direto pelo Telegram.
-- **Como:** `sendInvoice` com `currency="XTR"` (Stars). Itens: skins de avatar, classes premium, boost de XP 24h, palavra hint, ressurrect no boss.
-- **Comando:** estender `/royalloja` com aba "Premium" — usuário aceita o invoice no próprio chat.
+- **Solução (implementada):** `PREMIUM_ITEMS` + `send_invoice(currency="XTR")` via `/royalloja` → aba 💎 Premium. Handlers `pre_checkout_handler` (prefixo `prm|`) + `successful_payment_handler` (idempotente por `charge_id`, grava em `stars_purchases`, concede perk via `_grant_premium_perk`). Itens: boost XP 24h, dica da palavra, ressurreição no boss, skin dourada. Migration v10.
 - **Doc:** https://core.telegram.org/bots/payments-stars
+- **Aceite:** compra via Stars credita perk + ledger auditável. ✅
 
-**M02 · Gifts de aniversário (`sendGift`)** 🟡🟢
-- **Por quê:** gameplay social + viral. Top jogador do mês ganha gift de Stars do bot.
-- **Como:** API `sendGift` (Bot API 9+). Bot fica com saldo de Stars pra distribuir.
-- **Comando novo:** `/royalpresentear @user` (gasta moeda in-game pra mandar emoji-gift).
+**M02 · ✅ FEITO (florins, não Stars) — Gifts entre players** 🟡🟢
+- **Por quê:** gameplay social + viral.
+- **Solução (implementada):** `/royalpresentear @user 100` (ou reply + valor) — transferência **atômica** de florins in-game entre players (`UPDATE … WHERE gold>=?` evita race). Limites `GIFT_MIN=10`/`GIFT_MAX=5000`, bloqueia self-gift. Tabela `gifts` (ledger auditável, migration v12). Conquista `generoso` no 1º envio.
+- **Nota:** implementado como transferência de moeda in-game (não `sendGift` de Stars) — mais alinhado ao gameplay atual. `sendGift` de Stars fica como evolução futura se desejado.
+- **Aceite:** transferência atômica sem race + ledger. ✅
 
-**M03 · Paid Media nas charadas brutais** 🟡🟡
-- **Por quê:** "hint" pago pra Palavra da Hora difícil — 1 Star = revela letra.
-- **Como:** `sendPaidMedia` com spoiler photo. Bot recebe o pagamento, libera hint.
+**M03 · ✅ FEITO — Dica paga da PALAVRA** 🟡🟡
+- **Por quê:** "hint" pago pra Palavra da Hora difícil — revela letra.
+- **Solução (implementada):** `/royalpaldica` consome 1 crédito de `prm_hints` (`UPDATE … WHERE prm_hints>0`, atomic anti-double-spend), revela 1 letra em posição aleatória, envia na DM com efeito 🔥 (fallback `<tg-spoiler>` no chat). Créditos comprados via Stars no item `prm_hint` (M01, 1⭐/crédito).
+- **Aceite:** crédito consumido revela letra; sem crédito, avisa. ✅
 
-**M04 · Subscription premium (Stars recorrente)** 🟠🟡
-- **Por quê:** "Royal Plus" — 50 stars/mês = +20% XP, slot extra de casório, badge dourado no card.
-- **Como:** `createInvoiceLink` com `subscription_period`. Webhook `pre_checkout_query` + `successful_payment`.
+**M04 · ✅ FEITO — Subscription premium (Stars recorrente)** 🟠🟡
+- **Por quê:** "Royal Plus" — 50⭐/mês = +20% XP, slot extra de casório, badge violeta.
+- **Solução (implementada):** `SUBSCRIPTIONS` + `send_invoice(currency="XTR", subscription_period=2592000)` (30d) via callback `r:sub:royal_plus`. `pre_checkout_handler` aceita prefixo `sub|`; `successful_payment_handler` detecta `subscription_expiration_date` e grava ISO em `royal_plus_until`. Renovações automáticas tratadas igual (idempotente por charge_id). Migration v11.
+- **Aceite:** assinatura ativa grava `royal_plus_until`; renovação mensal atualiza. ✅
+- **TODO:** aplicação dos perks (mult XP, slot extra, badge) nos hot paths — Sprint 4/5.
 
 ### 🎮 GAMEPLAY (engagement, retenção)
 
@@ -229,20 +240,21 @@
 
 ## 📅 ORDEM SUGERIDA DE EXECUÇÃO (gates de aprovação)
 
-**Sprint 1 — Fundação (não dá pra escalar sem isso):**
-F01 → F02 → F11 → F14 → F10 → F13 → M13 → M18
+**Sprint 1 — Fundação ✅ (F01/F02 deferidos por risco; M13 Sentry vetado):**
+~~F11 → F14 → F10 → F13~~ ✅ · F01 / F02 ⏸️ · M13 vetado · M18 (CI) pendente
 
-**Sprint 2 — Anti-incêndio:**
-F03 → F05 → F06 → F07 → F08 → F09 → F15 → F16 → F17 → F18 → F19 → F20 → F04 → F12
+**Sprint 2 — Anti-incêndio ✅ CONCLUÍDO:**
+~~F03 → F05 → F06 → F07 → F08 → F15 → F16 → F17 → F18 → F19 → F20 → F04 → F12~~ ✅ · F09 🟡 parcial
 
-**Sprint 3 — Monetização (libera receita cedo):**
-M01 → M04 → M03 → M02
+**Sprint 3 — Monetização ✅ CONCLUÍDO:**
+~~M01 → M04 → M03 → M02~~ ✅
 
-**Sprint 4 — Engajamento:**
-M05 → M11 → M06 → M09 → M19
+**Sprint 4 — Engajamento ✅ CONCLUÍDO:**
+~~M05 → M11 → M06 → M09 → M19~~ ✅
 
-**Sprint 5 — Diferencial competitivo:**
+**Sprint 5 — Diferencial competitivo (PENDENTE):**
 M07 → M15 → M10 → M12 → M08 → M14 → M16 → M17 → M20
++ infra pendente: M18 (CI), M14 (Prometheus)
 
 ---
 
