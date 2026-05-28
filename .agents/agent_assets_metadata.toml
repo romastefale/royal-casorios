@@ -371,3 +371,9 @@ id = "BYOn0zO1CKdR4k9pBJcRI"
 uri = "file://.local/preview/identity_no_handle.jpg"
 type = "image"
 title = "Identity — sem @username (so ROY#ID, sem tofu)"
+
+[[outputs]]
+id = "fOy7ldcs92hXfUUXmQEVN"
+uri = "file://attached_assets/tofu_test.png"
+type = "image"
+title = "Teste anti-tofu — display names Unicode estilizados"

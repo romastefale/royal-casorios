@@ -162,6 +162,135 @@ FONT_REG = [
     "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
 ]
 
+# =====================================================================
+# Anti-tofu — fallback per-glyph pra display names com Unicode estilizado
+# =====================================================================
+# Telegram permite nomes tipo "𝓜𝓪𝓻𝓲𝓪" (Mathematical Alphanumeric U+1D400+),
+# "ⓟⓛⓐⓨⓔⓡ" (Enclosed Alphanumerics U+2460+), "Ｆｕｌｌｗｉｄｔｈ" (U+FF00+),
+# que DejaVu nao cobre. Resultado: tofu (caixinha vazia) no card.
+#
+# Solucao baseada em pesquisa oficial:
+# - Google Noto family (No-Tofu) eh explicitamente projetada pra cobrir
+#   todo o Unicode. License: SIL OFL 1.1 (uso comercial OK).
+# - Noto Sans Math cobre U+1D400-U+1D7FF (math alphanumeric).
+# - Noto Sans Symbols cobre U+2460-U+24FF (enclosed alphanumerics).
+# - Noto Sans Symbols 2 cobre extras (musica, jogos, technical).
+# - Pillow NAO tem fallback nativo -> implementado per-glyph aqui.
+#
+# Fontes baixadas em fonts/ via repo oficial notofonts/notofonts.github.io.
+FALLBACK_FONT_PATHS = [
+    str(_FONTS_DIR / "NotoSans-Regular.ttf"),
+    str(_FONTS_DIR / "NotoSansMath-Regular.ttf"),
+    str(_FONTS_DIR / "NotoSansSymbols-Regular.ttf"),
+    str(_FONTS_DIR / "NotoSansSymbols2-Regular.ttf"),
+]
+
+# Cache (path, size) -> ImageFont. Evita reabrir TTF a cada glifo.
+_FB_FONT_CACHE: dict[tuple[str, int], ImageFont.FreeTypeFont] = {}
+# Cache path -> set(int codepoints). Lido 1x do TTF via fonttools.
+# Pillow 12 NAO expoe cmap (font.font nao tem getbest_cmap nem similar
+# confiavel), e bbox heuristica falha (notdef tem mesmo bbox de chars
+# reais). fonttools eh a unica forma confiavel de saber se um glifo
+# existe sem renderizar e comparar pixels.
+_FONT_CMAP_CACHE: dict[str, frozenset] = {}
+
+
+def _font_cmap(path: str) -> frozenset:
+    """Set imutavel de codepoints (int) que a fonte cobre. Cached."""
+    cm = _FONT_CMAP_CACHE.get(path)
+    if cm is not None:
+        return cm
+    try:
+        from fontTools.ttLib import TTFont
+        with TTFont(path, lazy=True) as tt:
+            cm = frozenset(tt.getBestCmap().keys())
+    except Exception:
+        cm = frozenset()  # nao sabe -> primary sempre escolhida
+    _FONT_CMAP_CACHE[path] = cm
+    return cm
+
+
+def _fb_font(path: str, size: int):
+    key = (path, size)
+    f = _FB_FONT_CACHE.get(key)
+    if f is None:
+        try:
+            f = ImageFont.truetype(path, size=size)
+            _FB_FONT_CACHE[key] = f
+        except Exception:
+            return None
+    return f
+
+
+def _font_has_char(font, char: str) -> bool:
+    """True se a fonte tem glifo real pro char (nao eh 'notdef'/tofu).
+    Usa o cmap real parseado via fontTools (Pillow 12 nao expoe)."""
+    try:
+        path = getattr(font, "path", None)
+        if not path:
+            return True  # fonte sem path conhecido -> assume cobre
+        return ord(char) in _font_cmap(path)
+    except Exception:
+        return True
+
+
+def _fallback_fonts_for(size: int) -> list:
+    return [_fb_font(p, size) for p in FALLBACK_FONT_PATHS]
+
+
+def _resolve_glyph_font(char: str, primary, fallbacks: list):
+    """Primary se cobrir, senao 1o fallback que cobre. Em ultimo caso volta
+    pra primary (renderiza tofu mas nao crasha)."""
+    if _font_has_char(primary, char):
+        return primary
+    for f in fallbacks:
+        if f is not None and _font_has_char(f, char):
+            return f
+    return primary
+
+
+def _char_advance(draw, ch: str, font) -> float:
+    """Advance horizontal pro cursor — usa textlength quando disponivel
+    (respeita side bearings/kerning intra-char), fallback bbox width."""
+    try:
+        return draw.textlength(ch, font=font)
+    except Exception:
+        bbox = draw.textbbox((0, 0), ch, font=font)
+        return float(bbox[2] - bbox[0])
+
+
+def draw_text_smart(draw, xy, text: str, font, fill) -> None:
+    """draw.text() char-por-char com fallback Noto pra evitar tofu em
+    display names com Unicode estilizado (math, symbols, fullwidth).
+    Mesma signature visual que draw.text mas em forma de helper."""
+    if not text:
+        return
+    x, y = xy
+    fb = _fallback_fonts_for(font.size)
+    for ch in text:
+        f = _resolve_glyph_font(ch, font, fb)
+        draw.text((round(x), y), ch, font=f, fill=fill)
+        x += _char_advance(draw, ch, f)
+
+
+def text_size_smart(draw: ImageDraw.ImageDraw, text: str, primary) -> tuple[int, int]:
+    """text_size() considerando fallbacks per-glyph. Width somado via
+    textlength (mesmo metodo de advance que draw_text_smart usa, entao
+    width casa com o desenho). Height = max por glifo."""
+    if not text:
+        return (0, 0)
+    fb = _fallback_fonts_for(primary.size)
+    total_w = 0.0
+    max_h = 0
+    for ch in text:
+        f = _resolve_glyph_font(ch, primary, fb)
+        total_w += _char_advance(draw, ch, f)
+        bbox = draw.textbbox((0, 0), ch, font=f)
+        h = bbox[3] - bbox[1]
+        if h > max_h:
+            max_h = h
+    return (int(round(total_w)), max_h)
+
 
 # Telegram em mobile renderiza fotos em ~320-480px de largura. Com canvas
 # 1080, o scale chega a ~30-45% — então uma fonte source de 14px vira ~5px
@@ -735,7 +864,7 @@ def render_profile_card(data: ProfileCardData,
         name_clean = ellipsize(data.name, 16).upper()
         name_size = 48 if len(name_clean) <= 10 else 38 if len(name_clean) <= 14 else 32
         name_font = load_font(name_size, mono=True, bold=True)
-        draw.text((info_x, ay - 4), name_clean, font=name_font, fill=INK)
+        draw_text_smart(draw, (info_x, ay - 4), name_clean, name_font, INK)
 
         # (sem underline — cortava letras com descender tipo @ no usuario)
         nw, nh = text_size(draw, name_clean, name_font)
@@ -1034,9 +1163,9 @@ def render_ranking_card(season_label: str,
                 name_clean = ellipsize(e.name, 14).upper()
                 ns = 22 if len(name_clean) <= 10 else 18
                 name_font = load_font(ns, mono=True, bold=True)
-                nw2, _ = text_size(draw, name_clean, name_font)
-                draw.text((cx0 + (col_w - nw2) // 2, box_top + 40),
-                          name_clean, font=name_font, fill=INK)
+                nw2, _ = text_size_smart(draw, name_clean, name_font)
+                draw_text_smart(draw, (cx0 + (col_w - nw2) // 2, box_top + 40),
+                                name_clean, name_font, INK)
 
                 id_font = load_font(14, mono=True, bold=False)
                 idw, _ = text_size(draw, e.royal_id, id_font)
@@ -1071,7 +1200,7 @@ def render_ranking_card(season_label: str,
                 ry = rest_y + row * 22
                 name_short = ellipsize(e.name, 14)
                 line = f" {e.rank:02d}. {name_short:<14} {format_br(e.season_xp)} XP"
-                draw.text((rx, ry), line, font=rest_font, fill=DIM)
+                draw_text_smart(draw, (rx, ry), line, rest_font, DIM)
 
         # Footer — textos curtos pra evitar colisão
         foot_font = load_font(12, mono=True, bold=False)
@@ -1159,10 +1288,10 @@ def render_levelup_card(royal_id: str, name: str,
         # Nome (logo abaixo do alerta)
         name_clean = ellipsize(name, 22).upper()
         nfont = load_font(22, mono=True, bold=True)
-        nw2, nh2 = text_size(draw, name_clean, nfont)
+        nw2, nh2 = text_size_smart(draw, name_clean, nfont)
         name_y = OUT_PAD + 24 + ah + 14
-        draw.text((center_x - nw2 // 2, name_y),
-                  name_clean, font=nfont, fill=INK)
+        draw_text_smart(draw, (center_x - nw2 // 2, name_y),
+                        name_clean, nfont, INK)
         next_y = name_y + nh2 + 6
         if class_name:
             cfont = load_font(14, mono=True, bold=False)
@@ -1450,9 +1579,9 @@ def render_casorio_card(p1: CasorioPartner, p2: CasorioPartner,
             name_clean = ellipsize(partner.name or "?", 12).upper()
             name_size = 38 if len(name_clean) <= 8 else 30 if len(name_clean) <= 11 else 26
             name_font = load_font(name_size, mono=True, bold=True)
-            nw, nh = text_size(draw, name_clean, name_font)
-            draw.text((cx0 + (AVATAR_SIZE - nw) // 2, info_y),
-                      name_clean, font=name_font, fill=INK)
+            nw, nh = text_size_smart(draw, name_clean, name_font)
+            draw_text_smart(draw, (cx0 + (AVATAR_SIZE - nw) // 2, info_y),
+                            name_clean, name_font, INK)
 
             # Royal ID + LV embaixo
             sub_font = load_font(20, mono=True, bold=True)
@@ -1682,10 +1811,10 @@ def render_boss_kill_card(data: BossKillData) -> bytes | None:
             name_clean = ellipsize(a.name or "?", 10).upper()
             n_size = 22 if len(name_clean) <= 7 else 18
             name_font = load_font(n_size, mono=True, bold=True)
-            nw, nh = text_size(draw, name_clean, name_font)
+            nw, nh = text_size_smart(draw, name_clean, name_font)
             name_y = ay + AVATAR + 16
-            draw.text((cx0 + (col_w - nw) // 2, name_y),
-                      name_clean, font=name_font, fill=INK)
+            draw_text_smart(draw, (cx0 + (col_w - nw) // 2, name_y),
+                            name_clean, name_font, INK)
 
             # Royal ID
             id_font = load_font(16, mono=True, bold=False)
@@ -1980,9 +2109,9 @@ def render_classe_card(data: ClasseCardData) -> bytes | None:
 
         # Nome embaixo do avatar
         nm_font = load_font(20, mono=False, bold=True)
-        nw, nh = text_size(draw, name, nm_font)
-        draw.text((AX + (AVATAR_SIZE - nw) // 2, AY + AVATAR_SIZE + 18),
-                  name, font=nm_font, fill=INK)
+        nw, nh = text_size_smart(draw, name, nm_font)
+        draw_text_smart(draw, (AX + (AVATAR_SIZE - nw) // 2, AY + AVATAR_SIZE + 18),
+                        name, nm_font, INK)
         id_font = load_font(18, mono=True, bold=True)
         id_txt = f"ROY#{royal_id.replace('RYL-', '').replace('ROY-', '')}"
         iw, _ = text_size(draw, id_txt, id_font)
@@ -2169,12 +2298,12 @@ def render_loja_drop_card(data: LojaDropData) -> bytes | None:
         buy_font = load_font(18, mono=True, bold=False)
         rid_short = royal_id.replace('RYL-', '').replace('ROY-', '')
         buy_txt = f">> ROY#{rid_short}  ::  {buyer}"
-        bw_w, _ = text_size(draw, buy_txt, buy_font)
+        bw_w, _ = text_size_smart(draw, buy_txt, buy_font)
         if bw_w > W - 100:
             buy_txt = f">> ROY#{rid_short}"
-            bw_w, _ = text_size(draw, buy_txt, buy_font)
-        draw.text(((W - bw_w) // 2, pr_y + ph + 24),
-                  buy_txt, font=buy_font, fill=DIM)
+            bw_w, _ = text_size_smart(draw, buy_txt, buy_font)
+        draw_text_smart(draw, ((W - bw_w) // 2, pr_y + ph + 24),
+                        buy_txt, buy_font, DIM)
 
         # Footer
         footer_font = load_font(16, mono=True, bold=False)
