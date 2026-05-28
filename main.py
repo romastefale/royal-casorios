@@ -141,6 +141,48 @@ dp = Dispatcher()
 DB_DIR = os.path.dirname(DB_PATH) or "."
 os.makedirs(DB_DIR, exist_ok=True)
 
+
+def _ensure_db_persistence() -> None:
+    """
+    Garante persistencia do DB entre deploys.
+
+    - Loga path absoluto + tamanho atual do arquivo.
+    - Se DB_PATH aponta pra lugar vazio (1a boot apos volume novo no
+      Railway) e existe um seed no repo em ./data/royal_casorios.sqlite3,
+      copia ele pra la (one-time bootstrap).
+    - Avisa em CAPS se DB_PATH eh relativo (provavelmente efemero em
+      container sem volume mountado).
+    """
+    import shutil
+    target = os.path.abspath(DB_PATH)
+    repo_seed = os.path.abspath("./data/royal_casorios.sqlite3")
+
+    if os.path.exists(target):
+        size_kb = os.path.getsize(target) // 1024
+        logger.info("[DB] usando %s (%d KB)", target, size_kb)
+    else:
+        if os.path.exists(repo_seed) and repo_seed != target:
+            shutil.copy2(repo_seed, target)
+            size_kb = os.path.getsize(target) // 1024
+            logger.warning(
+                "[DB] BOOTSTRAP: copiei seed do repo %s -> %s (%d KB)",
+                repo_seed, target, size_kb,
+            )
+        else:
+            logger.warning("[DB] criando NOVO arquivo vazio em %s", target)
+
+    if not os.path.isabs(DB_PATH):
+        logger.warning(
+            "[DB] !! ATENCAO: DATABASE_PATH eh relativo (%s). Em "
+            "container (Railway) sem volume mountado, esse arquivo "
+            "EVAPORA a cada deploy. Configure um volume e setenv "
+            "DATABASE_PATH=/data/royal_casorios.sqlite3",
+            DB_PATH,
+        )
+
+
+_ensure_db_persistence()
+
 db = sqlite3.connect(DB_PATH, check_same_thread=False)
 db.row_factory = sqlite3.Row
 cur = db.cursor()

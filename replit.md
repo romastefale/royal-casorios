@@ -23,10 +23,50 @@ A branch `main` LOCAL nunca é alterada no remoto — sempre fazemos `main:royal
 - `requirements.txt` — dependências (`aiogram`, `Pillow`)
 - Requer secret `BOT_TOKEN`
 
+## 💾 Persistência de dados — CRÍTICO (Railway)
+
+**Container do Railway é efêmero.** A cada `git push` que dispara
+redeploy, o filesystem é recriado a partir do snapshot do repo. Se o
+SQLite mora em `./data/royal_casorios.sqlite3` (path RELATIVO), o
+arquivo é restaurado pro estado commitado e **TODOS os dados gravados
+em runtime são perdidos** (perfis, royal_id, XP, casórios, inventário,
+saldo, palavras, configs por usuário, etc).
+
+**Solução obrigatória — Railway Volumes:**
+
+1. No dashboard do Railway → serviço do bot → aba **Volumes** → **+ New
+   Volume**.
+2. Mount path: `/data`. Size: 1 GB (sobra muito; SQLite cresce devagar).
+3. Aba **Variables** → adicionar:
+   ```
+   DATABASE_PATH=/data/royal_casorios.sqlite3
+   ```
+4. Redeploy. Na 1ª boot, `_ensure_db_persistence()` em `main.py`
+   detecta `/data/royal_casorios.sqlite3` vazio e **copia o seed**
+   do repo (`./data/royal_casorios.sqlite3` baked no build) pra
+   dentro do volume — uma única vez. A partir daí o volume persiste
+   independente de redeploys.
+
+**Como confirmar que tá funcionando:**
+- Logs da 1ª boot pós-volume: `[DB] BOOTSTRAP: copiei seed do repo ...`
+- Boots seguintes: `[DB] usando /data/royal_casorios.sqlite3 (XXX KB)`
+- Se aparecer `[DB] !! ATENCAO: DATABASE_PATH eh relativo ...` →
+  **volume não está montado / env var não foi setada** → corrigir antes
+  de qualquer outro deploy.
+
+> ⚠️ Enquanto não configurar o volume, **não faça commits novos do
+> `data/royal_casorios.sqlite3`** — cada commit do DB sobrescreve o
+> snapshot que é "restaurado" em redeploy. O `.gitignore` já ignora
+> `data/` e `*.sqlite3` daqui pra frente; o arquivo atualmente trackado
+> precisa ser removido com `git rm --cached data/royal_casorios.sqlite3`
+> (ação destrutiva — pedir ao usuário ou rodar via project task).
+
 ## 🔧 Env vars
 
 - `BOT_TOKEN` (obrigatório) — token do BotFather
-- `DATABASE_PATH` (opcional, default `./data/royal_casorios.sqlite3`)
+- `DATABASE_PATH` (opcional, default `./data/royal_casorios.sqlite3`;
+  **no Railway use `/data/royal_casorios.sqlite3` com volume mountado —
+  ver seção "Persistência de dados" acima**)
 - `TZ` (opcional, default `America/Sao_Paulo`)
 - `AUTO_HOURS` (opcional, default `9,15,21`)
 - **`TEST_CHAT_IDS`** (opcional, comma-separated) — chat_ids de grupos de
