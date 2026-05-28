@@ -8,6 +8,11 @@ Bot de Telegram de RPG retro-futurista para grupos. Construído com **aiogram 3.
 
 ## 🆕 Novidades (mai/2026)
 
+**Onboarding & docs:**
+- 📖 **Tutorial reescrito em 6 partes** super-didáticas (`ROYAL_TUTORIAL_PARTS` + `send_tutorial()`) — cada parte é enviada como mensagem separada, respeitando o limite de 4096 chars do Telegram. Usado por `/start`, `/royaltutorial`, `/royalajuda`, `/help` e o botão "📖 Tutorial".
+- 📝 **README e `/royalajuda` sincronizados** com todos os comandos atuais (presentes, missões, eventos, conquistas, config, dica da Palavra) + seção **Premium (Telegram Stars ⭐)**.
+- 🧹 Limpeza de dead code (imports/vars não usados) + correção de copy falsa no help ("slot extra de casório", nunca implementado).
+
 **UX viva (Bot API 10):**
 - ⚡ **Bot reage ao seu comando** com `👀` / `✍` antes de responder — feedback instantâneo via `set_message_reaction` (helper `react_to()`)
 - ⌨️ **"Digitando..."** simulado em renders pesados (`type_then_send`, `safe_typing`)
@@ -112,11 +117,12 @@ railway.json       # deploy config
 | Comando | Função |
 |---|---|
 | `/royalperfil [RYL-ID]`, `/royalficha` | Card 1080×1080 com stats. Sem ID, mostra o seu. |
+| `/royalavatar` | Escolhe/troca avatar (1× por temporada) |
 | `/royalup` | Distribui pontos de atributo (1 por clique) |
 | `/royalclasse` | Escolhe/troca classe (1× por temporada) |
 | `/royalsaldo` | Mostra ouro atual |
 | `/royalinventario` | Lista itens + botões equipar/usar |
-| `/royalloja` | Compra com 🪙 |
+| `/royalloja` | Compra com 🪙 ou Telegram Stars ⭐ (Premium) |
 
 ### Rankings & PvE
 | Comando | Função |
@@ -133,6 +139,25 @@ railway.json       # deploy config
 | `/royaldesencalhar`, `/desencalhar` | Volta a participar |
 | `/royalmeuscasorios`, `/meusdivorcios` | Seu histórico + top pares |
 | `/royalcasorios`, `/divorcios` | Ranking de casais do grupo |
+
+### Social & Economia
+| Comando | Função |
+|---|---|
+| `/royalpresentear @user N` | Transfere N florins 🪙 (10–5000). Também via reply + `/royalpresentear N` |
+| `/royalpaldica` | Consome 1 crédito 💡 (Premium) e revela 1 letra da Palavra ativa |
+| `/royalconquistas` | Lista suas medalhas (desbloqueadas/bloqueadas) |
+
+### Diário & Eventos
+| Comando | Função |
+|---|---|
+| `/royalmissoes` | 4 missões diárias (msgs, Palavra, boss, reações) → resgata XP + 🪙 |
+| `/royalevento` | Mostra o boost de XP ativo (datas especiais + fim de semana) |
+| `/royalconfig` | Preferências (silenciar level-up, etc.) |
+
+### DM
+| Comando | Função |
+|---|---|
+| `/royalgrupo` | Vê/troca o grupo Royal ativo na DM (quando você está em vários) |
 
 ### Admin / Privacidade
 | Comando | Função |
@@ -243,6 +268,18 @@ HP regenera 100 % consumindo **Poção de Vigor 🧪**.
 | 👑 Coroa Decorativa | 500 🪙 | cosmético | Mostra no perfil |
 
 Só pode ter **1 equipamento de cada tipo** ativo (espada/armadura/botas/anel).
+
+### Premium — Telegram Stars ⭐
+Pago dentro do próprio Telegram (sem cartão/gateway). Acesso: `/royalloja` → **💎 Premium**.
+
+| Item | Preço | Efeito |
+|---|---|---|
+| 🌟 Royal Plus (assinatura mensal) | 50 ⭐/mês | +20% XP permanente + badge violeta no card. Renova sozinho; cancela pelo Telegram |
+| ⚡ Boost +20% XP (24h) | 50 ⭐ | Multiplicador 1.2× em todo XP por 24h |
+| 💡 Dica da Palavra | 1 ⭐ | 1 crédito p/ revelar 1 letra via `/royalpaldica` |
+| 🥇 Skin Dourada (permanente) | 100 ⭐ | Badge dourado no profile card, pra sempre |
+
+> ⚠️ O item 🔱 Ressurreição no Boss existe no fluxo de cobrança mas **ainda não tem efeito** (o combate de boss não tem mecânica de morte do player) — pendência de produto.
 
 ---
 
