@@ -48,6 +48,25 @@ A branch `main` LOCAL nunca é alterada no remoto — sempre fazemos `main:royal
   `/setinline` → texto placeholder (ex.: "Enviar meu perfil Royal").
   Sem isso o Telegram não dispara `inline_query`.
 
+## 📋 Menus (BotCommands)
+
+Registrados em `register_bot_commands()` em `main.py`. Telegram atualiza
+o autocomplete `/` automaticamente na 1ª inicialização com novo token.
+
+**Grupo** (`BotCommandScopeAllGroupChats`): `royal`, `royalperfil`,
+`royalficha`, `royalavatar`, `royalup`, `royalclasse`, `royalinventario`,
+`royalloja`, `royalsaldo`, `royalranking`, `royalpalavra`, `royalboss`,
+`royalcasorios`, `royalmeuscasorios`, `royalencalhar`, `royaldesencalhar`,
+`royalcasar` (admin), `royalativar` (admin), `royaltutorial`, `royalajuda`.
+
+**DM** (`BotCommandScopeAllPrivateChats`): `royal`, `royalperfil`,
+`royalavatar`, `royalficha`, `royalranking`, `royalinventario`,
+`royalsaldo`, `royalmeuscasorios`, `royalgrupo`, `royaltutorial`,
+`royalajuda`, `royalprivacidade`, `royaldados`.
+
+> 💡 Se você trocou o `BOT_TOKEN` e o menu antigo persiste, basta reiniciar
+> o bot uma vez — `register_bot_commands()` reescreve os dois scopes.
+
 ## User preferences
 - **Versões fixas (regra do usuário):**
   - **Telegram Bot API: 10** — usar sempre, não fazer downgrade
