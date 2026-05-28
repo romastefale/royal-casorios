@@ -50,7 +50,9 @@ from aiogram.types import (
     InputFile,
     InputTextMessageContent,
     KeyboardButton,
+    LabeledPrice,
     Message,
+    PreCheckoutQuery,
     ReactionTypeEmoji,
     ReplyKeyboardMarkup,
 )
@@ -718,6 +720,38 @@ def migrate_to_v9(c: sqlite3.Cursor) -> None:
                 raise
 
 
+def migrate_to_v10(c: sqlite3.Cursor) -> None:
+    """M01: Telegram Stars premium perks. xp_boost_until ISO timestamp,
+    contadores de hints (palavra) e ressurrects (boss), flag de skin
+    dourada (badge no profile card). Tudo opt-in via /royalloja → Premium."""
+    for col, ddl in (
+        ("xp_boost_until",
+         "ALTER TABLE players ADD COLUMN xp_boost_until TEXT"),
+        ("prm_hints",
+         "ALTER TABLE players ADD COLUMN prm_hints INTEGER DEFAULT 0"),
+        ("prm_ressurrects",
+         "ALTER TABLE players ADD COLUMN prm_ressurrects INTEGER DEFAULT 0"),
+        ("prm_skin_gold",
+         "ALTER TABLE players ADD COLUMN prm_skin_gold INTEGER DEFAULT 0"),
+    ):
+        try:
+            c.execute(ddl)
+        except sqlite3.OperationalError as e:
+            if "duplicate column" not in str(e).lower():
+                raise
+    # Ledger de compras em Stars (auditoria + idempotencia via charge_id)
+    c.execute(
+        "CREATE TABLE IF NOT EXISTS stars_purchases ("
+        "  charge_id TEXT PRIMARY KEY,"
+        "  user_id INTEGER NOT NULL,"
+        "  chat_id INTEGER,"
+        "  item_id TEXT NOT NULL,"
+        "  stars INTEGER NOT NULL,"
+        "  payload TEXT,"
+        "  granted_at TEXT NOT NULL"
+        ")")
+
+
 def migrate_to_v6(c: sqlite3.Cursor) -> None:
     """Randomiza royal_ids existentes (RYL-0001, 0002... -> RYL-NNNN
     sortidos entre 1000-9999). Pool por chat = 9000, retry on collision.
@@ -768,6 +802,7 @@ MIGRATIONS = [
     (7, migrate_to_v7),
     (8, migrate_to_v8),
     (9, migrate_to_v9),
+    (10, migrate_to_v10),
 ]
 
 
@@ -909,6 +944,43 @@ ITEMS: dict[str, dict] = {
                 "effect": "xp100"},
     "coroa":   {"emoji": "👑", "name": "Coroa Decorativa",    "price": 500, "type": "cosmetic",
                 "desc": "Cosmético, mostra status no perfil"},
+}
+
+# =====================================================================
+# M01 — TELEGRAM STARS (Bot API 10) — itens premium pagos em XTR.
+# Sem provider_token, sem gateway externo. Telegram processa.
+# Stars = moeda virtual paga pelo user no proprio Telegram (USD/EUR).
+# Doc: https://core.telegram.org/bots/payments-stars
+# =====================================================================
+PREMIUM_ITEMS: dict[str, dict] = {
+    "prm_boost24h": {
+        "emoji": "⚡", "name": "Boost +20% XP (24h)",
+        "stars": 50,
+        "desc": "Multiplicador 1.2× em todo XP ganho por 24h "
+                "(palavra, boss, casorio, chat).",
+        "perk": "xp_boost", "duration_h": 24, "multiplier": 1.2,
+    },
+    "prm_hint": {
+        "emoji": "💡", "name": "Dica da Palavra",
+        "stars": 1,
+        "desc": "Revela 1 letra da Palavra da Hora ativa "
+                "(consome 1 credito no proximo /royalpalavra).",
+        "perk": "palavra_hint", "qty": 1,
+    },
+    "prm_ressur": {
+        "emoji": "🔱", "name": "Ressurreicao no Boss",
+        "stars": 10,
+        "desc": "Te ergue da morte 1× no proximo combate de boss "
+                "(consome ao morrer).",
+        "perk": "boss_ressurrect", "qty": 1,
+    },
+    "prm_skin_gold": {
+        "emoji": "🥇", "name": "Skin Dourada (permanente)",
+        "stars": 100,
+        "desc": "Badge dourado no seu profile card. "
+                "Para sempre, em toda temporada.",
+        "perk": "skin_gold",
+    },
 }
 
 # Temporadas (hemisferio sul)
@@ -3970,6 +4042,7 @@ async def start_cmd(message: Message):
         "• 🏆 /royalranking — top 10 da temporada\n"
         "• 🎒 /royalinventario — seus itens\n"
         "• 💰 /royalsaldo — florins na arca 🪙\n"
+        "• 💎 /royalloja — loja + <b>Premium ⭐ (Stars)</b>\n"
         "• 📊 /royalmeuscasorios — seu historico\n"
         "• 👑 /royalavatar — escolher avatar\n"
         "• 🏰 /royalgrupo — trocar grupo ativo\n"
@@ -4070,7 +4143,14 @@ ROYAL_HELP = (
     "<blockquote expandable>⚔️ <b>RPG (grupo)</b>\n"
     "/royalup — distribuir pontos de atributo\n"
     "/royalclasse — escolher classe\n"
-    "/royalloja — comprar itens</blockquote>\n"
+    "/royalloja — comprar itens (florins 🪙 ou <b>Stars ⭐ Premium</b>)</blockquote>\n"
+    "<blockquote expandable>💎 <b>Premium — Telegram Stars ⭐</b>\n"
+    "Em /royalloja → botão <b>💎 Premium</b>:\n"
+    "• ⚡ Boost +20% XP (24h) — 50⭐\n"
+    "• 💡 Dica da Palavra — 1⭐\n"
+    "• 🔱 Ressurreição no Boss — 10⭐\n"
+    "• 🥇 Skin Dourada permanente — 100⭐\n"
+    "<i>Pagamento via Telegram (sem cartão).</i></blockquote>\n"
     "<blockquote expandable>📜 <b>Pessoal (DM ou grupo)</b>\n"
     "/royalinventario — ver seus itens\n"
     "/royalsaldo — quantos florins você tem 🪙\n"
@@ -4599,6 +4679,24 @@ def loja_keyboard() -> InlineKeyboardMarkup:
             f"💳 {item['emoji']} {item['name']} ({item['price']}🪙)",
             callback_data=f"r:buy:{iid}",
             style=STYLE_INFO)])
+    # M01: aba Premium (Telegram Stars)
+    rows.append([ikb(
+        "💎 Premium (Telegram Stars ⭐)",
+        callback_data="r:prem",
+        style=STYLE_OK)])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def premium_keyboard() -> InlineKeyboardMarkup:
+    """M01: itens premium pagos em Stars (XTR)."""
+    rows = []
+    for iid, item in PREMIUM_ITEMS.items():
+        rows.append([ikb(
+            f"{item['emoji']} {item['name']} — {item['stars']}⭐",
+            callback_data=f"r:xtr:{iid}",
+            style=STYLE_INFO)])
+    rows.append([ikb(f"{BTN_BACK} Voltar à Loja",
+                     callback_data="r:loja")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -5657,7 +5755,8 @@ async def hub_cb(cb: CallbackQuery):
     chat_id = resolve_owner_chat(cb.from_user.id, fallback)
 
     # Acoes que requerem contexto de chat Royal:
-    needs_chat = {"rank", "pal", "boss", "loja", "cas", "up", "cls", "buy", "atk", "inv"}
+    needs_chat = {"rank", "pal", "boss", "loja", "cas", "up", "cls", "buy",
+                  "atk", "inv", "prem", "xtr"}
     if action in needs_chat and chat_id is None:
         await cb.answer("🏰 Esse atalho precisa de um grupo do Reino. Volta pra lá pra usar.",
                         show_alert=True)
@@ -5990,6 +6089,59 @@ async def hub_cb(cb: CallbackQuery):
             await handle_boss_attack(cb, int(parts[2]))
             return
 
+        # M01: abre menu Premium (Telegram Stars)
+        if action == "prem":
+            lines = [
+                ">> ITENS PAGOS EM TELEGRAM STARS ⭐",
+                "// Pagamento direto no chat, sem cartao",
+                "",
+            ]
+            for iid, item in PREMIUM_ITEMS.items():
+                lines.append(
+                    f"{item['emoji']} <b>{html.escape(item['name'])}</b> "
+                    f"— <code>{item['stars']}⭐</code>")
+                lines.append(f"   <i>{html.escape(item['desc'])}</i>")
+                lines.append("")
+            await cb.message.answer(
+                term_block("PREMIUM", "\n".join(lines),
+                           status="OPEN", status_color="GOLD",
+                           stamp="XTR // Bot API 10"),
+                reply_markup=premium_keyboard())
+            await cb.answer()
+            return
+
+        # M01: gera invoice de Stars pro item escolhido
+        if action == "xtr":
+            if len(parts) < 3:
+                await cb.answer()
+                return
+            iid = parts[2]
+            item = PREMIUM_ITEMS.get(iid)
+            if not item:
+                await cb.answer("Item inexistente", show_alert=True)
+                return
+            if bot is None:
+                await cb.answer("Bot offline", show_alert=True)
+                return
+            stars = int(item["stars"])
+            # payload: prm|item_id|chat_id|user_id (validamos no successful_payment)
+            payload = f"prm|{iid}|{chat_id}|{cb.from_user.id}"
+            try:
+                await bot.send_invoice(
+                    chat_id=cb.message.chat.id,
+                    title=f"{item['emoji']} {item['name']}",
+                    description=item["desc"],
+                    payload=payload,
+                    provider_token="",   # XTR nao usa provider
+                    currency="XTR",
+                    prices=[LabeledPrice(label=item["name"], amount=stars)],
+                )
+                await cb.answer()
+            except Exception:
+                logger.exception("M01 send_invoice falhou item=%s", iid)
+                await cb.answer("Falha ao gerar fatura ⭐", show_alert=True)
+            return
+
         await cb.answer()
     except Exception:
         logger.exception("hub_cb failed for data=%s", cb.data)
@@ -6001,6 +6153,170 @@ async def hub_cb(cb: CallbackQuery):
 
 def is_group_chat(message: Message) -> bool:
     return message.chat.type in {"group", "supergroup"}
+
+
+# =====================================================================
+# M01 — TELEGRAM STARS handlers (pre_checkout + successful_payment)
+# Fluxo:
+#  1. User clica em item premium → r:xtr:{iid} → bot.send_invoice(XTR)
+#  2. User confirma no client → Telegram envia pre_checkout_query
+#  3. Bot responde ok=True (sempre, ja validamos no send_invoice)
+#  4. Telegram cobra Stars e envia successful_payment
+#  5. Bot concede o perk + grava no ledger stars_purchases
+# =====================================================================
+
+@dp.pre_checkout_query()
+async def pre_checkout_handler(q: PreCheckoutQuery):
+    """Valida payload e amount ANTES de o Telegram cobrar. Sem responder
+    aqui, o pagamento trava em "checking..." e expira em 10s."""
+    try:
+        payload = q.invoice_payload or ""
+        parts_p = payload.split("|")
+        if len(parts_p) != 4 or parts_p[0] != "prm":
+            await q.answer(ok=False, error_message="Pagamento invalido.")
+            return
+        iid = parts_p[1]
+        item = PREMIUM_ITEMS.get(iid)
+        if not item:
+            await q.answer(ok=False, error_message="Item indisponivel.")
+            return
+        expected_stars = int(item["stars"])
+        if int(q.total_amount) != expected_stars:
+            logger.warning("M01 pre_checkout amount mismatch iid=%s "
+                           "expected=%s got=%s",
+                           iid, expected_stars, q.total_amount)
+            await q.answer(ok=False, error_message="Valor incorreto.")
+            return
+        try:
+            int(parts_p[2]); int(parts_p[3])
+        except ValueError:
+            await q.answer(ok=False, error_message="Payload invalido.")
+            return
+        await q.answer(ok=True)
+    except Exception:
+        logger.exception("pre_checkout_handler falhou payload=%s",
+                         q.invoice_payload)
+        try:
+            await q.answer(ok=False,
+                           error_message="Erro interno, tenta de novo.")
+        except Exception:
+            pass
+
+
+def _grant_premium_perk(chat_id: int, user_id: int, iid: str) -> str:
+    """Concede o perk M01 ao player. Retorna texto humano do beneficio."""
+    item = PREMIUM_ITEMS.get(iid)
+    if not item:
+        return "Item desconhecido."
+    perk = item.get("perk")
+    if perk == "xp_boost":
+        hours = int(item.get("duration_h", 24))
+        until = (utc_now() + timedelta(hours=hours)).isoformat()
+        cur.execute("UPDATE players SET xp_boost_until=? "
+                    "WHERE chat_id=? AND user_id=?",
+                    (until, chat_id, user_id))
+        return f"⚡ Boost +20% XP ativado por <b>{hours}h</b>."
+    if perk == "palavra_hint":
+        qty = int(item.get("qty", 1))
+        cur.execute("UPDATE players SET prm_hints=COALESCE(prm_hints,0)+? "
+                    "WHERE chat_id=? AND user_id=?",
+                    (qty, chat_id, user_id))
+        return f"💡 +{qty} dica(s) de Palavra adicionadas."
+    if perk == "boss_ressurrect":
+        qty = int(item.get("qty", 1))
+        cur.execute("UPDATE players SET "
+                    "prm_ressurrects=COALESCE(prm_ressurrects,0)+? "
+                    "WHERE chat_id=? AND user_id=?",
+                    (qty, chat_id, user_id))
+        return f"🔱 +{qty} ressurreicao(oes) no Boss."
+    if perk == "skin_gold":
+        cur.execute("UPDATE players SET prm_skin_gold=1 "
+                    "WHERE chat_id=? AND user_id=?",
+                    (chat_id, user_id))
+        return "🥇 Skin Dourada equipada permanentemente."
+    return "Beneficio concedido."
+
+
+@dp.message(F.successful_payment)
+async def successful_payment_handler(message: Message):
+    """Recebe confirmacao do Telegram apos cobrar Stars. Idempotente
+    via stars_purchases.charge_id (PK). Concede o perk + ack ao user."""
+    sp = message.successful_payment
+    if not sp or not message.from_user:
+        return
+    payload = sp.invoice_payload or ""
+    parts_p = payload.split("|")
+    if len(parts_p) != 4 or parts_p[0] != "prm":
+        logger.warning("M01 successful_payment payload invalido: %s", payload)
+        return
+    _, iid, chat_id_s, uid_s = parts_p
+    try:
+        chat_id = int(chat_id_s)
+        uid = int(uid_s)
+    except ValueError:
+        logger.warning("M01 payload nao parseavel: %s", payload)
+        return
+    if uid != message.from_user.id:
+        logger.warning("M01 mismatch uid: payload=%s msg=%s",
+                       uid, message.from_user.id)
+        # ainda assim concede ao pagante real (msg.from_user)
+        uid = message.from_user.id
+    item = PREMIUM_ITEMS.get(iid)
+    if not item:
+        logger.warning("M01 item desconhecido: %s", iid)
+        return
+    # Hardening: amount tem que bater com o configurado (dupla checagem
+    # apos pre_checkout — defesa em profundidade).
+    expected_stars = int(item["stars"])
+    if int(sp.total_amount) != expected_stars:
+        logger.error("M01 successful_payment amount MISMATCH iid=%s "
+                     "expected=%s got=%s uid=%s",
+                     iid, expected_stars, sp.total_amount, uid)
+        await message.answer(term_block(
+            "PREMIUM",
+            "<i>Valor recebido nao bate com o item. Contate o suporte.</i>",
+            status="ERRO", status_color="HOT"))
+        return
+    # charge_id obrigatorio pra idempotencia estrita. Stars sempre
+    # entrega telegram_payment_charge_id; sem ele, recusa o grant.
+    charge_id = (sp.telegram_payment_charge_id
+                 or sp.provider_payment_charge_id)
+    if not charge_id:
+        logger.error("M01 successful_payment SEM charge_id payload=%s",
+                     payload)
+        return
+    # idempotencia: se charge_id ja existe, nao concede de novo
+    try:
+        cur.execute(
+            "INSERT INTO stars_purchases "
+            "(charge_id, user_id, chat_id, item_id, stars, payload, granted_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (charge_id, uid, chat_id, iid, int(sp.total_amount),
+             payload, utc_iso()))
+    except sqlite3.IntegrityError:
+        logger.info("M01 charge_id ja processado, skip: %s", charge_id)
+        await message.answer(term_block(
+            "PREMIUM",
+            "<i>Pagamento ja processado anteriormente.</i>",
+            status="DUPLICADO", status_color="AMBER"))
+        return
+    # garante player existe + concede o perk
+    ensure_player(chat_id, uid)
+    msg = _grant_premium_perk(chat_id, uid, iid)
+    db.commit()
+    logger.info("M01 GRANTED uid=%s chat=%s item=%s stars=%s charge=%s",
+                uid, chat_id, iid, sp.total_amount, charge_id)
+    body = (
+        f">> COMPRA CONFIRMADA\n"
+        f"// {item['emoji']} <b>{html.escape(item['name'])}</b>\n"
+        f"// custo: <code>{int(sp.total_amount)}⭐</code>\n"
+        f"// {msg}\n"
+        f"\n<i>Obrigado por sustentar o Reino, nobre.</i>"
+    )
+    await message.answer(
+        term_block("PREMIUM", body, status="OK", status_color="ACID",
+                   stamp=f"charge {charge_id[:8]}..."),
+        **effect_kw(message.chat.type, EFFECT_PARTY))
 
 
 # === Callback: inventario equipa/usa ===

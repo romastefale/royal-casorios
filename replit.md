@@ -83,6 +83,36 @@ saldo, palavras, configs por usuário, etc).
 
 **Como desligar tudo:** `LOG_DUMP_ENABLED=0` no Railway.
 
+## 💎 M01 — Telegram Stars (Premium)
+
+**Pagamento via Telegram Stars (XTR)** — sem gateway externo, sem provider_token. Telegram processa diretamente.
+
+**Acesso:** `/royalloja` → botão **💎 Premium**.
+
+**Itens premium (`PREMIUM_ITEMS` em `main.py`):**
+| Item | Stars | Perk armazenado em `players` |
+|---|---|---|
+| ⚡ Boost +20% XP (24h) | 50⭐ | `xp_boost_until` (ISO timestamp) |
+| 💡 Dica da Palavra | 1⭐ | `prm_hints` (contador) |
+| 🔱 Ressurreicao no Boss | 10⭐ | `prm_ressurrects` (contador) |
+| 🥇 Skin Dourada permanente | 100⭐ | `prm_skin_gold` (0/1) |
+
+**Fluxo técnico:**
+1. Callback `r:xtr:{iid}` chama `bot.send_invoice(currency="XTR", prices=[LabeledPrice])`.
+2. Handler `pre_checkout_handler` aceita queries com prefixo `prm|`.
+3. Handler `successful_payment_handler` valida payload, grava em `stars_purchases` (idempotente por `charge_id`), concede perk via `_grant_premium_perk()`.
+4. Ack com efeito 🎉 (DM) ou texto (grupo).
+
+**Migration v10:** adiciona colunas em `players` + tabela `stars_purchases` (ledger auditável).
+
+**Aplicação dos perks (TODO sprints futuros):**
+- `xp_boost_until` — multiplicar em hot paths de XP (palavra/boss/casorio/chat) checando `now < xp_boost_until` → `*1.2`.
+- `prm_hints` — consumir em `/royalpalavra` revelando 1 letra.
+- `prm_ressurrects` — consumir ao morrer no boss.
+- `prm_skin_gold` — flag passada pro `render_profile_card` (badge dourado).
+
+> ⚠️ M01 entrega o pipeline de cobrança + grant + ledger. As **aplicações dos perks** nos hot paths serão wired no Sprint 4/5.
+
 ## 🔧 Env vars
 
 - `BOT_TOKEN` (obrigatório) — token do BotFather
