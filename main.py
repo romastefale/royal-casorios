@@ -458,6 +458,16 @@ def migrate_to_v5(c: sqlite3.Cursor) -> None:
                 raise
 
 
+def migrate_to_v7(c: sqlite3.Cursor) -> None:
+    """Tabela kv pra flags persistentes (anuncios one-shot, etc)."""
+    c.execute(
+        "CREATE TABLE IF NOT EXISTS bot_meta ("
+        "  key TEXT PRIMARY KEY,"
+        "  value TEXT,"
+        "  updated_at TEXT"
+        ")")
+
+
 def migrate_to_v6(c: sqlite3.Cursor) -> None:
     """Randomiza royal_ids existentes (RYL-0001, 0002... -> RYL-NNNN
     sortidos entre 1000-9999). Pool por chat = 9000, retry on collision.
@@ -505,7 +515,26 @@ MIGRATIONS = [
     (4, migrate_to_v4),
     (5, migrate_to_v5),
     (6, migrate_to_v6),
+    (7, migrate_to_v7),
 ]
+
+
+def bot_meta_get(key: str) -> str | None:
+    try:
+        row = cur.execute(
+            "SELECT value FROM bot_meta WHERE key=?", (key,)).fetchone()
+        return row["value"] if row else None
+    except Exception:
+        return None
+
+
+def bot_meta_set(key: str, value: str) -> None:
+    cur.execute(
+        "INSERT INTO bot_meta (key, value, updated_at) VALUES (?, ?, ?) "
+        "ON CONFLICT(key) DO UPDATE SET value=excluded.value, "
+        "updated_at=excluded.updated_at",
+        (key, value, utc_iso()))
+    db.commit()
 
 
 def run_migrations() -> None:
@@ -5463,6 +5492,65 @@ async def register_bot_commands():
 # ENTRY POINT
 # =====================================================================
 
+BOOT_ANNOUNCE_KEY = "boot_announce_typewriter_v1"
+
+
+async def announce_typewriter_feature() -> None:
+    """One-shot: anuncia o novo feedback de cadastro do /royal nos grupos
+    RPG ativos. Flag persistente em bot_meta — roda 1x apos o deploy."""
+    if bot_meta_get(BOOT_ANNOUNCE_KEY):
+        return
+    # Espera o polling estabilizar antes de mandar mensagens
+    await asyncio.sleep(5.0)
+    try:
+        cur.execute(
+            "SELECT DISTINCT p.chat_id AS chat_id, COUNT(*) AS n "
+            "FROM players p "
+            "INNER JOIN chats_rpg c ON c.chat_id = p.chat_id "
+            "GROUP BY p.chat_id")
+        chats = [(r["chat_id"], r["n"]) for r in cur.fetchall()]
+    except Exception:
+        logger.exception("announce_typewriter: query chats falhou")
+        return
+    if not chats:
+        bot_meta_set(BOOT_ANNOUNCE_KEY, "no_chats")
+        return
+    sent_ok = 0
+    for chat_id, n_players in chats:
+        if TEST_CHAT_IDS and chat_id in TEST_CHAT_IDS:
+            # Pula grupos de teste — anuncio so em prod
+            continue
+        try:
+            cur.execute(
+                "SELECT royal_id FROM players WHERE chat_id=? "
+                "AND royal_id IS NOT NULL "
+                "ORDER BY joined_at DESC LIMIT 8", (chat_id,))
+            rids = [r["royal_id"] for r in cur.fetchall()]
+        except Exception:
+            rids = []
+        rid_block = "\n".join(f"  >> {r}" for r in rids) or "  >> --"
+        intro = (
+            f"> ROYAL.SYS // UPDATE_APLICADO\n"
+            f">> /royal agora confirma cadastro\n"
+            f">> feedback letra-por-letra ativo\n"
+            f"// nobres sincronizados: {n_players}\n"
+            f"// ultimos cadastros:\n"
+            f"{rid_block}\n"
+            f"// digita /royal pra testar"
+        )
+        try:
+            await typewriter_animate(chat_id, intro, chunk=6, delay=0.32)
+            sent_ok += 1
+        except Exception:
+            logger.exception("announce_typewriter: send falhou chat=%s",
+                             chat_id)
+        await asyncio.sleep(2.0)  # respeita rate-limit cross-chat
+    bot_meta_set(BOOT_ANNOUNCE_KEY,
+                 f"sent={sent_ok}/{len(chats)} at={utc_iso()}")
+    logger.info("announce_typewriter: ok sent=%d/%d",
+                sent_ok, len(chats))
+
+
 async def main():
     global bot
     if not BOT_TOKEN:
@@ -5475,6 +5563,7 @@ async def main():
     asyncio.create_task(scheduler())
     asyncio.create_task(healthcheck())
     asyncio.create_task(identity_card_sweep_job())
+    asyncio.create_task(announce_typewriter_feature())
     await dp.start_polling(bot)
 
 
