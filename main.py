@@ -959,14 +959,28 @@ def effect_kw(chat_type: str | None, effect_id: str) -> dict:
     return {"message_effect_id": effect_id} if chat_type == "private" else {}
 
 
+_typing_fail_streak: dict[int, int] = {}
+_TYPING_ALERT_THRESHOLD = 10
+
+
 async def safe_typing(chat_id: int, action: str = "typing") -> None:
-    """Envia chat action ignorando falhas (nao precisa admin)."""
+    """Envia chat action ignorando falhas (nao precisa admin).
+    F15: conta falhas consecutivas por chat e loga alerta a cada N
+    seguidas (default 10) — sintoma comum eh bot kickado/sem permissao.
+    Reset zera ao primeiro sucesso."""
     if bot is None:
         return
     try:
         await bot.send_chat_action(chat_id, action)
-    except Exception:
-        pass
+        if _typing_fail_streak.pop(chat_id, 0):
+            pass  # streak resetado ao sucesso
+    except Exception as e:
+        streak = _typing_fail_streak.get(chat_id, 0) + 1
+        _typing_fail_streak[chat_id] = streak
+        if streak % _TYPING_ALERT_THRESHOLD == 0:
+            logger.warning(
+                "[TYPING] alert chat_id=%s streak=%s action=%s err=%s",
+                chat_id, streak, action, type(e).__name__)
 
 
 # =====================================================================
@@ -1721,11 +1735,13 @@ async def is_admin(message: Message) -> bool:
 # =====================================================================
 
 def _random_royal_suffix() -> int:
-    """Sufixo aleatorio 1000-9999 — pool de 9000 por chat. Sem sequencia
-    visivel (ROY#0001, 0002...) pra preservar privacidade da ordem de
-    cadastro e impedir adivinhacao trivial de IDs vizinhos."""
+    """Sufixo aleatorio 1000-99999 — pool de 99k por chat (F18: expandido
+    de 9k pra 99k pra reduzir colisao em chats >500 players, paradoxo do
+    aniversario). Sem sequencia visivel (ROY#0001, 0002...) pra preservar
+    privacidade da ordem de cadastro e impedir adivinhacao trivial de
+    IDs vizinhos. royal_ids ja emitidos (4 digitos) continuam validos."""
     import random as _r
-    return _r.randint(1000, 9999)
+    return _r.randint(1000, 99999)
 
 
 def next_royal_id(chat_id: int) -> str:
