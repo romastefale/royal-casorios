@@ -24,7 +24,7 @@
 - **Solução:** mover todas as escritas pra `asyncio.to_thread` (paliativo) OU completar migração pro aiosqlite (definitivo, junto da F01).
 - **Aceite:** loop latency < 50ms no p99 sob carga.
 
-**F03 · `_msg_owners`, `_rate_limits`, `_profile_file_id_cache` crescem sem cap real** 🟡🟢
+**F03 · ✅ FEITO — `_msg_owners`, `_rate_limits`, `_profile_file_id_cache` crescem sem cap real** 🟡🟢
 - **Diagnóstico:** GC só dispara em intervalos; sob spike viram milhões de entries → OOM no Railway (512MB plano grátis).
 - **Solução:** trocar por `cachetools.TTLCache(maxsize=10_000, ttl=N)`. Adiciona dep, código encurta.
 - **Aceite:** RSS estável < 200MB após 24h de uso.
@@ -34,14 +34,14 @@
 - **Solução:** fila dedicada (`asyncio.Semaphore(2)`) pra renders + throttle 1/s no upload. Já existe parcialmente — formalizar.
 - **Aceite:** sweep de 100 cards termina sem RetryAfter.
 
-**F05 · `register_owner` cache de 4000 mensagens com chave (chat_id, msg_id)** 🟢🟢
+**F05 · ✅ FEITO (parcial — TTLCache em vez de key tripla) — `register_owner` cache** 🟢🟢
 - **Diagnóstico:** key collision possível entre chats (msg_id reusa). Já tem prune mas FIFO sem TTL.
 - **Solução:** TTLCache + key tripla (chat_id, msg_id, uid).
 - **Aceite:** zero ownership leak após reinício.
 
 ### 🟠 BUGS LATENTES / EDGE CASES
 
-**F06 · `from_user.id` sem None-guard em vários handlers** 🟢🟢
+**F06 · ✅ FEITO — `from_user.id` sem None-guard em vários handlers** 🟢🟢
 - **Diagnóstico:** channel posts e mensagens anônimas têm `from_user = None`. ~30 handlers crashariam.
 - **Solução:** decorator `@require_user` ou helper `get_uid(message) -> int | None`.
 - **Aceite:** lint passa, channel post não derruba handler.
@@ -93,7 +93,7 @@
 - **Solução:** contador rolling, log estruturado a cada N falhas seguidas no mesmo chat.
 - **Aceite:** alerta após 10 typings consecutivos falhando.
 
-**F16 · Sem validação de tamanho de caption (limite 1024)** 🟢🟢
+**F16 · ✅ FEITO — Sem validação de tamanho de caption (limite 1024)** 🟢🟢
 - **Diagnóstico:** README admite o limite mas alguns paths não truncam → 400 Bad Request silencioso.
 - **Solução:** helper `cap1024(s)` aplicado em todo send_photo. Adicionar test.
 - **Aceite:** caption longa renderiza com `...` em vez de errar.

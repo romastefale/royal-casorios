@@ -1,3 +1,4 @@
 aiogram>=3.28.2
 Pillow>=11.0.0
 fonttools>=4.50
+cachetools>=5.3

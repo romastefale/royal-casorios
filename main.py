@@ -26,6 +26,8 @@ from collections import defaultdict, deque
 from datetime import datetime, timedelta, timezone, date
 from zoneinfo import ZoneInfo
 
+from cachetools import TTLCache
+
 from aiogram import Bot, Dispatcher, F
 from aiogram.client.default import DefaultBotProperties
 from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter
@@ -199,6 +201,84 @@ BOSS_ATTACK_COOLDOWN_SEC = 300
 
 bot: Bot | None = None
 dp = Dispatcher()
+
+
+# =====================================================================
+# Helpers globais — F06 (None-guard) + F16 (cap caption Telegram 1024)
+# =====================================================================
+def uid_of(obj) -> int | None:
+    """Retorna from_user.id ou None. Use em handlers pra blindar contra
+    channel posts/anonymous admins (from_user=None em aiogram).
+    Aceita Message, CallbackQuery, InlineQuery, etc."""
+    try:
+        fu = getattr(obj, "from_user", None)
+        return fu.id if fu is not None else None
+    except Exception:
+        return None
+
+
+# Telegram limita caption de send_photo/send_video em 1024 chars (UTF-16).
+# Caption acima disso => Bad Request silencioso, mensagem perdida.
+# Nota: contamos em code points (len()) e nao UTF-16 code units. Em captions
+# com >100 emojis surrogate-pair pode estourar marginalmente — caso raro,
+# captions tipicamente sao texto puro ou poucos emojis. Aceitamos trade-off.
+_CAPTION_MAX = 1024
+_HTML_TAG_RE = re.compile(r"<(/?)([a-zA-Z][a-zA-Z0-9-]*)[^>]*>")
+
+
+def cap1024(text: str | None, suffix: str = "…") -> str:
+    """Trunca caption pra <=1024 chars com sufixo, mantendo HTML valido.
+    1) Recua se cortou no meio de uma tag (`<b>`, `<code href=...>`).
+    2) Detecta tags abertas no fragmento e fecha em ordem reversa
+       (ex: `<b><i>texto…` → `<b><i>texto…</i></b>`), evitando
+       'Can't find end of the entity starting at byte offset X' do
+       Telegram com parse_mode=HTML.
+    """
+    if not text:
+        return text or ""
+    if len(text) <= _CAPTION_MAX:
+        return text
+    body = _CAPTION_MAX - len(suffix)
+    cut = text[:body]
+    last_lt = cut.rfind("<")
+    last_gt = cut.rfind(">")
+    if last_lt > last_gt:
+        cut = cut[:last_lt]
+    # Detecta tags abertas que faltaram fechar no fragmento truncado
+    stack: list[str] = []
+    for m in _HTML_TAG_RE.finditer(cut):
+        is_close, name = m.group(1), m.group(2).lower()
+        if is_close:
+            if stack and stack[-1] == name:
+                stack.pop()
+            # mismatch (raro em texto bem-formado): ignora
+        else:
+            stack.append(name)
+    closing = "".join(f"</{t}>" for t in reversed(stack))
+    # Garante que tudo cabe em 1024 (overhead = sufixo + tags de fecho)
+    overhead = len(suffix) + len(closing)
+    if len(cut) + overhead > _CAPTION_MAX:
+        cut = cut[: _CAPTION_MAX - overhead]
+        last_lt = cut.rfind("<")
+        last_gt = cut.rfind(">")
+        if last_lt > last_gt:
+            cut = cut[:last_lt]
+    return cut + suffix + closing
+
+
+@dp.message.outer_middleware()
+async def _require_user_for_commands(handler, message: Message, data):
+    """F06 — channel posts e anonymous admins tem from_user=None.
+    Sem isso, qualquer comando deles crashava ~30 handlers que
+    fazem message.from_user.id sem guard. Dropa silenciosamente
+    comandos sem from_user; outras mensagens passam normal."""
+    try:
+        text = getattr(message, "text", None) or ""
+        if text.startswith("/") and message.from_user is None:
+            return None
+    except Exception:
+        pass
+    return await handler(message, data)
 
 # =====================================================================
 # DB CONNECTION + PRAGMA SETUP (per-connection PRAGMAs ALWAYS applied)
@@ -923,10 +1003,11 @@ async def auto_delete_after(msg: Message, delay: float = 8.0) -> None:
 # OWNER LOCK — menus interativos ficam restritos a quem mandou o comando
 # =====================================================================
 # Mapeia (chat_id, message_id) -> user_id do dono original do menu.
-# Cap em memoria com poda simples; cleared on bot restart (degradacao
+# F05: era dict com poda FIFO manual — agora TTLCache com LRU + TTL real.
+# Cap em memoria garantido (maxsize); cleared on bot restart (degradacao
 # graciosa: menus orfãos viram livres pra todos no proximo restart).
-_msg_owners: dict[tuple[int, int], int] = {}
-_MSG_OWNERS_MAX = 4000
+# TTL 15min (900s) cobre folgado o maior auto_delete usado (60s).
+_msg_owners: TTLCache = TTLCache(maxsize=10_000, ttl=900)
 
 
 def register_owner(msg: Message | None, uid: int,
@@ -938,11 +1019,6 @@ def register_owner(msg: Message | None, uid: int,
     if msg is None or uid is None:
         return
     key = (msg.chat.id, msg.message_id)
-    if len(_msg_owners) >= _MSG_OWNERS_MAX:
-        # Poda 25% mais antigos (FIFO de insercao do dict)
-        prune = _MSG_OWNERS_MAX // 4
-        for k in list(_msg_owners.keys())[:prune]:
-            _msg_owners.pop(k, None)
     _msg_owners[key] = uid
     if auto_delete_secs > 0:
         asyncio.create_task(_auto_delete_owned(key, auto_delete_secs))
@@ -1174,24 +1250,14 @@ async def roll_dice_visual(chat_id: int, emoji: str = "🎲",
 
 # Anti-spam: cooldown por (uid, acao). Pensado pra 500+ users simultaneos.
 # Comandos pesados (perfil, ranking, render) limitam 1 chamada / cooldown.
-_rate_limits: dict[tuple[int, str], float] = {}
-_RATE_LIMIT_GC_INTERVAL = 600   # 10 min entre garbage collects
-_RATE_LIMIT_TTL = 3600          # entradas mais velhas que 1h sao removidas
-_rate_limits_last_gc: float = 0.0
+# F03: era dict com GC manual oportunista — agora TTLCache. Cap garantido
+# em memoria (maxsize) + expiracao automatica. Sem GC manual no hot path.
+_rate_limits: TTLCache = TTLCache(maxsize=20_000, ttl=3600)
 
 
 def rate_limited(uid: int, action: str, cooldown: float = 10.0) -> int:
-    """Retorna 0 se OK, ou segundos restantes se ainda em cooldown.
-    Faz GC oportunistico do dict (evita crescimento ilimitado em prod)."""
-    global _rate_limits_last_gc
+    """Retorna 0 se OK, ou segundos restantes se ainda em cooldown."""
     now = utc_now().timestamp()
-    if now - _rate_limits_last_gc > _RATE_LIMIT_GC_INTERVAL:
-        # snapshot pra evitar 'dict changed size during iteration'
-        cutoff = now - _RATE_LIMIT_TTL
-        stale = [k for k, ts in list(_rate_limits.items()) if ts < cutoff]
-        for k in stale:
-            _rate_limits.pop(k, None)
-        _rate_limits_last_gc = now
     last = _rate_limits.get((uid, action), 0.0)
     if now - last < cooldown:
         return int(cooldown - (now - last)) + 1
@@ -1550,7 +1616,7 @@ async def send_couple(chat_id: int, source: str = "auto") -> bool:
             await bot.send_photo(
                 chat_id,
                 photo=BufferedInputFile(card, filename=f"casorio-{couple_id}.jpg"),
-                caption=text,
+                caption=cap1024(text),
                 reply_markup=vote_keyboard(couple_id),
             )
             return True
@@ -1597,7 +1663,7 @@ async def safe_edit_caption(chat_id: int, message_id: int, caption: str, **kwarg
     assert bot is not None
     try:
         return await bot.edit_message_caption(
-            chat_id=chat_id, message_id=message_id, caption=caption, **kwargs)
+            chat_id=chat_id, message_id=message_id, caption=cap1024(caption), **kwargs)
     except TelegramBadRequest as e:
         if "message is not modified" in str(e).lower():
             return None
@@ -1832,24 +1898,17 @@ def resolve_owner_chat(user_id: int, fallback_chat: int | None = None) -> int | 
 
 # Cache em memoria de file_id da ULTIMA foto de perfil enviada — usado pelo
 # inline mode pra reaproveitar o mesmo file_id sem renderizar de novo.
-# Key = (owner_chat, owner_uid). Value = (file_id, ts_unix).
-_profile_file_id_cache: dict[tuple[int, int], tuple[str, float]] = {}
-_PROFILE_FILE_ID_TTL = 60 * 60 * 6  # 6h
+# Key = (owner_chat, owner_uid). Value = file_id (string).
+# F03: era dict + (file_id, ts) com TTL manual — agora TTLCache.
+_profile_file_id_cache: TTLCache = TTLCache(maxsize=5_000, ttl=60 * 60 * 6)
 
 
 def cache_profile_file_id(owner_chat: int, owner_uid: int, file_id: str) -> None:
-    _profile_file_id_cache[(owner_chat, owner_uid)] = (file_id, time.time())
+    _profile_file_id_cache[(owner_chat, owner_uid)] = file_id
 
 
 def get_cached_profile_file_id(owner_chat: int, owner_uid: int) -> str | None:
-    e = _profile_file_id_cache.get((owner_chat, owner_uid))
-    if not e:
-        return None
-    fid, ts = e
-    if time.time() - ts > _PROFILE_FILE_ID_TTL:
-        _profile_file_id_cache.pop((owner_chat, owner_uid), None)
-        return None
-    return fid
+    return _profile_file_id_cache.get((owner_chat, owner_uid))
 
 
 # =====================================================================
@@ -2233,7 +2292,7 @@ async def notify_level_up_dm(user_id: int, royal_id: str, name: str,
             await bot.send_photo(
                 user_id,
                 BufferedInputFile(png, filename="royal_levelup.jpg"),
-                caption=caption,
+                caption=cap1024(caption),
                 message_effect_id=EFFECT_THUMBS_UP,
             )
         else:
@@ -2534,7 +2593,7 @@ async def send_profile_card(chat_id_to: int, owner_chat: int, owner_uid: int):
             sent = await bot.send_photo(
                 chat_id_to,
                 photo=BufferedInputFile(card, filename=f"perfil-{data.royal_id}.jpg"),
-                caption=caption,
+                caption=cap1024(caption),
             )
             # Cacheia file_id pro inline mode reaproveitar sem re-renderizar
             try:
@@ -2552,7 +2611,7 @@ async def send_profile_card(chat_id_to: int, owner_chat: int, owner_uid: int):
     photo_id = await get_user_photo_file_id(owner_uid)
     try:
         if photo_id:
-            await bot.send_photo(chat_id_to, photo=photo_id, caption=text, parse_mode="HTML")
+            await bot.send_photo(chat_id_to, photo=photo_id, caption=cap1024(text), parse_mode="HTML")
         else:
             await bot.send_message(chat_id_to, text)
     except TelegramBadRequest as e:
@@ -2728,7 +2787,7 @@ async def spawn_palavra(chat_id: int) -> None:
             msg = await bot.send_photo(
                 chat_id,
                 BufferedInputFile(png, filename=f"palavra-{cid}.jpg"),
-                caption=caption,
+                caption=cap1024(caption),
                 parse_mode="HTML",
                 has_spoiler=True,
             )
@@ -3373,7 +3432,7 @@ async def finalize_boss(boss: dict) -> None:
             await bot.send_photo(
                 chat_id,
                 photo=BufferedInputFile(card, filename=f"boss-kill-{boss_id}.jpg"),
-                caption=caption,
+                caption=cap1024(caption),
             )
     except Exception:
         logger.exception("finalize_boss: card render/send falhou")
@@ -3855,7 +3914,7 @@ async def royal_avatar_cmd(message: Message):
     )
     await message.answer_photo(
         BufferedInputFile(png, filename="royal_avatares_mosaico.png"),
-        caption=caption,
+        caption=cap1024(caption),
     )
 
 
@@ -3919,7 +3978,7 @@ async def handle_avatar_reply(message: Message):
             png = f.read()
         await message.reply_photo(
             BufferedInputFile(png, filename=f"avatar-{slug}.png"),
-            caption=caption,
+            caption=cap1024(caption),
             **effect_kw(message.chat.type, EFFECT_PARTY),
         )
     except Exception:
@@ -4194,7 +4253,7 @@ async def send_ranking(source_chat_id: int, *, target_chat_id: int) -> None:
             await bot.send_photo(
                 target_chat_id,
                 BufferedInputFile(png, filename="royal_ranking.jpg"),
-                caption=caption)
+                caption=cap1024(caption))
             return
     except Exception:
         logger.exception("ranking card send failed; falling back to text")
@@ -5167,7 +5226,7 @@ async def hub_cb(cb: CallbackQuery):
                                 chat_id,
                                 photo=BufferedInputFile(
                                     card, filename=f"classe-{cid}.jpg"),
-                                caption=caption,
+                                caption=cap1024(caption),
                                 parse_mode="HTML",
                             )
                     except Exception:
@@ -5241,7 +5300,7 @@ async def hub_cb(cb: CallbackQuery):
                             chat_id,
                             photo=BufferedInputFile(
                                 card, filename=f"drop-{iid}.jpg"),
-                            caption=caption,
+                            caption=cap1024(caption),
                             parse_mode="HTML",
                         )
                 except Exception:
