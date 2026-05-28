@@ -140,7 +140,7 @@ aplicável:
 | `PORT` | — | — | Se setado, sobe health server HTTP (`GET /health`). Railway injeta com healthcheck. |
 | `HEALTH_STALE_SEC` | — | `600` | `/health` → 503 se nenhuma update do Telegram nesse intervalo. |
 | `BACKUP_ENABLED` | — | `1` | `0` desliga backup diário. |
-| `BACKUP_HOUR` | — | `3` | Hora local do backup diário. |
+| `BACKUP_HOUR` | — | `12` | Hora local do backup diário (meio-dia). |
 | `BACKUP_RETENTION_DAYS` | — | `7` | Dias de backup mantidos em `<DB_DIR>/backups/`. |
 
 ---
@@ -302,9 +302,16 @@ alfabética aleatória. DM com `EFFECT_FIRE`; fallback `<tg-spoiler>` no chat se
 > Estado **real** (auditado no código; o `ROADMAP.md` está desatualizado).
 
 - **F10 · Backup** (`/royalbackup` owner + `backup_job`): `VACUUM INTO
-  <DB_DIR>/backups/YYYY-MM-DD.sqlite3` diário em `BACKUP_HOUR`, precedido de
-  `PRAGMA integrity_check` (não salva DB corrompido). Retenção `BACKUP_RETENTION_DAYS`. Sobe o
-  dump pro `STASH_CHAT_ID` (silent). Conexão sqlite separada (não toca o cursor global).
+  <DB_DIR>/backups/YYYY-MM-DD.sqlite3` diário em `BACKUP_HOUR` (**meio-dia**, default 12),
+  precedido de `PRAGMA integrity_check` (não salva DB corrompido). Retenção
+  `BACKUP_RETENTION_DAYS`. Sobe o dump pro `STASH_CHAT_ID` (silent) **e CONFIRMA no DM do
+  owner** (`_notify_owner_backup` → arquivo + tamanho + retenção). Conexão sqlite separada
+  (não toca o cursor global). O backup captura o DB inteiro (classe, nível, XP, saldo,
+  casórios, inventário, ícone/avatar — tudo).
+  - **Double backup de verificação (one-time):** na 1ª subida desta versão, `backup_job`
+    roda **2 backups** (`tag=init1`/`init2`) com confirmação no DM, e só então grava o flag
+    `bot_meta['initial_double_backup']='done'` (não repete em reboots). Falha → retenta no
+    próximo boot.
 - **F11 · Migrations transacionais** (`run_migrations`): cada migration em `BEGIN…COMMIT`; falha
   → `ROLLBACK` + aborta boot (o `user_version` só avança no sucesso).
 - **F13 · Health endpoint** (`start_health_server` + `/health`): DB ping (`SELECT 1`), staleness

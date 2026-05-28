@@ -42,6 +42,7 @@ from aiogram.types import (
     BotCommandScopeAllPrivateChats,
     BufferedInputFile,
     CallbackQuery,
+    FSInputFile,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     InlineQuery,
@@ -5608,23 +5609,26 @@ async def log_dump_job() -> None:
 # F10 — Backup automatico do SQLite (VACUUM INTO + retencao)
 # =====================================================================
 # Railway volume pode falhar / ser recriado. Snapshot do repo eh seed
-# antigo. Solucao: backup diario (3h local) via `VACUUM INTO` (gera
+# antigo. Solucao: backup diario (meio-dia local) via `VACUUM INTO` (gera
 # arquivo consistente mesmo com WAL ativo) numa pasta do proprio volume
 # + retencao de N dias. Opcionalmente sobe o dump pro canal STASH
-# (Telegram = storage gratis). Usa conexao SEPARADA pra nao interferir
-# no cursor global compartilhado (db).
+# (Telegram = storage gratis) e CONFIRMA no DM do owner. Usa conexao
+# SEPARADA pra nao interferir no cursor global compartilhado (db).
 BACKUP_DIR = os.path.join(DB_DIR, "backups")
 BACKUP_RETENTION_DAYS = int(os.getenv("BACKUP_RETENTION_DAYS", "7"))
 BACKUP_ENABLED = os.getenv("BACKUP_ENABLED", "1") != "0"
-BACKUP_HOUR = int(os.getenv("BACKUP_HOUR", "3"))
+BACKUP_HOUR = int(os.getenv("BACKUP_HOUR", "12"))  # meio-dia local
 
 
-def _do_backup_sync() -> tuple[str, int]:
+def _do_backup_sync(tag: str = "") -> tuple[str, int]:
     """Executa VACUUM INTO num arquivo datado + prune. Roda em thread.
-    Retorna (path, size_bytes). Levanta em caso de erro."""
+    `tag` opcional vira sufixo no nome (p/ backups distintos no mesmo dia,
+    ex.: double backup de verificacao). Retorna (path, size_bytes).
+    Levanta em caso de erro."""
     os.makedirs(BACKUP_DIR, exist_ok=True)
     stamp = local_now().strftime("%Y-%m-%d")
-    dest = os.path.join(BACKUP_DIR, f"{stamp}.sqlite3")
+    suffix = f"_{tag}" if tag else ""
+    dest = os.path.join(BACKUP_DIR, f"{stamp}{suffix}.sqlite3")
     # conexao isolada (read) — VACUUM INTO le o estado commitado.
     src = sqlite3.connect(DB_PATH)
     try:
@@ -5655,46 +5659,108 @@ def _do_backup_sync() -> tuple[str, int]:
     return dest, size
 
 
-async def run_backup(upload: bool = False) -> tuple[str, int] | None:
-    """Roda o backup em thread. Se upload=True e STASH_CHAT_ID setado,
-    sobe o arquivo pro canal (silencioso). Retorna (path, size) ou None."""
+async def _notify_owner_backup(dest: str, size: int, label: str) -> None:
+    """DM de CONFIRMACAO pro OWNER_USER_ID a cada backup (pedido do dono).
+    Failsafe: sem owner/bot ou erro de envio -> loga e segue."""
+    if not OWNER_USER_ID or bot is None:
+        return
     try:
-        dest, size = await asyncio.to_thread(_do_backup_sync)
+        files = sorted(fn for fn in os.listdir(BACKUP_DIR)
+                       if fn.endswith(".sqlite3"))
+    except OSError:
+        files = []
+    body = "\n".join([
+        f">> {label}" if label else ">> backup",
+        f">> arquivo: <code>{html.escape(os.path.basename(dest))}</code>",
+        f">> tamanho: <b>{size // 1024} KB</b>",
+        f">> stash: <b>{'ok' if STASH_CHAT_ID else 'off (sem STASH)'}</b>",
+        "// dados salvos: classe, nivel, XP, saldo, casorios, inventario",
+        f"// retencao: {len(files)} backups ({BACKUP_RETENTION_DAYS}d)",
+    ])
+    try:
+        await bot.send_message(
+            OWNER_USER_ID,
+            term_block("BACKUP", body, status="SALVO", status_color="ACID",
+                       stamp=local_now().strftime("%d/%m/%Y %H:%M")),
+            **effect_kw("private", EFFECT_PARTY))
+        logger.info("[BACKUP] confirmacao DM owner ok (%s)", label or "diario")
+    except Exception:
+        logger.exception("[BACKUP] confirmacao DM owner falhou")
+
+
+async def run_backup(upload: bool = False, notify_owner: bool = False,
+                     label: str = "", tag: str = "") -> tuple[str, int] | None:
+    """Roda o backup em thread. Se upload=True e STASH_CHAT_ID setado,
+    sobe o arquivo pro canal (silencioso). Se notify_owner=True, manda DM
+    de confirmacao pro owner. `tag` -> sufixo no nome do arquivo.
+    Retorna (path, size) ou None."""
+    try:
+        dest, size = await asyncio.to_thread(_do_backup_sync, tag)
     except Exception:
         logger.exception("[BACKUP] falhou")
         return None
-    logger.info("[BACKUP] OK %s (%d KB)", dest, size // 1024)
+    logger.info("[BACKUP] OK %s (%d KB)%s", dest, size // 1024,
+                f" [{label}]" if label else "")
     if upload and STASH_CHAT_ID and bot is not None:
         try:
-            with open(dest, "rb") as f:
-                data = f.read()
             await bot.send_document(
                 STASH_CHAT_ID,
-                BufferedInputFile(data, filename=os.path.basename(dest)),
+                FSInputFile(dest, filename=os.path.basename(dest)),
                 caption=f"// DB backup {os.path.basename(dest)} "
-                        f"({size // 1024} KB)",
+                        f"({size // 1024} KB)" + (f" [{label}]" if label else ""),
                 disable_notification=True)
             logger.info("[BACKUP] upload STASH ok")
         except Exception:
             logger.exception("[BACKUP] upload STASH falhou")
+    if notify_owner:
+        await _notify_owner_backup(dest, size, label)
     return dest, size
 
 
 async def backup_job() -> None:
-    """Background: backup diario gated em BACKUP_HOUR local (1x/dia)."""
+    """Background: backup diario gated em BACKUP_HOUR local (1x/dia) +
+    confirmacao no DM do owner. Na 1a implementacao desta versao roda 2
+    backups de verificacao (one-time, flag em bot_meta) p/ comprovar que
+    o pipeline funciona."""
     if not BACKUP_ENABLED:
         logger.info("[BACKUP] desabilitado (BACKUP_ENABLED=0)")
         return
+    # ONE-TIME: double backup de verificacao na 1a subida desta versao.
+    # Flag persistida em bot_meta (sobrevive a restarts; no volume persiste
+    # de vez) -> roda 1x na vida do deploy, nao a cada boot. Blindado: erro
+    # transiente (ex: bot_meta_set) nao deve impedir o backup diario abaixo.
+    try:
+        if bot_meta_get("initial_double_backup") != "done":
+            await asyncio.sleep(15)  # deixa polling/bot estabilizar
+            logger.info("[BACKUP] 1a implementacao: rodando DOUBLE BACKUP de verificacao")
+            ok1 = await run_backup(upload=True, notify_owner=True,
+                                   label="verificacao 1/2", tag="init1")
+            await asyncio.sleep(3)
+            ok2 = await run_backup(upload=True, notify_owner=True,
+                                   label="verificacao 2/2", tag="init2")
+            if ok1 and ok2:
+                bot_meta_set("initial_double_backup", "done")
+                logger.info("[BACKUP] DOUBLE BACKUP inicial OK — flag setada (nao repete)")
+            else:
+                logger.warning("[BACKUP] DOUBLE BACKUP inicial incompleto — "
+                               "retry no proximo boot")
+    except Exception:
+        logger.exception("[BACKUP] DOUBLE BACKUP inicial erro — retry no proximo boot")
     last_day = None
     while True:
         await asyncio.sleep(300)  # checa a cada 5min
-        now_local = local_now()
-        day = now_local.date().isoformat()
-        if now_local.hour == BACKUP_HOUR and day != last_day:
-            # so marca o dia APOS sucesso — falha (lock/IO transiente)
-            # permite retry no proximo tick (5min) ainda no mesmo dia.
-            if await run_backup(upload=True):
-                last_day = day
+        # blindagem: nenhum erro transiente pode matar o loop diario.
+        try:
+            now_local = local_now()
+            day = now_local.date().isoformat()
+            if now_local.hour == BACKUP_HOUR and day != last_day:
+                # so marca o dia APOS sucesso — falha (lock/IO transiente)
+                # permite retry no proximo tick (5min) ainda no mesmo dia.
+                if await run_backup(upload=True, notify_owner=True,
+                                    label="diario meio-dia"):
+                    last_day = day
+        except Exception:
+            logger.exception("[BACKUP] loop diario erro — segue no proximo tick")
 
 
 @dp.message(Command("royalbackup"))
