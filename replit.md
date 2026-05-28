@@ -113,6 +113,29 @@ saldo, palavras, configs por usuário, etc).
 
 > ⚠️ M01 entrega o pipeline de cobrança + grant + ledger. As **aplicações dos perks** nos hot paths serão wired no Sprint 4/5.
 
+## 🌟 M04 — Royal Plus (assinatura Stars recorrente)
+
+**Assinatura mensal via Telegram Stars** — `sendInvoice(subscription_period=2592000)` (30 dias, único valor aceito em XTR). Renovação automática gerenciada pelo Telegram.
+
+**Item (`SUBSCRIPTIONS` em `main.py`):**
+| Perk | Stars | Coluna em `players` |
+|---|---|---|
+| 🌟 Royal Plus — +20% XP + slot extra casório + badge violeta | 50⭐/mês | `royal_plus_until` (ISO), `royal_plus_charge_id` |
+
+**Fluxo:**
+1. Callback `r:sub:royal_plus` → `bot.send_invoice(currency="XTR", subscription_period=2592000, prices=[...])`.
+2. `pre_checkout_handler` aceita prefixo `sub|` (além de `prm|` do M01), valida amount/item.
+3. `successful_payment_handler` detecta `sp.subscription_expiration_date` (Unix), grava ISO em `royal_plus_until`.
+4. **Renovações automáticas:** Telegram envia novos `successful_payment` mensalmente com `is_recurring=True` e novo `charge_id` — o handler trata cada um igualzinho (idempotente por charge_id, atualiza `royal_plus_until`).
+5. **Cancelamento:** usuário cancela no próprio Telegram (Settings → My Stars → Subscriptions). Bot só observa: quando `now > royal_plus_until` → assinatura expirou → perks param de aplicar.
+
+**Migration v11:** cols `royal_plus_until` + `royal_plus_charge_id` em `players`.
+
+**TODO aplicação dos perks (Sprint 4/5):**
+- Checar `now < royal_plus_until` em hot paths de XP (mult 1.2×).
+- Permitir 2 casórios ativos se Royal Plus ativo (1 default).
+- Render `royal_plus_until > now` como badge violeta no profile card.
+
 ## 🔧 Env vars
 
 - `BOT_TOKEN` (obrigatório) — token do BotFather
