@@ -34,7 +34,13 @@ from aiogram import Bot, Dispatcher, F
 from aiogram.client.default import DefaultBotProperties
 from aiogram.exceptions import (TelegramBadRequest, TelegramNetworkError,
                                  TelegramRetryAfter, TelegramServerError)
-from aiogram.filters import Command, CommandStart, Filter
+from aiogram.filters import (
+    Command,
+    CommandStart,
+    Filter,
+    JOIN_TRANSITION,
+    ChatMemberUpdatedFilter,
+)
 from aiogram.types import (
     BotCommand,
     BotCommandScopeAllChatAdministrators,
@@ -42,6 +48,7 @@ from aiogram.types import (
     BotCommandScopeAllPrivateChats,
     BufferedInputFile,
     CallbackQuery,
+    ChatMemberUpdated,
     FSInputFile,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
@@ -3408,8 +3415,11 @@ def build_profile_caption(chat_id: int, user_id: int) -> str:
     return full
 
 
-async def send_profile_card(chat_id_to: int, owner_chat: int, owner_uid: int):
-    """Envia cartao de perfil renderizado 1080x1080. Fallback pra texto puro."""
+async def send_profile_card(chat_id_to: int, owner_chat: int, owner_uid: int,
+                            caption_override: str | None = None):
+    """Envia cartao de perfil renderizado 1080x1080. Fallback pra texto puro.
+    `caption_override` troca a legenda padrao (usado p/ boas-vindas de
+    reentrada: foto = ficha, legenda = aviso marcando a pessoa)."""
     assert bot is not None
     await safe_typing(chat_id_to, "upload_photo")
 
@@ -3425,7 +3435,8 @@ async def send_profile_card(chat_id_to: int, owner_chat: int, owner_uid: int):
             persisted_fid = get_persisted_profile_fid(
                 owner_chat, owner_uid, data_hash)
             if persisted_fid:
-                caption = build_profile_caption(owner_chat, owner_uid)
+                caption = caption_override or build_profile_caption(
+                    owner_chat, owner_uid)
                 try:
                     await bot.send_photo(
                         chat_id_to,
@@ -3453,7 +3464,8 @@ async def send_profile_card(chat_id_to: int, owner_chat: int, owner_uid: int):
         avatar_bytes = await get_user_photo_bytes(owner_uid)
         card = await asyncio.to_thread(render_profile_card, data, avatar_bytes)
         if card:
-            caption = build_profile_caption(owner_chat, owner_uid)
+            caption = caption_override or build_profile_caption(
+                owner_chat, owner_uid)
             sent = await bot.send_photo(
                 chat_id_to,
                 photo=BufferedInputFile(card, filename=f"perfil-{data.royal_id}.jpg"),
@@ -3477,7 +3489,7 @@ async def send_profile_card(chat_id_to: int, owner_chat: int, owner_uid: int):
         logger.exception("render_profile_card path failed; caindo pro fallback")
 
     # Fallback: texto puro (com foto bruta se houver)
-    text = build_profile_text(owner_chat, owner_uid)
+    text = caption_override or build_profile_text(owner_chat, owner_uid)
     photo_id = await get_user_photo_file_id(owner_uid)
     try:
         if photo_id:
@@ -7485,6 +7497,69 @@ async def handle_music_bot_post(message: Message):
         except Exception:
             logger.exception("music_mention reaction failed chat=%d mid=%d",
                              chat_id, message.message_id)
+
+
+# dedup curto de boas-vindas de reentrada: evita double-welcome por churn de
+# status (ex: join seguido de promote). (chat_id, user_id) -> ts monotonico.
+_rejoin_welcome_ts: dict[tuple[int, int], float] = {}
+REJOIN_DEDUP_SEC = 120.0
+
+
+@dp.chat_member(ChatMemberUpdatedFilter(member_status_changed=JOIN_TRANSITION))
+async def on_member_rejoin(event: ChatMemberUpdated):
+    """Reentrada de membro no grupo. Se quem entrou JA tem progresso salvo
+    (linha em players deste chat), da boas-vindas marcando a pessoa com uma
+    foto = ficha. O progresso NUNCA e apagado quando alguem sai, entao
+    'restaurar' e automatico — aqui so anunciamos a volta.
+
+    JOIN_TRANSITION = (LEFT|KICKED|RESTRICTED-fora) >> (MEMBER|ADMIN|CREATOR|
+    RESTRICTED-dentro): o lado ANTIGO e sempre um estado FORA do grupo, entao
+    e sempre uma reentrada real (nao dispara em quem so trocou de restricao
+    estando dentro). Dedup curto extra blinda contra churn de status.
+
+    ⚠️ Requer o bot ADMIN no grupo: o Telegram so entrega chat_member updates
+    a bots administradores. O tipo `chat_member` entra em allowed_updates
+    automaticamente via dp.resolve_used_update_types() (handler registrado)."""
+    if not event.chat or event.chat.type not in {"group", "supergroup"}:
+        return
+    u = event.new_chat_member.user if event.new_chat_member else None
+    if u is None or u.is_bot:
+        return
+    chat_id = event.chat.id
+    existing = get_player(chat_id, u.id)
+    if not existing:
+        return  # membro genuinamente novo — nada de progresso a restaurar
+    # dedup: nao re-saudar o mesmo (chat,user) dentro da janela.
+    key = (chat_id, u.id)
+    nowm = asyncio.get_running_loop().time()
+    if nowm - _rejoin_welcome_ts.get(key, 0.0) < REJOIN_DEDUP_SEC:
+        return
+    _rejoin_welcome_ts[key] = nowm
+    if len(_rejoin_welcome_ts) > 1000:  # prune leve, evita crescer sem limite
+        cutoff = nowm - REJOIN_DEDUP_SEC
+        for k in [k for k, t in _rejoin_welcome_ts.items() if t < cutoff]:
+            _rejoin_welcome_ts.pop(k, None)
+    ensure_chat(chat_id, event.chat.title)
+    nome = u.full_name or (f"@{u.username}" if u.username else "")
+    try:
+        upsert_user(chat_id, u.id, nome, u.username)
+    except Exception:
+        logger.exception("[REENTRY] upsert_user falhou uid=%s", u.id)
+    who = mention(u.id, nome or "nobre")
+    welcome = term_block(
+        "REENTRADA",
+        f">> {who} voltou ao reino\n"
+        "// progresso restaurado: nivel, classe, XP, saldo, inventario\n"
+        "<i>nada se perdeu — tudo continua de onde parou.</i>",
+        status="CONECTADO", status_color="ACID",
+        stamp=local_now().strftime("%d/%m/%Y %H:%M"))
+    try:
+        await send_profile_card(chat_id, chat_id, u.id, caption_override=welcome)
+        logger.info("[REENTRY] welcome-back uid=%s chat=%s royal=%s",
+                    u.id, chat_id, existing.get("royal_id"))
+    except Exception:
+        logger.exception("[REENTRY] envio ficha falhou uid=%s chat=%s",
+                         u.id, chat_id)
 
 
 @dp.message(

@@ -211,6 +211,19 @@ Reagir com emoji em grupo dá `REACTION_XP=3`, cap diário `REACTION_XP_DAILY_CA
   `dp.resolve_used_update_types()`.
 - **Migration v13:** tabela `reaction_xp_daily` (PK `chat_id,user_id,day`).
 
+### 🚪 Reentrada de membro — boas-vindas com a ficha
+Quando alguém que **já tem progresso** (linha em `players` daquele chat) sai e **volta** ao
+grupo, o bot dá boas-vindas **marcando a pessoa** com uma **foto = ficha** (mesmo card do
+`/royalperfil`), legenda `REENTRADA.SYS`. O progresso **nunca é apagado** na saída (só
+`/royaldados` apaga, a pedido do user) — "restaurar" é automático; o handler só anuncia.
+- Handler `@dp.chat_member` (`on_member_rejoin`) com `ChatMemberUpdatedFilter(JOIN_TRANSITION)`.
+  Membro genuinamente novo (sem linha em `players`) é ignorado (nada a restaurar).
+- `send_profile_card(..., caption_override=...)` reusa todo o pipeline da ficha (file_id cache
+  + fallback) trocando só a legenda pela mensagem de volta com `mention()`.
+- ⚠️ Requer o bot **ADMIN** no grupo: o Telegram só entrega `chat_member` updates a bots
+  admin. O tipo entra em `allowed_updates` via `dp.resolve_used_update_types()` (handler
+  registrado). Sem admin, o recurso fica inerte (não quebra nada).
+
 ### 🎉 Eventos sazonais — `/royalevento` (M09)
 Boost de XP global por data, sem DB — `SEASONAL_EVENTS`:
 
