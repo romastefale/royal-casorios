@@ -783,6 +783,57 @@ def get_name(chat_id: int, user_id: int) -> str:
     return row["display_name"] if row else str(user_id)
 
 
+def get_username(chat_id: int, user_id: int) -> str | None:
+    """Retorna @username (sem @) salvo na tabela users, ou None."""
+    cur.execute("SELECT username FROM users WHERE chat_id=? AND user_id=?",
+                (chat_id, user_id))
+    row = cur.fetchone()
+    u = (row["username"] if row else None) or None
+    return u.lstrip("@") if u else None
+
+
+# Faixas Unicode usadas por geradores de "fonte fancy" (lingojam, fancytext,
+# coolsymbol). NÃO são fontes — são codepoints reais. Telegram renderiza
+# nativamente, mas Pillow + DejaVu NÃO cobrem essas faixas → viram tofu ▯.
+# Quando o nome tem esses chars, caímos pro @username (sempre ASCII).
+_FANCY_RANGES = (
+    (0x1D400, 0x1D7FF),  # Mathematical Alphanumeric (Bold/Italic/Script/Fraktur/Double-struck/Sans/Mono)
+    (0x2100, 0x214F),    # Letterlike Symbols (ℳ ℕ ℝ ℘ ℒ etc)
+    (0x2460, 0x24FF),    # Enclosed Alphanumerics (① ⓐ Ⓐ)
+    (0xFF00, 0xFFEF),    # Halfwidth/Fullwidth (ＡＢＣ)
+    (0x1F100, 0x1F1FF),  # Enclosed Alphanumeric Supplement (🅰 🅱 🆎)
+    (0x1F130, 0x1F189),  # Squared Latin (🅰-🆉)
+)
+
+
+def _has_fancy_unicode(s: str) -> bool:
+    if not s:
+        return False
+    for ch in s:
+        cp = ord(ch)
+        for lo, hi in _FANCY_RANGES:
+            if lo <= cp <= hi:
+                return True
+    return False
+
+
+def card_safe_name(chat_id: int, user_id: int, name: str,
+                   royal_id: str | None = None) -> str:
+    """Nome seguro pra renderizar em card PNG (Pillow + DejaVu).
+    Se `name` tem chars de 'fonte fancy' (Unicode Math/Fullwidth/etc) que
+    Pillow não consegue desenhar com DejaVu, fallback nesta ordem:
+      1) @username salvo no DB
+      2) anonize() → ANON-<suffix> via royal_id
+    Caption HTML do Telegram mantém o nome fancy original — esse fallback
+    é exclusivo do card."""
+    if not _has_fancy_unicode(name):
+        return name
+    u = get_username(chat_id, user_id)
+    if u:
+        return f"@{u}"
+    return anonize("", royal_id)  # vira "Nobre" ou ANON-<suffix> se tiver rid
+
+
 def anonize(name: str, royal_id: str | None) -> str:
     """Privacidade: se `name` for puro digito (= user_id numerico do Telegram
     como fallback de get_name), retorna alias ANON-<suffix> derivado do
@@ -1383,6 +1434,9 @@ def build_profile_card_data(chat_id: int, user_id: int) -> ProfileCardData:
     p = ensure_player(chat_id, user_id)
     royal_id = p.get("royal_id") or "RYL-????"
     name = anonize(get_name(chat_id, user_id), royal_id)
+    # Card PNG não renderiza fontes "fancy" Unicode (𝓢𝓬𝓻𝓲𝓹𝓽, 𝐁𝐨𝐥𝐝, etc):
+    # cai pro @username quando detecta.
+    name = card_safe_name(chat_id, user_id, name, royal_id)
     lvl, in_lvl, needed, _ = level_progress(p["total_xp"])
 
     cur.execute("SELECT COUNT(*) AS total FROM players WHERE chat_id=?", (chat_id,))
@@ -2763,6 +2817,10 @@ async def send_ranking(source_chat_id: int, *, target_chat_id: int) -> None:
     for i, r in enumerate(rows, 1):
         # Ranking publico — usa royal_id do row direto pra anonimizar
         name = anonize(get_name(source_chat_id, r["user_id"]), r["royal_id"])
+        # Caption HTML mantém fancy; card PNG cai pro @username se Pillow
+        # não conseguir desenhar (Unicode Math/Fraktur/Fullwidth → tofu ▯).
+        card_name = card_safe_name(source_chat_id, r["user_id"],
+                                   name, r["royal_id"])
         full_lvl, *_ = level_progress(r["total_xp"] or 0)
         lines.append(
             f"{medals[i-1]} <b>{i}.</b> {html.escape(name)} "
@@ -2770,7 +2828,7 @@ async def send_ranking(source_chat_id: int, *, target_chat_id: int) -> None:
             f"Lvl <b>{full_lvl}</b> · {r['season_xp']} XP"
         )
         entries.append(RankingEntry(
-            rank=i, royal_id=r["royal_id"], name=name,
+            rank=i, royal_id=r["royal_id"], name=card_name,
             season_xp=int(r["season_xp"]), level=int(full_lvl)))
 
     body = "\n".join(lines)
