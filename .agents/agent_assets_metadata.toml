@@ -1,5 +1,184 @@
 uploads = []
-generated = []
+
+[[generated]]
+id = "0h6ImXS8n-iXjxFYurglg"
+uri = "file://assets/avatars/h05-southasian-m-adult.png"
+type = "image"
+title = "generated_image"
+
+[[generated]]
+id = "BtNThzidvB_lApEdW3yl-"
+uri = "file://assets/avatars/h13-european-m-elder.png"
+type = "image"
+title = "generated_image"
+
+[[generated]]
+id = "r3AHy5x-QQ8G6j10KbdDe"
+uri = "file://assets/avatars/h14-indigenous-f-young.png"
+type = "image"
+title = "generated_image"
+
+[[generated]]
+id = "kcUqtKT6x7UdBlXgNVTgT"
+uri = "file://assets/avatars/h15-indigenous-m-adult.png"
+type = "image"
+title = "generated_image"
+
+[[generated]]
+id = "oMVv-MkCbptiVVQQsATZh"
+uri = "file://assets/avatars/h07-african-m-adult.png"
+type = "image"
+title = "generated_image"
+
+[[generated]]
+id = "JK5MJCAgV_gYFpTznbzqv"
+uri = "file://assets/avatars/z01-rato.png"
+type = "image"
+title = "generated_image"
+
+[[generated]]
+id = "c_-Jr8YmXkRuT20KIOFB_"
+uri = "file://assets/avatars/z09-macaco.png"
+type = "image"
+title = "generated_image"
+
+[[generated]]
+id = "qR75Kvpi6Rvhh1FWWoBWc"
+uri = "file://assets/avatars/h08-african-f-elder.png"
+type = "image"
+title = "generated_image"
+
+[[generated]]
+id = "1UVRb7CghUHxK1ckDAeSe"
+uri = "file://assets/avatars/z02-boi.png"
+type = "image"
+title = "generated_image"
+
+[[generated]]
+id = "LpUD4bsylpaLvDr7MIce7"
+uri = "file://assets/avatars/z10-galo.png"
+type = "image"
+title = "generated_image"
+
+[[generated]]
+id = "fWvrvx3NE-x9TZ-VpU8UX"
+uri = "file://assets/avatars/h17-latino-m-adult.png"
+type = "image"
+title = "generated_image"
+
+[[generated]]
+id = "Vc0IXhyunyc_Ar9uv59fZ"
+uri = "file://assets/avatars/h09-mideast-f-young.png"
+type = "image"
+title = "generated_image"
+
+[[generated]]
+id = "yy5bgpkcuR0mc6zrs-M_h"
+uri = "file://assets/avatars/z03-tigre.png"
+type = "image"
+title = "generated_image"
+
+[[generated]]
+id = "16T2CPz5UZ0Jcph2s0IVo"
+uri = "file://assets/avatars/z11-cao.png"
+type = "image"
+title = "generated_image"
+
+[[generated]]
+id = "8mx_6KSWc_Ca8jkPA9HZT"
+uri = "file://assets/avatars/h18-pacific-f-young.png"
+type = "image"
+title = "generated_image"
+
+[[generated]]
+id = "UkXDdQBlwF-ImrgVlhXx0"
+uri = "file://assets/avatars/h10-mideast-m-adult.png"
+type = "image"
+title = "generated_image"
+
+[[generated]]
+id = "YrQ0CYWPgY2o960lnKFMn"
+uri = "file://assets/avatars/z04-coelho.png"
+type = "image"
+title = "generated_image"
+
+[[generated]]
+id = "6TT6cjP6L3Rt-CwEdMClr"
+uri = "file://assets/avatars/z12-porco.png"
+type = "image"
+title = "generated_image"
+
+[[generated]]
+id = "MuvA_PTfY-pV-5vF8cLTO"
+uri = "file://assets/avatars/h19-pacific-m-adult.png"
+type = "image"
+title = "generated_image"
+
+[[generated]]
+id = "K8N4UQXPNtLO148SDFcC8"
+uri = "file://assets/avatars/h11-european-f-young.png"
+type = "image"
+title = "generated_image"
+
+[[generated]]
+id = "fvz2Jjo-HTSgAwPCHPs-a"
+uri = "file://assets/avatars/z05-dragao.png"
+type = "image"
+title = "generated_image"
+
+[[generated]]
+id = "wzw-Vpsh6ETOwiA6vZiVY"
+uri = "file://assets/avatars/h01-eastasian-f-young.png"
+type = "image"
+title = "generated_image"
+
+[[generated]]
+id = "NcFWKd5gMt5ykqj2VB4af"
+uri = "file://assets/avatars/h20-nonbinary-mixed.png"
+type = "image"
+title = "generated_image"
+
+[[generated]]
+id = "9hFp4q26lklQGyJJEY6nZ"
+uri = "file://assets/avatars/h12-european-m-adult.png"
+type = "image"
+title = "generated_image"
+
+[[generated]]
+id = "qEcBUk2VdB_84l01u--xY"
+uri = "file://assets/avatars/z06-serpente.png"
+type = "image"
+title = "generated_image"
+
+[[generated]]
+id = "9sR4Q2n6GTlxFXOmSI8Hb"
+uri = "file://assets/avatars/h02-eastasian-m-adult.png"
+type = "image"
+title = "generated_image"
+
+[[generated]]
+id = "-A4Tc_iyo-ZgrKWn-PvRa"
+uri = "file://assets/avatars/z07-cavalo.png"
+type = "image"
+title = "generated_image"
+
+[[generated]]
+id = "Palk-_rtG8n2k7LAgRUfE"
+uri = "file://assets/avatars/h03-eastasian-f-elder.png"
+type = "image"
+title = "generated_image"
+
+[[generated]]
+id = "cmNbIZtL8Rkkr-wFfzG4y"
+uri = "file://assets/avatars/z08-cabra.png"
+type = "image"
+title = "generated_image"
+
+[[generated]]
+id = "SSmxLQNuhaD5Rt3uyRrNW"
+uri = "file://assets/avatars/h04-southasian-f-young.png"
+type = "image"
+title = "generated_image"
 
 [[outputs]]
 id = "lZuJpSYjVgcWzQ1P2u5tV"
@@ -36,3 +215,9 @@ id = "8IvQSQfMC2jAk_IUvZh5F"
 uri = "file://previews/perfil_v2_8bit.jpg"
 type = "image"
 title = "Card v2 — palavras inteiras + ícones 8-bit + XP corrigido"
+
+[[outputs]]
+id = "OCBDsLdyVfmZmpzwFdL_c"
+uri = "file://assets/avatars_mosaic_preview.png"
+type = "image"
+title = "Mosaico 32 avatars (12 zodíaco + 20 diversos)"
