@@ -558,16 +558,35 @@ async def safe_typing(chat_id: int, action: str = "typing") -> None:
 # =====================================================================
 # UI: "cores" via emoji + auto-delete + bot reactions + typing realista
 # =====================================================================
-# Bot API NAO suporta colorir botoes inline — todos renderizam na cor do
-# tema do cliente. A unica forma de dar "cor visual" e atraves do emoji
-# lider no texto do botao. Convencao adotada (use SEMPRE estes prefixos):
+# BOTOES COLORIDOS — Bot API 10 / aiogram 3.28.2
+# InlineKeyboardButton e KeyboardButton aceitam `style=` nativo:
+#   'success' -> verde   |  'danger' -> vermelho   |  'primary' -> azul
+#   omitido   -> cor do tema (app-specific default)
+# Doc: https://docs.aiogram.dev/en/latest/api/enums/button_style.html
+#
+# Mantemos TAMBEM emoji lider no texto pra:
+#   (a) clientes antigos que ainda nao renderizam style
+#   (b) leitores de tela e modo monocromo
+# Convencao adotada — use SEMPRE em pares (emoji + style):
 
-BTN_OK   = "✅"   # verde     — confirmar / aplicar / ir
-BTN_NO   = "❌"   # vermelho  — cancelar / fechar / destrutivo
-BTN_INFO = "🔵"   # azul      — informacao / navegar / abrir
-BTN_WARN = "⚠️"   # amarelo   — atencao / reversivel-com-custo
+STYLE_OK   = "success"   # verde
+STYLE_NO   = "danger"    # vermelho
+STYLE_INFO = "primary"   # azul
+
+BTN_OK   = "✅"   # par com STYLE_OK     — confirmar / aplicar / ir
+BTN_NO   = "❌"   # par com STYLE_NO     — cancelar / fechar / destrutivo
+BTN_INFO = "🔵"   # par com STYLE_INFO   — informacao / navegar / abrir
+BTN_WARN = "⚠️"   # SEM style nativo (API 10 nao tem 'warning')
 BTN_BACK = "◀️"   # neutro    — voltar
 BTN_GO   = "▶️"   # neutro    — avancar / proximo
+
+
+def ikb(text: str, *, style: str | None = None, **kwargs) -> InlineKeyboardButton:
+    """Atalho pra InlineKeyboardButton com style opcional (Bot API 10).
+    Uso: ikb('✅ Ok', style=STYLE_OK, callback_data='x')"""
+    if style:
+        return InlineKeyboardButton(text=text, style=style, **kwargs)
+    return InlineKeyboardButton(text=text, **kwargs)
 
 
 async def auto_delete_after(msg: Message, delay: float = 8.0) -> None:
@@ -1567,20 +1586,20 @@ async def send_profile_card(chat_id_to: int, owner_chat: int, owner_uid: int):
 # =====================================================================
 
 def hub_keyboard_main() -> InlineKeyboardMarkup:
-    # Convencao de "cor" via emoji lider:
-    # 🔵 navegar  ✅ acao confirmar  ⚠️ destrutivo/cuidado
+    # Bot API 10: style nativo verde/vermelho/azul. Emoji lider mantido
+    # como fallback pra clientes antigos + acessibilidade.
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="👑 Perfil",            callback_data="r:perfil"),
-         InlineKeyboardButton(text=f"{BTN_OK} Subir Pts",  callback_data="r:up:menu")],
-        [InlineKeyboardButton(text="🎭 Classe",            callback_data="r:cls:menu"),
-         InlineKeyboardButton(text="🎒 Mochila",           callback_data="r:inv")],
-        [InlineKeyboardButton(text="🪙 Loja",              callback_data="r:loja"),
-         InlineKeyboardButton(text="🏆 Ranking",           callback_data="r:rank")],
-        [InlineKeyboardButton(text="🎯 Palavra",           callback_data="r:pal"),
-         InlineKeyboardButton(text="🐉 Boss",              callback_data="r:boss")],
-        [InlineKeyboardButton(text="💍 Casórios",          callback_data="r:cas"),
-         InlineKeyboardButton(text=f"{BTN_INFO} Ajuda",    callback_data="r:help")],
-        [InlineKeyboardButton(text=f"{BTN_WARN} Privacidade", callback_data="r:priv")],
+        [ikb("👑 Perfil",                 callback_data="r:perfil"),
+         ikb(f"{BTN_OK} Subir Pts",       callback_data="r:up:menu",  style=STYLE_OK)],
+        [ikb("🎭 Classe",                 callback_data="r:cls:menu"),
+         ikb("🎒 Mochila",                callback_data="r:inv")],
+        [ikb("🪙 Loja",                   callback_data="r:loja"),
+         ikb("🏆 Ranking",                callback_data="r:rank")],
+        [ikb("🎯 Palavra",                callback_data="r:pal"),
+         ikb("🐉 Boss",                   callback_data="r:boss")],
+        [ikb("💍 Casórios",               callback_data="r:cas"),
+         ikb(f"{BTN_INFO} Ajuda",         callback_data="r:help",     style=STYLE_INFO)],
+        [ikb(f"{BTN_WARN} Privacidade",   callback_data="r:priv")],
     ])
 
 

@@ -12,7 +12,7 @@ Bot de Telegram de RPG retro-futurista para grupos. Construído com **aiogram 3.
 - ⚡ **Bot reage ao seu comando** com `👀` / `✍` antes de responder — feedback instantâneo via `set_message_reaction` (helper `react_to()`)
 - ⌨️ **"Digitando..."** simulado em renders pesados (`type_then_send`, `safe_typing`)
 - 🧹 **Auto-deletar acks efêmeros** (rate-limit, "sem pontos") em N segundos pra não poluir grupo (`auto_delete_after`)
-- 🎨 **Convenção de "cor" via emoji** nos botões — `BTN_OK ✅` verde, `BTN_NO ❌` vermelho, `BTN_INFO 🔵` azul, `BTN_WARN ⚠️` amarelo. *Botão colorido nativo NÃO existe em nenhuma versão do Bot API — emoji é a única forma.*
+- 🎨 **Botões coloridos nativos (Bot API 10)** — `style='success'` (verde), `'danger'` (vermelho), `'primary'` (azul) em `InlineKeyboardButton`/`KeyboardButton`. Helper `ikb()` em `main.py:587`. Emoji líder (`BTN_OK ✅`, `BTN_NO ❌`, `BTN_INFO 🔵`, `BTN_WARN ⚠️`) mantido como fallback pra clientes antigos. *Não existe `warning`/amarelo nativo — pra essa categoria só emoji.*
 - 🎉 Message effects (`EFFECT_*`) já em uso em DM 1:1
 
 

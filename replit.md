@@ -25,19 +25,35 @@ A branch `main` LOCAL nunca é alterada no remoto — sempre fazemos `main:royal
   - **Telegram Bot API: 10** — usar sempre, não fazer downgrade
   - **aiogram: 3.28.2** (última estável, lançada em 10/05/2026)
 
-## 🎛️ UI: "cores" via emoji + helpers de UX
+## 🎛️ UI: botões coloridos (Bot API 10) + helpers de UX
 
-### ⚠️ Verdade técnica: NÃO existem botões coloridos no Bot API
-Inline buttons renderizam SEMPRE na cor do tema do cliente Telegram. **Nenhuma versão** (incluindo API 10) permite colorir botão individual. A única forma de dar "cor visual" é via **emoji líder no texto do botão**. Convenção adotada (constantes em `main.py:568`):
+### ✅ Bot API 10 SUPORTA botão colorido nativo
+`InlineKeyboardButton` e `KeyboardButton` têm o campo `style=` (aiogram 3.28.2):
+- `'success'` → **verde**
+- `'danger'` → **vermelho**
+- `'primary'` → **azul**
+- omitido → cor padrão do tema do cliente
 
-| Constante | Emoji | "Cor" | Uso |
+Doc: https://docs.aiogram.dev/en/latest/api/enums/button_style.html
+
+⚠️ **Não existe `'warning'`/amarelo nativo** — pra essa categoria usamos só emoji ⚠️.
+
+### Convenção (constantes em `main.py:575-584` — usar SEMPRE em par emoji+style)
+
+| Constante emoji | Constante style | Cor | Uso |
 |---|---|---|---|
-| `BTN_OK` | ✅ | verde | confirmar / aplicar / ir |
-| `BTN_NO` | ❌ | vermelho | cancelar / fechar / destrutivo |
-| `BTN_INFO` | 🔵 | azul | informação / navegar |
-| `BTN_WARN` | ⚠️ | amarelo | atenção / reversível com custo |
-| `BTN_BACK` | ◀️ | neutro | voltar |
-| `BTN_GO` | ▶️ | neutro | avançar |
+| `BTN_OK` ✅ | `STYLE_OK` `"success"` | verde | confirmar / aplicar / ir |
+| `BTN_NO` ❌ | `STYLE_NO` `"danger"` | vermelho | cancelar / fechar / destrutivo |
+| `BTN_INFO` 🔵 | `STYLE_INFO` `"primary"` | azul | informação / navegar |
+| `BTN_WARN` ⚠️ | — | (só emoji) | atenção / reversível com custo |
+| `BTN_BACK` ◀️ | — | neutro | voltar |
+| `BTN_GO` ▶️ | — | neutro | avançar |
+
+### Helper `ikb()` em `main.py:587`
+```python
+ikb(f"{BTN_OK} Confirmar", callback_data="x", style=STYLE_OK)
+```
+Atalho que aceita `style=` opcional. Emoji líder mantido como fallback pra clientes antigos + acessibilidade (leitores de tela, modo monocromo).
 
 ### Helpers de UX em `main.py` (usar SEMPRE quando aplicável)
 - `await auto_delete_after(msg, delay=8.0)` — agenda exclusão automática. Ideal para acks efêmeros (rate-limit, "sem pontos", warnings) que poluem chat de grupo.
