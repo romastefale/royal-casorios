@@ -53,9 +53,12 @@ from aiogram.types import (
 import royal_avatars
 from royal_words import PALAVRAS, CHARADAS
 from royal_render import (
+    BossKillAttacker,
+    BossKillData,
     CasorioPartner,
     ProfileCardData,
     RankingEntry,
+    render_boss_kill_card,
     render_casorio_card,
     render_levelup_card,
     render_palavra_spoiler_card,
@@ -2764,32 +2767,102 @@ async def finalize_boss(boss: dict) -> None:
     assert bot is not None
     chat_id = boss["chat_id"]
     boss_id = boss["id"]
+    killed_iso = utc_iso()
     cur.execute("UPDATE bosses SET status='dead', killed_at=? WHERE id=?",
-                (utc_iso(), boss_id))
-    # distribui ouro proporcional ao dano
+                (killed_iso, boss_id))
+    # distribui ouro proporcional ao dano — ja ordena por dmg DESC pra
+    # alimentar o card sem re-query
     cur.execute(
-        "SELECT user_id, SUM(damage) AS dmg FROM boss_hits WHERE boss_id=? GROUP BY user_id",
+        "SELECT user_id, SUM(damage) AS dmg FROM boss_hits "
+        "WHERE boss_id=? GROUP BY user_id ORDER BY dmg DESC",
         (boss_id,))
     rows = cur.fetchall()
     total_dmg = sum(r["dmg"] for r in rows) or 1
-    drops_text = []
+    drops_text: list[str] = []
+    total_gold_distributed = 0
+    shares: dict[int, int] = {}  # user_id -> gold dado, pro card
     for r in rows:
         share = int(GOLD_BOSS_KILL_TOTAL * r["dmg"] / total_dmg)
+        shares[r["user_id"]] = share
         if share > 0:
             cur.execute("UPDATE players SET gold=gold+? WHERE chat_id=? AND user_id=?",
                         (share, chat_id, r["user_id"]))
+            total_gold_distributed += share
             name = get_anon_name(chat_id, r["user_id"])
             drops_text.append(f"• {html.escape(name)}: {share}🪙 ({r['dmg']} dano)")
     db.commit()
 
-    final_msg = (
-        f"💀 <b>{boss['name']} foi derrotado!</b>\n\n"
-        f"🏆 Recompensas distribuídas:\n" + "\n".join(drops_text[:10])
-    )
+    if drops_text:
+        final_msg = (
+            f"💀 <b>{boss['name']} foi derrotado!</b>\n\n"
+            f"🏆 Recompensas distribuídas:\n" + "\n".join(drops_text[:10])
+        )
+    else:
+        final_msg = (
+            f"💀 <b>{boss['name']} foi derrotado!</b>\n\n"
+            f"<i>Ninguém causou dano — nenhuma recompensa distribuída.</i>"
+        )
     if boss.get("message_id"):
         await safe_edit(chat_id, boss["message_id"], final_msg)
     else:
         await safe_send(chat_id, final_msg)
+
+    # === Card 1080x1080 do boss derrotado (foto separada — celebratoria). ===
+    # Edit do msg original eh texto, nao da pra virar foto; mandamos foto nova.
+    try:
+        # Duracao spawned_at -> killed_at (ambos ISO UTC)
+        duration_str = ""
+        try:
+            spawn_dt = datetime.fromisoformat(boss["spawned_at"])
+            kill_dt = datetime.fromisoformat(killed_iso)
+            secs = max(0, int((kill_dt - spawn_dt).total_seconds()))
+            if secs < 3600:
+                duration_str = f"{secs // 60:02d}:{secs % 60:02d}"
+            else:
+                duration_str = f"{secs // 3600}h {(secs % 3600) // 60:02d}min"
+        except Exception:
+            duration_str = "??:??"
+
+        top3: list[BossKillAttacker] = []
+        for rank, r in enumerate(rows[:3], start=1):
+            uid = r["user_id"]
+            p = ensure_player(chat_id, uid)
+            top3.append(BossKillAttacker(
+                rank=rank,
+                royal_id=p["royal_id"] or "RYL-????",
+                name=get_anon_name(chat_id, uid),
+                damage=int(r["dmg"] or 0),
+                gold=int(shares.get(uid, 0)),
+                avatar_slug=p["avatar_slug"],
+            ))
+        db.commit()
+
+        data = BossKillData(
+            boss_name=boss["name"],
+            boss_max_hp=int(boss["max_hp"] or 0),
+            total_damage=int(total_dmg),
+            total_attackers=len(rows),
+            duration_str=duration_str,
+            total_gold=int(total_gold_distributed),
+            season_label=current_season_label(),
+            top3=tuple(top3),
+        )
+        card = await asyncio.to_thread(render_boss_kill_card, data)
+        if card:
+            caption = (f"💀 <b>{html.escape(boss['name'])}</b> caiu.\n"
+                       f"<i>{len(rows)} caçadores · {duration_str} · "
+                       f"{total_gold_distributed}🪙 distribuídos.</i>")
+            # Bot API limita caption a 1024 chars
+            if len(caption) > 1024:
+                caption = caption[:1021] + "..."
+            await bot.send_photo(
+                chat_id,
+                photo=BufferedInputFile(card, filename=f"boss-kill-{boss_id}.jpg"),
+                caption=caption,
+            )
+    except Exception:
+        logger.exception("finalize_boss: card render/send falhou")
+
     logger.info("boss killed chat=%d id=%d attackers=%d", chat_id, boss_id, len(rows))
 
 

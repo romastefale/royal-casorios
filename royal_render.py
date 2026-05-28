@@ -1501,3 +1501,245 @@ def render_casorio_card(p1: CasorioPartner, p2: CasorioPartner,
         logger.exception("ROYAL_CASORIO_CARD_RENDER_FAILED p1=%s p2=%s",
                          p1.royal_id, p2.royal_id)
         return None
+
+
+# =====================================================================
+# BOSS KILL CARD — anuncia boss derrotado (top 3 atacantes + loot)
+# Mesmo padrao do casorio: 1080x1080, sem cache, fontes >=14, anti
+# letra-pequena. Acento HOT (sangue) + RUST.
+# =====================================================================
+
+@dataclass(frozen=True)
+class BossKillAttacker:
+    rank: int          # 1, 2, 3
+    royal_id: str
+    name: str
+    damage: int
+    gold: int
+    avatar_slug: str | None = None
+
+
+@dataclass(frozen=True)
+class BossKillData:
+    boss_name: str
+    boss_max_hp: int
+    total_damage: int
+    total_attackers: int
+    duration_str: str   # ex.: "03:24" ou "1h 12min"
+    total_gold: int
+    season_label: str
+    top3: tuple[BossKillAttacker, ...]  # ate 3, ordenados por rank
+
+
+def render_boss_kill_card(data: BossKillData) -> bytes | None:
+    """Card 1080x1080 do boss derrotado: header skull + nome do boss em
+    destaque, podium 3 colunas dos top atacantes (avatar + dmg + gold),
+    footer com duracao/loot total. Sem cache (evento unico)."""
+    try:
+        pal = pick_palette(f"BOSS::{data.boss_name}")
+        W = H = CARD_SIZE
+        img = Image.new("RGB", (W, H), BG_DEEP)
+        draw = ImageDraw.Draw(img)
+
+        # Estatica de fundo (CRT corrompido, com mais ferrugem)
+        rng = random.Random(hash(data.boss_name) & 0xFFFF)
+        for _ in range(1400):
+            x = rng.randrange(W); y = rng.randrange(H)
+            c = rng.choice([(20, 16, 22), (16, 14, 20), (28, 22, 30),
+                            (40, 24, 18), (50, 18, 18)])
+            pixel_rect(draw, (x, y, x + 3, y + 3), c)
+
+        OUT_PAD = 28
+        panel_box = (OUT_PAD, OUT_PAD, W - OUT_PAD, H - OUT_PAD)
+        pixel_rect(draw, panel_box, BG)
+        chunky_border(draw, panel_box, outer=BLACK, inner=HOT, thick=8)
+
+        center_x = W // 2
+
+        # ===== Header =====
+        header_box = (OUT_PAD + 28, OUT_PAD + 28,
+                      W - OUT_PAD - 28, OUT_PAD + 110)
+        pixel_rect(draw, header_box, PANEL)
+        pixel_rect(draw, (header_box[0], header_box[1],
+                          header_box[2], header_box[1] + 4), HOT)
+        pixel_rect(draw, (header_box[0], header_box[3] - 4,
+                          header_box[2], header_box[3]), HOT)
+
+        title_font = load_font(26, mono=True, bold=True)
+        title = "> BOSS.SYS  // ABATIDO"
+        draw.text((header_box[0] + 22, header_box[1] + 24),
+                  title, font=title_font, fill=HOT)
+
+        if data.season_label:
+            season_font = load_font(18, mono=True, bold=False)
+            stxt = f">> {data.season_label.upper()}"
+            sw, _ = text_size(draw, stxt, season_font)
+            draw.text((header_box[2] - 22 - sw, header_box[1] + 30),
+                      stxt, font=season_font, fill=DIM)
+
+        pixel_rect(draw, (header_box[2] - 18, header_box[3] - 18,
+                          header_box[2] - 10, header_box[3] - 10), HOT)
+
+        # ===== Nome do boss + HP zerado =====
+        boss_name_up = ellipsize(data.boss_name or "?", 22).upper()
+        bn_size = 56 if len(boss_name_up) <= 14 else 44 if len(boss_name_up) <= 18 else 36
+        bn_font = load_font(bn_size, mono=True, bold=True)
+        bw, bh = text_size(draw, boss_name_up, bn_font)
+        bn_y = OUT_PAD + 150
+        # Sombra preta
+        draw.text((center_x - bw // 2 + 5, bn_y + 5),
+                  boss_name_up, font=bn_font, fill=BLACK)
+        draw.text((center_x - bw // 2, bn_y),
+                  boss_name_up, font=bn_font, fill=RUST)
+
+        # HP 0/MAX riscado em vermelho
+        hp_font = load_font(22, mono=True, bold=True)
+        hp_txt = f"HP 0 / {data.boss_max_hp}"
+        hw, hh = text_size(draw, hp_txt, hp_font)
+        hp_y = bn_y + bh + 18
+        draw.text((center_x - hw // 2, hp_y),
+                  hp_txt, font=hp_font, fill=DIM)
+        # linha riscando (chunky)
+        pixel_rect(draw, (center_x - hw // 2 - 4, hp_y + hh // 2 - 1,
+                          center_x + hw // 2 + 4, hp_y + hh // 2 + 3), HOT)
+
+        # ===== Stats line (duracao · atacantes · dmg total) =====
+        stats_font = load_font(20, mono=True, bold=True)
+        stats_txt = (
+            f"[ {data.duration_str} ]  ·  "
+            f"[ {data.total_attackers} CACADORES ]  ·  "
+            f"[ {data.total_damage} DMG ]"
+        )
+        sw2, sh2 = text_size(draw, stats_txt, stats_font)
+        # Reduz se nao couber
+        if sw2 > W - OUT_PAD * 2 - 60:
+            stats_font = load_font(16, mono=True, bold=True)
+            sw2, sh2 = text_size(draw, stats_txt, stats_font)
+        stats_y = hp_y + hh + 18
+        draw.text((center_x - sw2 // 2, stats_y),
+                  stats_txt, font=stats_font, fill=CYAN)
+
+        # ===== Podium top 3 =====
+        # Layout 3 colunas iguais (com gaps), avatares 180px,
+        # nome + dmg + gold embaixo. Ordem visual: 2-1-3 (1o central).
+        podium_y_top = stats_y + sh2 + 50
+        col_gap = 20
+        col_w = (W - OUT_PAD * 2 - 80 - col_gap * 2) // 3  # ~284
+        base_x = OUT_PAD + 40
+        medal_colors = {1: GOLD, 2: (180, 180, 180), 3: (180, 100, 60)}
+        medal_label = {1: "1ST", 2: "2ND", 3: "3RD"}
+        top3 = {a.rank: a for a in data.top3}
+        order = [(2, 0), (1, 1), (3, 2)]  # rank -> coluna
+
+        AVATAR = 180
+        for rank, col in order:
+            cx0 = base_x + col * (col_w + col_gap)
+            cx1 = cx0 + col_w
+            # Painel da coluna
+            col_top = podium_y_top
+            col_bot = col_top + 380
+            pixel_rect(draw, (cx0, col_top, cx1, col_bot), PANEL)
+            pixel_rect(draw, (cx0, col_top, cx1, col_top + 4),
+                       medal_colors[rank])
+
+            a = top3.get(rank)
+            if a is None:
+                # Vago — placeholder
+                vac_font = load_font(20, mono=True, bold=True)
+                vt = "[ VAGO ]"
+                vw, vh = text_size(draw, vt, vac_font)
+                draw.text((cx0 + (col_w - vw) // 2, col_top + 160),
+                          vt, font=vac_font, fill=DIM)
+                continue
+
+            # Medalha label topo
+            m_font = load_font(18, mono=True, bold=True)
+            mt = medal_label[rank]
+            mw, mh = text_size(draw, mt, m_font)
+            draw.text((cx0 + (col_w - mw) // 2, col_top + 14),
+                      mt, font=m_font, fill=medal_colors[rank])
+
+            # Avatar
+            resolved = royal_avatars.resolve_slug(a.avatar_slug, a.royal_id)
+            portrait = royal_avatars.load_avatar(resolved, AVATAR)
+            ax = cx0 + (col_w - AVATAR) // 2
+            ay = col_top + 40
+            pixel_rect(draw, (ax - 3, ay - 3,
+                              ax + AVATAR + 3, ay + AVATAR + 3), BLACK)
+            pixel_rect(draw, (ax - 1, ay - 1,
+                              ax + AVATAR + 1, ay + AVATAR + 1),
+                       medal_colors[rank])
+            if portrait is not None:
+                img.paste(portrait, (ax, ay), portrait)
+            else:
+                f_font = load_font(16, mono=True, bold=True)
+                ft = "[ ? ]"
+                fw, fh = text_size(draw, ft, f_font)
+                draw.text((ax + (AVATAR - fw) // 2, ay + (AVATAR - fh) // 2),
+                          ft, font=f_font, fill=DIM)
+
+            # Nome (ellipsize 10 — coluna estreita)
+            name_clean = ellipsize(a.name or "?", 10).upper()
+            n_size = 22 if len(name_clean) <= 7 else 18
+            name_font = load_font(n_size, mono=True, bold=True)
+            nw, nh = text_size(draw, name_clean, name_font)
+            name_y = ay + AVATAR + 16
+            draw.text((cx0 + (col_w - nw) // 2, name_y),
+                      name_clean, font=name_font, fill=INK)
+
+            # Royal ID
+            id_font = load_font(16, mono=True, bold=False)
+            idw, idh = text_size(draw, a.royal_id, id_font)
+            draw.text((cx0 + (col_w - idw) // 2, name_y + nh + 8),
+                      a.royal_id, font=id_font, fill=DIM)
+
+            # Dmg destacado
+            dmg_font = load_font(22, mono=True, bold=True)
+            dmg_txt = f"{a.damage} DMG"
+            dw, dh = text_size(draw, dmg_txt, dmg_font)
+            dmg_y = name_y + nh + 8 + idh + 10
+            draw.text((cx0 + (col_w - dw) // 2, dmg_y),
+                      dmg_txt, font=dmg_font, fill=HOT)
+
+            # Gold ganho (logo abaixo do dano)
+            if a.gold > 0:
+                gold_font = load_font(18, mono=True, bold=True)
+                gold_txt = f"+{a.gold} GOLD"
+                gw, _ = text_size(draw, gold_txt, gold_font)
+                draw.text((cx0 + (col_w - gw) // 2, dmg_y + dh + 6),
+                          gold_txt, font=gold_font, fill=GOLD)
+
+        # ===== Footer (loot total) =====
+        foot_box = (OUT_PAD + 60, H - OUT_PAD - 120,
+                    W - OUT_PAD - 60, H - OUT_PAD - 50)
+        pixel_rect(draw, foot_box, PANEL)
+        pixel_rect(draw, (foot_box[0], foot_box[1],
+                          foot_box[2], foot_box[1] + 3), GOLD)
+
+        loot_font = load_font(24, mono=True, bold=True)
+        loot_txt = f">> LOOT TOTAL  ::  {format_br(data.total_gold)}  GOLD"
+        lw, lh = text_size(draw, loot_txt, loot_font)
+        draw.text((center_x - lw // 2, foot_box[1] + 18),
+                  loot_txt, font=loot_font, fill=GOLD)
+
+        sub_font = load_font(16, mono=True, bold=False)
+        sub_txt = "[ recompensa distribuida proporcional ao dano ]"
+        sw3, _ = text_size(draw, sub_txt, sub_font)
+        draw.text((center_x - sw3 // 2, foot_box[1] + 18 + lh + 6),
+                  sub_txt, font=sub_font, fill=DIM)
+
+        # Pos-processamento
+        img = img.convert("RGBA")
+        apply_scanlines(img, every=3, alpha=55)
+        vimg = img.convert("RGB")
+        apply_vignette(vimg, strength=180)
+        img = vimg.convert("RGBA")
+        apply_grain(img, intensity=20)
+        img = img.convert("RGB")
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=90, optimize=True)
+        return buf.getvalue()
+    except Exception:
+        logger.exception("ROYAL_BOSS_KILL_CARD_RENDER_FAILED boss=%r",
+                         data.boss_name)
+        return None

@@ -287,3 +287,21 @@ id = "V3PRrKlIxx0d1mi4liCsD"
 uri = "file://.local/preview/casorio_test3.jpg"
 type = "image"
 title = "Casorio card — edge: royal_id/name/level=None + nome longo"
+
+[[outputs]]
+id = "CXhZFuHQlitMJXmIyPPE9"
+uri = "file://.local/preview/boss_test.jpg"
+type = "image"
+title = "Boss kill card — 3 top atacantes"
+
+[[outputs]]
+id = "k6L8uFeIjUU8NVokHYsWm"
+uri = "file://.local/preview/boss_test2.jpg"
+type = "image"
+title = "Boss kill card — edge: 1 atacante, nome longo, sem avatar"
+
+[[outputs]]
+id = "oAYjy3rMZRnfWZDf7UKIC"
+uri = "file://.local/preview/boss_test_v2.jpg"
+type = "image"
+title = "Boss kill card v2 — com gold no podium"
