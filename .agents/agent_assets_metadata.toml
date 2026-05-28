@@ -210,6 +210,12 @@ uri = "file://attached_assets/generated_images/rei_bot_preview.png"
 type = "image"
 title = "rei bot avatar preview"
 
+[[generated]]
+id = "mSJT2bnGDkcAoajkQ7E-z"
+uri = "file://attached_assets/generated_images/rei_e_reino_preview.png"
+type = "image"
+title = "rei reino veneracao cena"
+
 [[outputs]]
 id = "lZuJpSYjVgcWzQ1P2u5tV"
 uri = "file://previews/perfil_preview.jpg"
@@ -257,3 +263,9 @@ id = "1A9BOekqgKjonMAUQgTIs"
 uri = "file://assets/avatars/k01-rei.png"
 type = "image"
 title = "👑 O Rei — foto de perfil do bot (1024×1024, pixel-art)"
+
+[[outputs]]
+id = "FLc30nGUXq1isFuWft7Ey"
+uri = "file://assets/rei_e_reino.png"
+type = "image"
+title = "🏰 O Rei discursa ao Reino — cena épica (1820×1024 pixel-art)"
