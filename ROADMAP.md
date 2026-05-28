@@ -145,6 +145,7 @@
 - **Solução (implementada):** `PREMIUM_ITEMS` + `send_invoice(currency="XTR")` via `/royalloja` → aba 💎 Premium. Handlers `pre_checkout_handler` (prefixo `prm|`) + `successful_payment_handler` (idempotente por `charge_id`, grava em `stars_purchases`, concede perk via `_grant_premium_perk`). Itens: boost XP 24h, dica da palavra, ressurreição no boss, skin dourada. Migration v10.
 - **Doc:** https://core.telegram.org/bots/payments-stars
 - **Aceite:** compra via Stars credita perk + ledger auditável. ✅
+- **Perks aplicados:** ✅ `xp_boost_until` (+20% via `premium_xp_active` em ambos hot paths de XP) · ✅ `prm_hints` (M03) · ✅ `prm_skin_gold` (moldura GOLD + tag `[ * OURO * ]` no card) · ⏳ `prm_ressurrects` **deferido** (boss não tem mecânica de morte do player pra hook).
 
 **M02 · ✅ FEITO (florins, não Stars) — Gifts entre players** 🟡🟢
 - **Por quê:** gameplay social + viral.
@@ -161,7 +162,7 @@
 - **Por quê:** "Royal Plus" — 50⭐/mês = +20% XP, slot extra de casório, badge violeta.
 - **Solução (implementada):** `SUBSCRIPTIONS` + `send_invoice(currency="XTR", subscription_period=2592000)` (30d) via callback `r:sub:royal_plus`. `pre_checkout_handler` aceita prefixo `sub|`; `successful_payment_handler` detecta `subscription_expiration_date` e grava ISO em `royal_plus_until`. Renovações automáticas tratadas igual (idempotente por charge_id). Migration v11.
 - **Aceite:** assinatura ativa grava `royal_plus_until`; renovação mensal atualiza. ✅
-- **TODO:** aplicação dos perks (mult XP, slot extra, badge) nos hot paths — Sprint 4/5.
+- **Perks aplicados:** ✅ +20% XP (`premium_xp_active` checa `royal_plus_until` nos hot paths) · ⏳ slot extra de casório **deferido** (casórios são atribuídos pelo sistema/admin via `send_couple`, sem limite de slot por user pra estender) · ⏳ badge violeta no card (TODO render).
 
 ### 🎮 GAMEPLAY (engagement, retenção)
 

@@ -717,6 +717,7 @@ class ProfileCardData:
     msg_count: int
     joined_str: str
     avatar_slug: str | None = None
+    skin_gold: bool = False
 
 
 def _draw_label_value(draw, *, x, y, label, value,
@@ -758,6 +759,7 @@ def render_profile_card(data: ProfileCardData,
         data.palavras_won, data.casorios, data.gold,
         data.msg_count, data.joined_str,
         data.avatar_slug,
+        data.skin_gold,
         # Hash da foto: invalida cache se o player trocar a foto no Telegram
         hashlib.md5(avatar_bytes).hexdigest() if avatar_bytes else None,
     )
@@ -820,10 +822,11 @@ def render_profile_card(data: ProfileCardData,
         resolved_slug = royal_avatars.resolve_slug(
             data.avatar_slug, data.royal_id)
         portrait = royal_avatars.load_avatar(resolved_slug, inner_size)
-        # Moldura do quadro principal
+        # Moldura do quadro principal — GOLD vivo se skin dourada (M01)
+        frame_col = GOLD if data.skin_gold else GOLD_DIM
         pixel_rect(draw, (ax, ay, ax + avatar_size, ay + avatar_size), BLACK)
         pixel_rect(draw, (ax + 4, ay + 4,
-                          ax + avatar_size - 4, ay + avatar_size - 4), GOLD_DIM)
+                          ax + avatar_size - 4, ay + avatar_size - 4), frame_col)
         pixel_rect(draw, (ax + 6, ay + 6,
                           ax + avatar_size - 6, ay + avatar_size - 6), BLACK)
         if portrait is not None:
@@ -849,12 +852,12 @@ def render_profile_card(data: ProfileCardData,
             except Exception:
                 logger.warning("face thumbnail failed", exc_info=True)
 
-        # tag "[ BRASAO ]" debaixo do avatar
+        # tag "[ BRASAO ]" debaixo do avatar — "[ OURO ]" dourado se skin (M01)
         tag_font = load_font(16, mono=True, bold=True)
-        tag = "[ BRASÃO ]"
+        tag = "[ * OURO * ]" if data.skin_gold else "[ BRASÃO ]"
         tw, _ = text_size(draw, tag, tag_font)
         draw.text((ax + (avatar_size - tw) // 2, ay + avatar_size + 14),
-                  tag, font=tag_font, fill=GOLD_DIM)
+                  tag, font=tag_font, fill=(GOLD if data.skin_gold else GOLD_DIM))
 
         # ===== Bloco direita: nome, classe, nivel =====
         info_x = ax + avatar_size + 48

@@ -241,6 +241,7 @@ STARTING_GOLD = 50
 GOLD_PALAVRA_WIN = 50
 GOLD_BOSS_KILL_TOTAL = 500
 COUPLE_XP_BUFF = 0.10  # +10% XP enquanto casado
+PREMIUM_XP_BUFF = 0.20  # M01/M04 — +20% XP com Boost ativo ou Royal Plus
 
 # M06 — Reactions = XP (cap diario anti-abuso)
 REACTION_XP = 3
@@ -2588,6 +2589,7 @@ def _profile_card_data_hash(data, photo_fid: str | None = None) -> str:
         data.palavras_won, data.casorios, data.gold,
         data.msg_count, data.joined_str,
         data.avatar_slug, photo_fid or "",
+        int(data.skin_gold),
     ))
     return hashlib.sha1(payload.encode("utf-8")).hexdigest()[:16]
 
@@ -2913,6 +2915,23 @@ def player_has_active_couple(chat_id: int, user_id: int) -> bool:
     return cur.fetchone() is not None
 
 
+def premium_xp_active(player: dict) -> bool:
+    """M01/M04: True se o player tem Boost de XP (xp_boost_until) ou
+    Royal Plus (royal_plus_until) ainda vigente. Ambos gravados como ISO
+    UTC tz-aware pelo _grant_premium_perk."""
+    now = utc_now()
+    for col in ("xp_boost_until", "royal_plus_until"):
+        raw = player.get(col)
+        if not raw:
+            continue
+        try:
+            if datetime.fromisoformat(raw) > now:
+                return True
+        except Exception:
+            continue
+    return False
+
+
 def award_xp_immediate(chat_id: int, user_id: int, amount: int, reason: str = "") -> None:
     """Concede XP imediato sem checar cooldown (usado para eventos: casamento, palavra, boss)."""
     player = ensure_player(chat_id, user_id)
@@ -2922,6 +2941,9 @@ def award_xp_immediate(chat_id: int, user_id: int, amount: int, reason: str = ""
     # bonus de casamento ativo (+10%)
     if player_has_active_couple(chat_id, user_id):
         amount = int(amount * (1 + COUPLE_XP_BUFF))
+    # M01/M04: +20% XP com Boost ativo ou Royal Plus
+    if premium_xp_active(player):
+        amount = int(amount * (1 + PREMIUM_XP_BUFF))
     # M09: boost de evento sazonal global
     mult = event_xp_mult()
     if mult != 1.0:
@@ -2971,6 +2993,9 @@ def award_xp_message(chat_id: int, user_id: int, is_reply: bool) -> None:
         real_amount = int(real_amount * 1.10)
     if player_has_active_couple(chat_id, user_id):
         real_amount = int(real_amount * (1 + COUPLE_XP_BUFF))
+    # M01/M04: +20% XP com Boost ativo ou Royal Plus
+    if premium_xp_active(player):
+        real_amount = int(real_amount * (1 + PREMIUM_XP_BUFF))
     # M09: boost de evento sazonal global
     _ev_mult = event_xp_mult()
     if _ev_mult != 1.0:
@@ -3274,6 +3299,7 @@ def build_profile_card_data(chat_id: int, user_id: int) -> ProfileCardData:
         joined_str=joined_str,
         avatar_slug=royal_avatars.resolve_slug(
             p.get("avatar_slug"), royal_id),
+        skin_gold=bool(p.get("prm_skin_gold")),
     )
 
 

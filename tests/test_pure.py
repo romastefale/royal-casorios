@@ -121,3 +121,25 @@ def test_identity_hash_muda_com_avatar():
     a = main._identity_card_hash("Rei", "toxic")
     b = main._identity_card_hash("Rei", "amber")
     assert a != b
+
+
+# --------------------------------------------------- premium_xp_active (M01/M04)
+def test_premium_xp_active_boost_vigente():
+    fut = (main.utc_now() + timedelta(hours=1)).isoformat()
+    assert main.premium_xp_active({"xp_boost_until": fut}) is True
+
+
+def test_premium_xp_active_boost_expirado():
+    past = (main.utc_now() - timedelta(hours=1)).isoformat()
+    assert main.premium_xp_active({"xp_boost_until": past}) is False
+
+
+def test_premium_xp_active_royal_plus_vigente():
+    fut = (main.utc_now() + timedelta(days=10)).isoformat()
+    assert main.premium_xp_active({"royal_plus_until": fut}) is True
+
+
+def test_premium_xp_active_vazio_ou_lixo():
+    assert main.premium_xp_active({}) is False
+    assert main.premium_xp_active({"xp_boost_until": "nao-eh-data"}) is False
+    assert main.premium_xp_active({"xp_boost_until": None}) is False

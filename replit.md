@@ -128,13 +128,21 @@ saldo, palavras, configs por usuário, etc).
 
 **Migration v10:** adiciona colunas em `players` + tabela `stars_purchases` (ledger auditável).
 
-**Aplicação dos perks (TODO sprints futuros):**
-- `xp_boost_until` — multiplicar em hot paths de XP (palavra/boss/casorio/chat) checando `now < xp_boost_until` → `*1.2`.
-- `prm_hints` — consumir em `/royalpalavra` revelando 1 letra.
-- `prm_ressurrects` — consumir ao morrer no boss.
-- `prm_skin_gold` — flag passada pro `render_profile_card` (badge dourado).
+**Aplicação dos perks:**
+- ✅ `xp_boost_until` — aplicado: `premium_xp_active(player)` (`main.py`) checa
+  `now < xp_boost_until` (ou `royal_plus_until`) → `*1.20` (`PREMIUM_XP_BUFF`) em
+  `award_xp_immediate` **e** `award_xp_message` (depois de classe/casamento, antes
+  do evento sazonal).
+- ✅ `prm_hints` — consumido em `/royalpaldica` (M03) revelando 1 letra.
+- ✅ `prm_skin_gold` — `ProfileCardData.skin_gold` (vindo de `build_profile_card_data`)
+  → moldura do avatar em GOLD vivo + tag `[ * OURO * ]`. Entra na cache_key do render
+  e no `_profile_card_data_hash` (F09) pra invalidar o file_id persistido.
+- ⏳ `prm_ressurrects` — **deferido**: o combate de boss (`handle_boss_attack`) **não
+  tem mecânica de morte do player** (player só causa dano, não tem HP/derrota). Não há
+  ponto concreto de hook; aplicar exige desenhar a mecânica de morte primeiro.
 
-> ⚠️ M01 entrega o pipeline de cobrança + grant + ledger. As **aplicações dos perks** nos hot paths serão wired no Sprint 4/5.
+> ⚠️ M01 entrega o pipeline de cobrança + grant + ledger. XP boost / hint / skin
+> dourada já aplicados; ressurreição depende de mecânica de morte inexistente.
 
 ## 🌟 M04 — Royal Plus (assinatura Stars recorrente)
 
@@ -154,10 +162,13 @@ saldo, palavras, configs por usuário, etc).
 
 **Migration v11:** cols `royal_plus_until` + `royal_plus_charge_id` em `players`.
 
-**TODO aplicação dos perks (Sprint 4/5):**
-- Checar `now < royal_plus_until` em hot paths de XP (mult 1.2×).
-- Permitir 2 casórios ativos se Royal Plus ativo (1 default).
-- Render `royal_plus_until > now` como badge violeta no profile card.
+**Aplicação dos perks:**
+- ✅ `now < royal_plus_until` aplicado nos hot paths de XP (`premium_xp_active` →
+  `*1.20`), junto com o boost do M01.
+- ⏳ **Slot extra de casório — deferido:** casórios são atribuídos pelo sistema/admin
+  via `send_couple` (não há limite de "slot" por usuário pra estender). Aplicar exige
+  modelar capacidade no pareamento, não é toggle simples.
+- ⏳ Badge violeta no profile card — ainda não desenhado (TODO render).
 
 ## 💡 M03 — Dica paga da PALAVRA
 
