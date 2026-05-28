@@ -27,6 +27,8 @@ A branch `main` LOCAL nunca é alterada no remoto — sempre fazemos `main:royal
 
 ## 🎛️ UI: botões coloridos (Bot API 10) + helpers de UX
 
+> 🧠 **MEMÓRIA PERMANENTE (não esquecer / não reverter):** Botões coloridos nativos EXISTEM no Bot API 10 / aiogram 3.28.2 via campo `style`. Já implementado e em produção. Se algum agente futuro afirmar "não existe", está errado — consultar `https://docs.aiogram.dev/en/latest/api/enums/button_style.html`.
+
 ### ✅ Bot API 10 SUPORTA botão colorido nativo
 `InlineKeyboardButton` e `KeyboardButton` têm o campo `style=` (aiogram 3.28.2):
 - `'success'` → **verde**
