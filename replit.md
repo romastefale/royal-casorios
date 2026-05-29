@@ -259,6 +259,12 @@ Palavra (1⭐ → `prm_hints`) · 🔱 Ressurreição no Boss (10⭐ → `prm_re
 > comando novo, registre-o ANTES do bloco "ULTIMO @dp.message" **ou** garanta que os catch-alls
 > excluem comandos.
 
+> 🤖 **Bots nunca viram jogadores:** `track` filtra `message.from_user.is_bot` logo na entrada.
+> Admins **anônimos** postam como `@GroupAnonymousBot` (`is_bot=True`) — antes eram cadastrados
+> na corte por engano (royal_id/perfil de bot). Posts de canal também caem aqui. Mensagens de
+> outros bots não chegam (regra do Telegram), mas o filtro blinda o pseudo-bot de admin anônimo.
+> Anúncio one-shot da correção: `announce_no_bots_feature()` (flag `boot_announce_nobots_v1`).
+
 ## 📋 Menus (BotCommands)
 
 Registrados em `register_bot_commands()` (scopes `AllGroupChats` e `AllPrivateChats`). Telegram

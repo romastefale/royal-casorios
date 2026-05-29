@@ -2,7 +2,73 @@
 sem corromper schema. Garante que run_migrations aplica todas as versoes numa
 base vazia (o que o boot real faz no 1o deploy).
 """
+import asyncio
+import types
+
 import main
+
+
+def _run_msg_mw(message):
+    """Roda a outer-middleware de mensagem e diz se o handler foi chamado."""
+    called = {"hit": False}
+
+    async def _handler(msg, data):
+        called["hit"] = True
+        return "OK"
+
+    asyncio.run(main._require_user_for_commands(_handler, message, {}))
+    return called["hit"]
+
+
+def _fake_msg(*, is_bot=None, uid=1, text=None,
+              migrate_to=None, migrate_from=None):
+    fu = None
+    if is_bot is not None:
+        fu = types.SimpleNamespace(is_bot=is_bot, id=uid)
+    return types.SimpleNamespace(
+        from_user=fu, text=text,
+        migrate_to_chat_id=migrate_to, migrate_from_chat_id=migrate_from)
+
+
+def test_middleware_dropa_bot_mas_passa_humano():
+    # admin anonimo / canal = is_bot True -> dropado
+    assert _run_msg_mw(_fake_msg(is_bot=True, uid=1087968824)) is False
+    # humano normal -> passa
+    assert _run_msg_mw(_fake_msg(is_bot=False, uid=42)) is True
+    # bot de musica postando faixa (sem "/") -> passa p/ handle_music_bot_post
+    assert _run_msg_mw(_fake_msg(is_bot=True, uid=main.MUSIC_BOT_ID)) is True
+    # ...mas o bot de musica mandando um COMANDO -> dropado (nao vira jogador)
+    assert _run_msg_mw(_fake_msg(
+        is_bot=True, uid=main.MUSIC_BOT_ID, text="/royalperfil")) is False
+
+
+def test_callback_middleware_dropa_bot():
+    """Admins anonimos pressionando botoes chegam como bot (is_bot=True) e
+    nao podem cair em ensure_player via callbacks."""
+    called = {"hit": False}
+
+    async def _handler(cb, data):
+        called["hit"] = True
+        return "OK"
+
+    def _cb(is_bot):
+        return types.SimpleNamespace(
+            from_user=types.SimpleNamespace(is_bot=is_bot, id=7))
+
+    asyncio.run(main._block_bot_callbacks(_handler, _cb(True), {}))
+    assert called["hit"] is False
+    called["hit"] = False
+    asyncio.run(main._block_bot_callbacks(_handler, _cb(False), {}))
+    assert called["hit"] is True
+
+
+def test_middleware_nao_bloqueia_migracao_de_admin_anonimo():
+    """Regressao: msg de servico de migracao vinda de @GroupAnonymousBot
+    (is_bot=True) NAO pode ser dropada — on_chat_migration precisa dela."""
+    assert _run_msg_mw(_fake_msg(
+        is_bot=True, uid=1087968824, migrate_to=-100123)) is True
+    assert _run_msg_mw(_fake_msg(
+        is_bot=True, uid=1087968824, migrate_from=-100456)) is True
 
 
 def test_migrations_aplicam_ate_a_ultima_versao():

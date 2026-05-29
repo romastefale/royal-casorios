@@ -431,14 +431,51 @@ async def _require_user_for_commands(handler, message: Message, data):
     """F06 — channel posts e anonymous admins tem from_user=None.
     Sem isso, qualquer comando deles crashava ~30 handlers que
     fazem message.from_user.id sem guard. Dropa silenciosamente
-    comandos sem from_user; outras mensagens passam normal."""
+    comandos sem from_user; outras mensagens passam normal.
+
+    Bots NUNCA viram jogadores: admins anonimos chegam como
+    @GroupAnonymousBot (is_bot=True), posts de canal como @Channel_Bot.
+    Antes, qualquer msg/comando deles cadastrava um perfil de bot na corte.
+    Dropa is_bot na entrada — UNICA excecao: o bot de musica (MUSIC_BOT_ID),
+    que tem handler proprio creditando os usuarios MENCIONADOS (reais)."""
     try:
+        # Allowlist: msgs de SERVICO de migracao grupo→supergrupo chegam com
+        # from_user=@GroupAnonymousBot (is_bot=True) quando o upgrade parte de
+        # admin anonimo. NAO podem ser dropadas — on_chat_migration precisa
+        # delas p/ migrate_chat_data (senao orfana progresso).
+        if getattr(message, "migrate_to_chat_id", None) is not None \
+                or getattr(message, "migrate_from_chat_id", None) is not None:
+            return await handler(message, data)
+        fu = message.from_user
         text = getattr(message, "text", None) or ""
-        if text.startswith("/") and message.from_user is None:
+        if fu is not None and fu.is_bot:
+            # O bot de musica posta faixas (NUNCA comandos) → deixa passar p/
+            # handle_music_bot_post, que credita os usuarios MENCIONADOS (reais).
+            # Comando vindo de bot — inclusive o de musica — e dropado: bots
+            # nunca viram jogadores (nenhum handler de comando deve cadastra-lo).
+            if fu.id == MUSIC_BOT_ID and not text.startswith("/"):
+                return await handler(message, data)
+            return None
+        if text.startswith("/") and fu is None:
             return None
     except Exception:
         pass
     return await handler(message, data)
+
+
+@dp.callback_query.outer_middleware()
+async def _block_bot_callbacks(handler, cb: CallbackQuery, data):
+    """Admins anonimos pressionando botoes inline chegam como
+    @GroupAnonymousBot (is_bot=True). Varios callbacks fazem ensure_player
+    → cadastrariam um bot. Nenhum bot legitimo aperta nossos botoes, entao
+    dropa is_bot silenciosamente (sem excecoes)."""
+    try:
+        fu = cb.from_user
+        if fu is not None and fu.is_bot:
+            return None
+    except Exception:
+        pass
+    return await handler(cb, data)
 
 # =====================================================================
 # DB CONNECTION + PRAGMA SETUP (per-connection PRAGMAs ALWAYS applied)
@@ -7956,6 +7993,11 @@ async def lucky_emoji_handler(message: Message):
 async def track(message: Message):
     if not message.from_user:
         return
+    # Bots NUNCA viram jogadores. Admins anonimos chegam como @GroupAnonymousBot
+    # (is_bot=True) e ate aqui eram cadastrados na corte por engano. Posts de
+    # canal/bot tambem caem aqui. Filtra na entrada do catch-all.
+    if message.from_user.is_bot:
+        return
     if message.text and message.text.startswith("/"):
         return
     chat_id = message.chat.id
@@ -8258,6 +8300,13 @@ async def royal_presentear(message: Message):
 
     # 1) reply -> destinatario eh quem foi respondido; arg eh valor
     if message.reply_to_message and message.reply_to_message.from_user:
+        if message.reply_to_message.from_user.is_bot:
+            ack = await message.answer(term_block(
+                "PRESENTE",
+                ">> nao da pra presentear um bot 🤖",
+                status="NEGADO", status_color="HOT"))
+            await auto_delete_after(ack, delay=8.0)
+            return
         target_uid = message.reply_to_message.from_user.id
         target_name = display_name(message.reply_to_message)
         if len(parts) >= 2:
@@ -8302,6 +8351,22 @@ async def royal_presentear(message: Message):
             status="LIMITE", status_color="AMBER"))
         await auto_delete_after(ack, delay=8.0)
         return
+
+    # Bots nunca recebem presente nem viram jogadores. Cobre o alvo via @user
+    # (linha legada no `users`) e qualquer alvo bot. Checagem POSITIVA via
+    # Telegram: so bloqueia ao confirmar is_bot; erro de API segue (nao quebra
+    # presente legitimo se o alvo, p.ex., saiu do grupo).
+    try:
+        tgt_member = await bot.get_chat_member(chat_id, target_uid)
+        if getattr(tgt_member.user, "is_bot", False):
+            ack = await message.answer(term_block(
+                "PRESENTE",
+                ">> nao da pra presentear um bot 🤖",
+                status="NEGADO", status_color="HOT"))
+            await auto_delete_after(ack, delay=8.0)
+            return
+    except Exception:
+        logger.exception("presentear: get_chat_member falhou alvo=%s", target_uid)
 
     p = ensure_player(chat_id, sender)
     if int(p["gold"] or 0) < amount:
@@ -9026,6 +9091,64 @@ async def announce_typewriter_feature() -> None:
                 sent_ok, len(chats))
 
 
+BOOT_ANNOUNCE_NOBOTS_KEY = "boot_announce_nobots_v1"
+
+
+async def announce_no_bots_feature() -> None:
+    """One-shot: anuncia nos grupos RPG ativos que bots nao entram mais no
+    jogo (admins anonimos = @GroupAnonymousBot deixam de ser cadastrados).
+    Mensagem-log com a confissao pedida pelo dono. Flag persistente em
+    bot_meta — roda 1x apos o deploy."""
+    if bot_meta_get(BOOT_ANNOUNCE_NOBOTS_KEY):
+        return
+    await asyncio.sleep(8.0)  # deixa o polling estabilizar (apos o outro anuncio)
+    try:
+        cur.execute(
+            "SELECT DISTINCT p.chat_id AS chat_id "
+            "FROM players p "
+            "INNER JOIN chats_rpg c ON c.chat_id = p.chat_id")
+        chats = [r["chat_id"] for r in cur.fetchall()]
+    except Exception:
+        logger.exception("announce_no_bots: query chats falhou")
+        return
+    if not chats:
+        bot_meta_set(BOOT_ANNOUNCE_NOBOTS_KEY, "no_chats")
+        return
+    body = (
+        ">> bots agora ficam de fora da corte\n"
+        "// confesso: me confundi. parecia MUITO\n"
+        "// sedutor alistar no jogo os bots que sao\n"
+        "// administradores — mas agora estou mais\n"
+        "// consciente do trabalho que realizo.\n"
+        "// daqui pra frente, so nobres de verdade."
+    )
+    msg = term_block("ATUALIZACAO", body, status="APLICADO", status_color="ACID")
+    eligible = 0
+    sent_ok = 0
+    for chat_id in chats:
+        if TEST_CHAT_IDS and chat_id in TEST_CHAT_IDS:
+            continue
+        if is_chat_muted(chat_id):
+            continue
+        eligible += 1
+        try:
+            await bot.send_message(chat_id, msg)
+            sent_ok += 1
+        except Exception:
+            logger.exception("announce_no_bots: send falhou chat=%s", chat_id)
+        await asyncio.sleep(2.0)  # respeita rate-limit cross-chat
+    # So persiste a flag se nao havia elegiveis (nada a fazer) OU se ao menos 1
+    # enviou. Se havia elegiveis e TODOS falharam (transiente), NAO marca →
+    # tenta de novo no proximo boot, sem double-post nos que ja receberam.
+    if eligible == 0 or sent_ok > 0:
+        bot_meta_set(BOOT_ANNOUNCE_NOBOTS_KEY,
+                     f"sent={sent_ok}/{eligible} at={utc_iso()}")
+        logger.info("announce_no_bots: ok sent=%d/%d", sent_ok, eligible)
+    else:
+        logger.warning("announce_no_bots: 0/%d enviados — sem flag, retry no "
+                       "proximo boot", eligible)
+
+
 async def main():
     global bot
     if not BOT_TOKEN:
@@ -9040,6 +9163,7 @@ async def main():
     asyncio.create_task(healthcheck())
     asyncio.create_task(identity_card_sweep_job())
     asyncio.create_task(announce_typewriter_feature())
+    asyncio.create_task(announce_no_bots_feature())
     asyncio.create_task(log_dump_job())
     asyncio.create_task(backup_job())  # F10: backup diario do DB
     # allowed_updates resolvido dos handlers registrados — inclui
