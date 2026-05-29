@@ -118,6 +118,34 @@ def test_migrate_conflito_duplo_pk_e_unique_em_players():
     assert rows[0]["total_xp"] == 9000
 
 
+def test_chest_claim_atomico_evita_baú_duplicado():
+    """Regressao anti-duplicacao (multi-instancia): o claim pending->open eh
+    atomico. Simula 2 instancias 'concorrendo' pelo mesmo bau pendente: a 1a
+    transicao casa (rowcount 1) e envia; a 2a vê status != 'pending' (rowcount
+    0) e aborta sem reenviar. Replica exatamente o WHERE de spawn_chest."""
+    chat_id = -1007777777777
+    spawn_at = main.utc_iso()
+    main.cur.execute(
+        "INSERT INTO chests (chat_id, spawn_at, status) VALUES (?, ?, 'pending')",
+        (chat_id, spawn_at))
+    chest_id = main.cur.lastrowid
+    main.db.commit()
+
+    def _claim() -> int:
+        main.cur.execute(
+            "UPDATE chests SET status='open', spawned_at=? "
+            "WHERE id=? AND status='pending'",
+            (main.utc_iso(), chest_id))
+        main.db.commit()
+        return main.cur.rowcount
+
+    assert _claim() == 1   # 1a instancia ganha → envia
+    assert _claim() == 0   # 2a instancia perde → aborta (sem duplicar)
+    st = main.cur.execute(
+        "SELECT status FROM chests WHERE id=?", (chest_id,)).fetchone()["status"]
+    assert st == "open"
+
+
 def test_migrate_listas_cobrem_todas_as_tabelas_com_chat_id():
     """Guarda de regressao: nenhuma tabela com coluna chat_id pode ficar fora
     das listas de migracao (senao novo schema orfanaria dados na migracao)."""

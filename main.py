@@ -3912,12 +3912,17 @@ async def finalize_expired_challenges() -> None:
         db.commit()
 
 
-def schedule_next_palavra(chat_id: int) -> None:
-    """Agenda proximo desafio: hora cheia seguinte +/- jitter."""
+def _compute_next_palavra_at() -> datetime:
+    """Instante do proximo desafio: hora cheia seguinte +/- jitter."""
     now = local_now()
     next_hour = (now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1))
     jitter = random.randint(-PALAVRA_JITTER_SEC, PALAVRA_JITTER_SEC)
-    next_at = next_hour + timedelta(seconds=jitter)
+    return next_hour + timedelta(seconds=jitter)
+
+
+def schedule_next_palavra(chat_id: int) -> None:
+    """Agenda proximo desafio: hora cheia seguinte +/- jitter."""
+    next_at = _compute_next_palavra_at()
     cur.execute(
         "INSERT INTO chats_rpg (chat_id, next_palavra_at) VALUES (?, ?) "
         "ON CONFLICT(chat_id) DO UPDATE SET next_palavra_at=excluded.next_palavra_at",
@@ -3980,15 +3985,33 @@ def format_chest_text(chest_id: int, status: str = "open") -> str:
 
 
 async def spawn_chest(chat_id: int, chest_id: int) -> None:
-    """Envia mensagem do bau e marca como aberto."""
+    """Envia mensagem do bau e marca como aberto.
+
+    CLAIM ATOMICO anti-duplicacao (multi-instancia): vira pending->open ANTES
+    de enviar; so o vencedor da transicao manda a mensagem. Se 2 processos
+    rodarem em overlap (ex: redeploy), o 2o vê status != 'pending' → rowcount
+    0 → aborta sem enviar. Em instancia unica, rowcount eh sempre 1 (no-op)."""
+    # expires_at JA entra no claim: se o processo morrer entre o claim e o
+    # send, o bau fica 'open' COM expires_at → expire_old_chests() o reapa no
+    # TTL (sem zumbi permanente). Sem expires_at no claim, um crash deixaria
+    # status='open'/expires_at NULL fora do sweep → preso pra sempre.
     expires_at = utc_now() + timedelta(minutes=CHEST_TTL_MIN)
+    cur.execute(
+        "UPDATE chests SET status='open', spawned_at=?, expires_at=? "
+        "WHERE id=? AND status='pending'",
+        (utc_iso(), expires_at.isoformat(), chest_id),
+    )
+    db.commit()
+    if cur.rowcount != 1:
+        logger.info("chest spawn skip (ja claimado) chat=%d chest=%d",
+                    chat_id, chest_id)
+        return
     text = format_chest_text(chest_id, status="open")
     msg = await safe_send(chat_id, text, reply_markup=chest_keyboard(chest_id))
     if msg:
         cur.execute(
-            "UPDATE chests SET status='open', spawned_at=?, expires_at=?, message_id=? "
-            "WHERE id=?",
-            (utc_iso(), expires_at.isoformat(), msg.message_id, chest_id),
+            "UPDATE chests SET message_id=? WHERE id=?",
+            (msg.message_id, chest_id),
         )
         db.commit()
         logger.info("chest spawned chat=%d chest=%d", chat_id, chest_id)
@@ -8041,10 +8064,24 @@ async def scheduler():
                     # desmutar (entao spawn vira na proxima tick).
                     if is_chat_muted(chat_id):
                         continue
+                    # CLAIM ATOMICO anti-duplicacao (multi-instancia): so a
+                    # instancia que conseguir AVANCAR next_palavra_at (do valor
+                    # 'nxt' antigo p/ o proximo) prossegue ao spawn. Se 2
+                    # processos rodarem em overlap (ex: redeploy), a 2a instancia
+                    # le o valor ja avancado → WHERE nao casa → rowcount 0 →
+                    # pula. WAL serializa os writers, garantindo 1 vencedor.
+                    cur.execute(
+                        "UPDATE chats_rpg SET next_palavra_at=? "
+                        "WHERE chat_id=? AND next_palavra_at=?",
+                        (_compute_next_palavra_at().isoformat(),
+                         chat_id, r["next_palavra_at"]),
+                    )
+                    db.commit()
+                    if cur.rowcount != 1:
+                        continue  # outra instancia ja pegou este slot
                     # Spawna se nao tem um ativo
                     if not get_active_challenge(chat_id):
                         await spawn_palavra(chat_id)
-                    schedule_next_palavra(chat_id)
 
             # === FINALIZA DESAFIOS EXPIRADOS ===
             await finalize_expired_challenges()

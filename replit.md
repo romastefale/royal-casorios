@@ -128,7 +128,8 @@ legítima: é **receita** do bot (usuário paga), processada direto pelo Telegra
 - **Local:** `pip install -r requirements-dev.txt && python -m pytest -q`.
 - `conftest.py` aponta `DATABASE_PATH` p/ arquivo temporário ANTES de importar `main` →
   migrations rodam em DB vazio descartável.
-- `test_pure.py` (funções puras) · `test_db_smoke.py` (migrations até v13 + integrity_check).
+- `test_pure.py` (funções puras) · `test_db_smoke.py` (migrations até v13 + integrity_check +
+  `test_chest_claim_atomico_evita_baú_duplicado`: trava a invariante do claim atômico do baú).
 - **CI** (`ci.yml`, push `royalRPG`/`main` + PRs): `ruff check --select E9,F63,F7,F82` (só bugs
   reais: undefined names/syntax) + `pytest -q`.
 - ⚠️ O ruff crítico já pegou 3 NameErrors reais em produção. **Manter o gate no CI.**
@@ -159,6 +160,14 @@ legítima: é **receita** do bot (usuário paga), processada direto pelo Telegra
 - **🎉 Eventos sazonais — `/royalevento` (M09):** boost de XP global por data, sem DB
   (`SEASONAL_EVENTS`). `active_seasonal_event()` (datas especiais > FDS) · `event_xp_mult()`.
   **Card visual** `render_evento_card`/`EventoData` (ACID ativo / AMBER off), card global.
+- **🎁 Baú Real (chest):** `schedule_chest_after_palavra()` cria 1 baú `pending` p/
+  `CHEST_DELAY_MIN` no futuro a cada PALAVRA spawnada. O `scheduler()` (a cada 20s) materializa
+  pendentes vencidos via `spawn_chest()` e expira abertos (`expire_old_chests`). Primeiros
+  `CHEST_MAX_CLAIMS` (5) saqueiam (`CHEST_REWARDS` por slot, claim atômico em `chest_claims`).
+  **🎰 Flourish da sorte:** ao 5º claim (baú `closed`) o bot manda **1× `send_dice` 🎰**
+  (`roll_dice_visual`, ~3s, animação nativa) PURAMENTE cosmético — o valor sorteado **NÃO afeta
+  recompensa nenhuma** (já fixadas em `CHEST_REWARDS`). É o único `send_dice` automático; vem do
+  callback de claim (não do scheduler).
 - **🔇 `/royalmudo` (owner):** grupo → toggle do chat; DM do owner → broadcast (silencia/religa
   todos). **📜 `/royallog` (owner) + auto 5min:** ring buffer → DM `.log` + gist (se `GH_TOKEN`).
 
@@ -218,6 +227,16 @@ v11 (cols Royal Plus). Dica paga: `/royalpaldica` (M03) consome `prm_hints`, rev
   `await` entre `execute`/`fetch`, nenhum `to_thread` toca `cur`/`db`). "database is locked"
   mitigado por WAL + `busy_timeout=5000` + `synchronous=NORMAL`. Rewrite p/ `aiosqlite` (214 call
   sites) **não foi feito** (alto risco, exige teste em runtime indisponível aqui).
+- **🛡️ Anti-duplicação de spawns (multi-instância):** o `scheduler()` é DB-driven (não
+  depende de `getUpdates`). Se **2 processos** rodarem em overlap (clássico no redeploy do
+  Railway: container antigo ainda vivo quando o novo sobe; ou réplicas >1), AMBOS rodam o
+  scheduler contra o MESMO DB e **ambos podem enviar** (o 409 do Telegram só barra o polling,
+  não o `sendMessage`) → **PALAVRAS e BAÚS duplicados**. Mitigação (claims atômicos, WAL
+  serializa writers, 1 vencedor): **PALAVRA** → `UPDATE chats_rpg SET next_palavra_at=novo
+  WHERE next_palavra_at=antigo` e só prossegue se `rowcount==1`. **BAÚ** → `spawn_chest()` faz
+  `UPDATE chests SET status='open' WHERE id=? AND status='pending'` ANTES de enviar; só o
+  vencedor manda a mensagem. ⚠️ Isto é defesa-em-profundidade — a **causa raiz** (2 instâncias)
+  deve ser corrigida no Railway (réplicas=1 + garantir kill do container antigo antes do novo).
 
 ---
 
