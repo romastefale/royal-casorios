@@ -467,3 +467,51 @@ id = "IcKfvCI5xJgDX4BET8Edq"
 uri = "file://attached_assets/casorios_preview/15_boss_full.jpg"
 type = "image"
 title = "/royalboss — HP 100% recém-spawn"
+
+[[outputs]]
+id = "NWklDC0DfyzH1_AgDJ0Rw"
+uri = "file://recovered_files/Pasted--associatedMedia-associatedMessageIds-associatedMessage_1779974396552.txt"
+type = "text"
+title = "Telegram export 1"
+
+[[outputs]]
+id = "zyGG7R3MhJs7upeEnOXgH"
+uri = "file://recovered_files/Pasted--associatedMedia-associatedMessageIds-associatedMessage_1779975404509.txt"
+type = "text"
+title = "Telegram export 2"
+
+[[outputs]]
+id = "gr6J3i-k3SeNjan9AVWhQ"
+uri = "file://recovered_files/Pasted--associatedMedia-associatedMessageIds-id-159725-names-1_1779975385812.txt"
+type = "text"
+title = "Telegram export 3"
+
+[[outputs]]
+id = "FOfSZvb7F7_5J0RAy_vZX"
+uri = "file://recovered_files/deployment_logs_railway_1779984805955.log_1779984812383.txt"
+type = "text"
+title = "Railway log 1"
+
+[[outputs]]
+id = "DqIRIyPtn_5o8RJ83MVQ8"
+uri = "file://recovered_files/deployment_logs_railway_1779986658874.log_1779986682355.txt"
+type = "text"
+title = "Railway log 2"
+
+[[outputs]]
+id = "S5gtM3lQNwvUQW943werR"
+uri = "file://recovered_files/deployment_logs_railway_1779988002298.log_1779988015114.txt"
+type = "text"
+title = "Railway log 3"
+
+[[outputs]]
+id = "wu33wRGVN5i_gokGQa2dM"
+uri = "file://recovered_files/deployment_logs_railway_1779992305201.log_1779992312023.txt"
+type = "text"
+title = "Railway log 4 (grande)"
+
+[[outputs]]
+id = "3WbE5DAqnA5idABDWQW3L"
+uri = "file://recovered_files/deployment_logs_railway_1780010399442.log_1780010407993.txt"
+type = "text"
+title = "Railway log 5"
