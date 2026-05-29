@@ -269,6 +269,22 @@ emoji ⚠️.
 `type_then_send(chat, text, delay, action)` · `safe_typing(chat, action)` ·
 `**effect_kw(chat.type, EFFECT_*)` (sparkles/fire/heart em DM 1:1, Bot API 7.7).
 
+**❌ Botão Fechar (universal):** helpers `close_btn(owner_id=None)` + `with_close(kb, owner_id)`.
+Callback `r:close:{uid}` (cards) ou `r:close` puro (menus). Branch `action=="close"` no TOPO de
+`hub_cb`: com uid embutido → checa `cb.from_user.id==uid`; sem uid → `assert_owner` (menus já
+trancados por `register_owner`); depois `delete_msg_safe`. Anexado em: menus owner-locked
+(up/classe/inv/loja/premium keyboards, via `close_btn()` sem id) e cards pessoais (perfil via
+`send_profile_card(close_uid=…)`, ranking via `send_ranking(owner_uid=…)`, conquistas, missões,
+evento, saldo — via `with_close(kb, uid)`). Apaga a própria mensagem ao apertar (bot é admin no
+grupo). Em `quest_claim_cb` o re-render mantém o Fechar via `with_close(kb, uid)`. ⚠️ NÃO anexar em
+boas-vindas de reentrada (`send_profile_card` sem `close_uid`).
+
+**🆙 Level-up anunciado no grupo:** `announce_level_up_group(chat_id,user_id,new_lvl)` posta texto
+leve (`term_block` ACID, sem render de card) marcando a pessoa via `mention()` (link
+`tg://user?id=…` → ping mesmo com nome anonimizado). Disparado em `_schedule_levelup_dm` por
+`loop.create_task(...)` ANTES do early-return da pref `silent_levelup` — ou seja, o anúncio
+público é GLOBAL e independe dessa pref (que controla só o card de level-up na DM).
+
 ---
 
 ## 🎨 Identidade visual — Retro-futurist dystopian

@@ -1602,6 +1602,23 @@ def ikb(text: str, *, style: str | None = None, **kwargs) -> InlineKeyboardButto
     return InlineKeyboardButton(text=text, **kwargs)
 
 
+def close_btn(owner_id: int | None = None) -> InlineKeyboardButton:
+    """Botão universal ❌ Fechar. Se owner_id for dado, embute no callback
+    (cards SEM owner-lock → só o dono fecha mesmo após restart/TTL); senão
+    usa 'r:close' puro (menus já trancados por register_owner → assert_owner)."""
+    cd = f"r:close:{owner_id}" if owner_id is not None else "r:close"
+    return ikb(f"{BTN_NO} Fechar", style=STYLE_NO, callback_data=cd)
+
+
+def with_close(kb: InlineKeyboardMarkup | None,
+               owner_id: int | None = None) -> InlineKeyboardMarkup:
+    """Anexa uma linha [❌ Fechar] a um teclado existente (ou cria um novo
+    só com o Fechar). Não muta o teclado original."""
+    rows = [list(r) for r in kb.inline_keyboard] if kb else []
+    rows.append([close_btn(owner_id)])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 async def auto_delete_after(msg: Message, delay: float = 8.0) -> None:
     """Agenda exclusao da mensagem em N segundos sem bloquear o handler.
     Ideal pra acks efemeros (rate-limit, '0 pontos', etc) — mantem o chat
@@ -3039,14 +3056,45 @@ def award_xp_message(chat_id: int, user_id: int, is_reply: bool) -> None:
         _schedule_levelup_dm(chat_id, user_id, player, new_lvl)
 
 
+async def announce_level_up_group(chat_id: int, user_id: int,
+                                  new_lvl: int) -> None:
+    """Posta no GRUPO marcando quem subiu de nível. Mensagem leve em texto
+    (sem render de card) p/ não pesar nem floodar. O ping vem do link
+    tg://user?id=… do mention(), que notifica a pessoa mesmo com nome
+    anonimizado no client."""
+    if bot is None:
+        return
+    try:
+        name = get_name(chat_id, user_id)
+        body = (
+            f">> {mention(user_id, name)} subiu para o "
+            f"<b>NÍVEL {new_lvl:02d}</b>! 🆙\n"
+            f"// novos pontos de atributo te esperam — use "
+            f"<code>/royalup</code> pra distribuir."
+        )
+        await bot.send_message(
+            chat_id,
+            term_block("LEVEL_UP", body, status=f"NV{new_lvl:02d}",
+                       status_color="ACID"),
+        )
+    except Exception:
+        logger.exception("announce_level_up_group falhou chat=%s uid=%s",
+                         chat_id, user_id)
+
+
 def _schedule_levelup_dm(chat_id: int, user_id: int,
                           player: dict, new_lvl: int) -> None:
     """Agenda envio de card de level-up na DM (não bloqueia).
-    M19: respeita pref silent_levelup do user."""
+    M19: respeita pref silent_levelup do user.
+    Também dispara o anúncio público no grupo marcando a pessoa — esse é
+    feature global do reino e NÃO depende de silent_levelup (que controla
+    só o card na DM)."""
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
         return
+    # Anúncio público no grupo (marca a pessoa) — antes do early-return da pref
+    loop.create_task(announce_level_up_group(chat_id, user_id, new_lvl))
     # M19: user pode silenciar card de levelup via /royalconfig
     if get_user_prefs(user_id).get("silent_levelup"):
         logger.info("[M19] levelup DM suprimido por pref uid=%s", user_id)
@@ -3423,11 +3471,15 @@ def build_profile_caption(chat_id: int, user_id: int) -> str:
 
 
 async def send_profile_card(chat_id_to: int, owner_chat: int, owner_uid: int,
-                            caption_override: str | None = None):
+                            caption_override: str | None = None,
+                            close_uid: int | None = None):
     """Envia cartao de perfil renderizado 1080x1080. Fallback pra texto puro.
     `caption_override` troca a legenda padrao (usado p/ boas-vindas de
-    reentrada: foto = ficha, legenda = aviso marcando a pessoa)."""
+    reentrada: foto = ficha, legenda = aviso marcando a pessoa).
+    `close_uid` (quando o card é pedido pelo próprio user via /royalperfil
+    ou hub) adiciona o botão ❌ Fechar; omitido em boas-vindas de reentrada."""
     assert bot is not None
+    ck = with_close(None, close_uid) if close_uid is not None else None
     await safe_typing(chat_id_to, "upload_photo")
 
     # Tenta render do card primeiro
@@ -3448,7 +3500,8 @@ async def send_profile_card(chat_id_to: int, owner_chat: int, owner_uid: int,
                     await bot.send_photo(
                         chat_id_to,
                         photo=persisted_fid,
-                        caption=cap1024(caption))
+                        caption=cap1024(caption),
+                        reply_markup=ck)
                     cache_profile_file_id(
                         owner_chat, owner_uid, persisted_fid)
                     return
@@ -3477,6 +3530,7 @@ async def send_profile_card(chat_id_to: int, owner_chat: int, owner_uid: int,
                 chat_id_to,
                 photo=BufferedInputFile(card, filename=f"perfil-{data.royal_id}.jpg"),
                 caption=cap1024(caption),
+                reply_markup=ck,
             )
             # Cacheia file_id (memoria + DB) pra proximos /royalperfil e
             # pra sobreviver ao restart do bot. Hash discrimina por dados
@@ -3500,15 +3554,15 @@ async def send_profile_card(chat_id_to: int, owner_chat: int, owner_uid: int,
     photo_id = await get_user_photo_file_id(owner_uid)
     try:
         if photo_id:
-            await bot.send_photo(chat_id_to, photo=photo_id, caption=cap1024(text), parse_mode="HTML")
+            await bot.send_photo(chat_id_to, photo=photo_id, caption=cap1024(text), parse_mode="HTML", reply_markup=ck)
         else:
-            await bot.send_message(chat_id_to, text)
+            await bot.send_message(chat_id_to, text, reply_markup=ck)
     except TelegramBadRequest as e:
         logger.warning("send_profile_card fallback: %s", e)
-        await bot.send_message(chat_id_to, text)
+        await bot.send_message(chat_id_to, text, reply_markup=ck)
     except Exception:
         logger.exception("send_profile_card failed")
-        await bot.send_message(chat_id_to, text)
+        await bot.send_message(chat_id_to, text, reply_markup=ck)
 
 
 # =====================================================================
@@ -4889,7 +4943,8 @@ async def royal_perfil(message: Message):
         if p["user_id"] == message.from_user.id:
             refresh_user_identity(p["chat_id"], p["user_id"], live_name, live_username)
             db.commit()
-        await send_profile_card(message.chat.id, p["chat_id"], p["user_id"])
+        await send_profile_card(message.chat.id, p["chat_id"], p["user_id"],
+                                close_uid=message.from_user.id)
         return
 
     # Sem argumento: perfil proprio
@@ -4900,7 +4955,8 @@ async def royal_perfil(message: Message):
         refresh_user_identity(message.chat.id, message.from_user.id, live_name, live_username)
         ensure_player(message.chat.id, message.from_user.id)
         db.commit()
-        await send_profile_card(message.chat.id, message.chat.id, message.from_user.id)
+        await send_profile_card(message.chat.id, message.chat.id, message.from_user.id,
+                                close_uid=message.from_user.id)
     else:
         owner_chat = resolve_owner_chat(message.from_user.id)
         if owner_chat is None:
@@ -4911,7 +4967,8 @@ async def royal_perfil(message: Message):
         # Idem: refresca o nome no chat-dono (grupo) sem inflar message_count
         refresh_user_identity(owner_chat, message.from_user.id, live_name, live_username)
         db.commit()
-        await send_profile_card(message.chat.id, owner_chat, message.from_user.id)
+        await send_profile_card(message.chat.id, owner_chat, message.from_user.id,
+                                close_uid=message.from_user.id)
 
 
 # === /royalavatar ===
@@ -5109,12 +5166,15 @@ async def royal_up(message: Message):
 
 def up_keyboard() -> InlineKeyboardMarkup:
     # FOR -> vermelho (combate), VIT -> verde (vida), DES/CAR -> azul (skill)
-    return InlineKeyboardMarkup(inline_keyboard=[[
-        ikb("💪 FORÇA",    callback_data="r:up:for", style=STYLE_NO),
-        ikb("🏃 DESTREZA", callback_data="r:up:des", style=STYLE_INFO),
-        ikb("❤️ VITAL",    callback_data="r:up:vit", style=STYLE_OK),
-        ikb("✨ CARISMA",  callback_data="r:up:car", style=STYLE_INFO),
-    ]])
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            ikb("💪 FORÇA",    callback_data="r:up:for", style=STYLE_NO),
+            ikb("🏃 DESTREZA", callback_data="r:up:des", style=STYLE_INFO),
+            ikb("❤️ VITAL",    callback_data="r:up:vit", style=STYLE_OK),
+            ikb("✨ CARISMA",  callback_data="r:up:car", style=STYLE_INFO),
+        ],
+        [close_btn()],
+    ])
 
 
 # === /royalclasse ===
@@ -5130,6 +5190,7 @@ def classe_keyboard() -> InlineKeyboardMarkup:
                 callback_data=f"r:cls:set:{cid}",
                 style=STYLE_INFO))
         rows.append(row)
+    rows.append([close_btn()])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -5265,8 +5326,10 @@ def inv_keyboard(chat_id: int, uid: int,
                 f"{item['emoji']} Usar",
                 callback_data=f"r:inv:use:{r['item_id']}",
                 style=STYLE_OK)])
-    return InlineKeyboardMarkup(inline_keyboard=buttons or [[
-        ikb("🛒 Ir à loja", callback_data="r:loja", style=STYLE_INFO)]])
+    base = buttons or [[
+        ikb("🛒 Ir à loja", callback_data="r:loja", style=STYLE_INFO)]]
+    base.append([close_btn()])
+    return InlineKeyboardMarkup(inline_keyboard=base)
 
 
 # === /royalloja ===
@@ -5348,6 +5411,7 @@ def loja_keyboard() -> InlineKeyboardMarkup:
         "💎 Premium (Telegram Stars ⭐)",
         callback_data="r:prem",
         style=STYLE_OK)])
+    rows.append([close_btn()])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -5369,6 +5433,7 @@ def premium_keyboard() -> InlineKeyboardMarkup:
             style=STYLE_INFO)])
     rows.append([ikb(f"{BTN_BACK} Voltar à Loja",
                      callback_data="r:loja")])
+    rows.append([close_btn()])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -5409,6 +5474,7 @@ async def royal_saldo(message: Message):
                 BufferedInputFile(png, filename=f"saldo-{rid}.jpg"),
                 caption=cap1024(caption),
                 parse_mode="HTML",
+                reply_markup=with_close(None, message.from_user.id),
             )
             return
     except Exception:
@@ -5421,7 +5487,8 @@ async def royal_saldo(message: Message):
     )
     await message.answer(term_block("FLORINS", body,
                                     status="SALDO_OK",
-                                    stamp=f"ID {rid}"))
+                                    stamp=f"ID {rid}"),
+                         reply_markup=with_close(None, message.from_user.id))
 
 
 # === /royalranking ===
@@ -5435,11 +5502,15 @@ async def royal_ranking(message: Message):
         return
     if await deny_if_rate_limited(message, "RANKING", cooldown=15.0):
         return
-    await send_ranking(owner_chat, target_chat_id=message.chat.id)
+    await send_ranking(owner_chat, target_chat_id=message.chat.id,
+                       owner_uid=message.from_user.id)
 
 
-async def send_ranking(source_chat_id: int, *, target_chat_id: int) -> None:
-    """Envia ranking: card pódio (top 3) + caption com top 10."""
+async def send_ranking(source_chat_id: int, *, target_chat_id: int,
+                       owner_uid: int | None = None) -> None:
+    """Envia ranking: card pódio (top 3) + caption com top 10.
+    `owner_uid` adiciona o botão ❌ Fechar p/ quem pediu o ranking."""
+    ck = with_close(None, owner_uid) if owner_uid is not None else None
     cur.execute(
         "SELECT royal_id, user_id, season_xp, total_xp, avatar_slug "
         "FROM players "
@@ -5452,7 +5523,7 @@ async def send_ranking(source_chat_id: int, *, target_chat_id: int) -> None:
             "<i>Ninguém pontuou nesta temporada ainda.\n"
             "Interaja pra subir no pódio ⚔️</i>",
             status="VAZIO", status_color="AMBER",
-            stamp=current_season_label()))
+            stamp=current_season_label()), reply_markup=ck)
         return
 
     medals = ["🥇", "🥈", "🥉"] + ["🏅"] * 7
@@ -5497,11 +5568,11 @@ async def send_ranking(source_chat_id: int, *, target_chat_id: int) -> None:
             await bot.send_photo(
                 target_chat_id,
                 BufferedInputFile(png, filename="royal_ranking.jpg"),
-                caption=cap1024(caption))
+                caption=cap1024(caption), reply_markup=ck)
             return
     except Exception:
         logger.exception("ranking card send failed; falling back to text")
-    await safe_send(target_chat_id, caption)
+    await safe_send(target_chat_id, caption, reply_markup=ck)
 
 
 # === /royalpalavratest (admin) — dispara 1 desafio spoiler_img na hora ===
@@ -6616,6 +6687,29 @@ async def hub_cb(cb: CallbackQuery):
         return
     action = parts[1]
 
+    # Botão universal ❌ Fechar — apaga a mensagem do próprio dono. Não
+    # precisa de contexto de chat. r:close:{uid} (cards) checa o id embutido;
+    # r:close puro (menus) cai no owner-lock via assert_owner.
+    if action == "close":
+        owner_id = None
+        if len(parts) >= 3:
+            try:
+                owner_id = int(parts[2])
+            except ValueError:
+                owner_id = None
+        if owner_id is not None:
+            if cb.from_user.id != owner_id:
+                await cb.answer("❌ Esse menu não é seu.", show_alert=False)
+                return
+        elif not await assert_owner(cb):
+            return
+        await delete_msg_safe(cb.message)
+        try:
+            await cb.answer()
+        except Exception:
+            pass
+        return
+
     # chat_id efetivo: em grupo, o proprio chat; em DM, o reino mais ativo do user
     fallback = cb.message.chat.id if is_group_chat(cb.message) else None
     chat_id = resolve_owner_chat(cb.from_user.id, fallback)
@@ -6653,7 +6747,8 @@ async def hub_cb(cb: CallbackQuery):
                     or (f"@{cb.from_user.username}" if cb.from_user.username else ""))
             refresh_user_identity(target_chat, cb.from_user.id, live, cb.from_user.username)
             db.commit()
-            await send_profile_card(cb.message.chat.id, target_chat, cb.from_user.id)
+            await send_profile_card(cb.message.chat.id, target_chat, cb.from_user.id,
+                                    close_uid=cb.from_user.id)
             await cb.answer()
             return
 
@@ -6663,7 +6758,8 @@ async def hub_cb(cb: CallbackQuery):
                 await cb.answer(f"⏳ Aguarde {wait}s", show_alert=False)
                 return
             await cb.answer()
-            await send_ranking(chat_id, target_chat_id=cb.message.chat.id)
+            await send_ranking(chat_id, target_chat_id=cb.message.chat.id,
+                               owner_uid=cb.from_user.id)
             return
 
         if action == "pal":
@@ -6975,11 +7071,12 @@ async def hub_cb(cb: CallbackQuery):
                     f"— <code>{item['stars']}⭐</code>")
                 lines.append(f"   <i>{html.escape(item['desc'])}</i>")
                 lines.append("")
-            await cb.message.answer(
+            sent = await cb.message.answer(
                 term_block("PREMIUM", "\n".join(lines),
                            status="OPEN", status_color="GOLD",
                            stamp="XTR // Bot API 10"),
                 reply_markup=premium_keyboard())
+            register_owner(sent, cb.from_user.id, auto_delete_secs=60.0)
             await cb.answer()
             return
 
@@ -8253,7 +8350,8 @@ async def royal_conquistas(message: Message):
             await bot.send_photo(
                 message.chat.id,
                 BufferedInputFile(png, filename=f"conquistas-{rid}.jpg"),
-                caption=cap1024(caption), parse_mode="HTML")
+                caption=cap1024(caption), parse_mode="HTML",
+                reply_markup=with_close(None, uid))
             return
     except Exception:
         logger.exception("render_conquistas_card path failed; fallback texto")
@@ -8275,7 +8373,8 @@ async def royal_conquistas(message: Message):
             lines.append(f"   <i>{desc}</i>")
     await message.answer(
         term_block("CONQUISTAS", "\n".join(lines),
-                   status=f"{got}/{total}", status_color="GOLD"))
+                   status=f"{got}/{total}", status_color="GOLD"),
+        reply_markup=with_close(None, uid))
 
 
 def _config_kb(prefs: dict) -> InlineKeyboardMarkup:
@@ -8402,7 +8501,7 @@ async def royal_missoes(message: Message):
                 message.chat.id,
                 BufferedInputFile(png, filename=f"missoes-{rid}.jpg"),
                 caption=cap1024(caption), parse_mode="HTML",
-                reply_markup=kb)
+                reply_markup=with_close(kb, uid))
             return
     except Exception:
         logger.exception("render_missoes_card path failed; fallback texto")
@@ -8411,7 +8510,7 @@ async def royal_missoes(message: Message):
         term_block("MISSOES", body, status="DIARIAS",
                    status_color="CYAN",
                    stamp="reset 00:00 " + TZ_NAME),
-        reply_markup=kb)
+        reply_markup=with_close(kb, uid))
 
 
 @dp.callback_query(F.data.startswith("r:quest:"))
@@ -8453,6 +8552,7 @@ async def quest_claim_cb(cb: CallbackQuery):
     logger.info("[M05] claim uid=%s chat=%s quest=%s +%sXP +%s gold",
                 uid, chat_id, qid, q["xp"], q["gold"])
     body, kb = _quests_render(chat_id, uid)
+    kb = with_close(kb, uid)
     try:
         await cb.message.edit_text(
             term_block("MISSOES", body, status="DIARIAS",
@@ -8477,6 +8577,7 @@ async def quest_claim_cb(cb: CallbackQuery):
 async def royal_evento(message: Message):
     """M09: mostra o evento sazonal ativo (boost de XP) ou avisa que nao
     ha nenhum no momento."""
+    uid_ev = message.from_user.id if message.from_user else None
     ev = active_seasonal_event()
     active = ev is not None
     if ev:
@@ -8505,7 +8606,8 @@ async def royal_evento(message: Message):
             await bot.send_photo(
                 message.chat.id,
                 BufferedInputFile(png, filename="evento.jpg"),
-                caption=cap1024(caption), parse_mode="HTML")
+                caption=cap1024(caption), parse_mode="HTML",
+                reply_markup=with_close(None, uid_ev))
             return
     except Exception:
         logger.exception("render_evento_card path failed; fallback texto")
@@ -8518,7 +8620,8 @@ async def royal_evento(message: Message):
         )
         await message.answer(term_block(
             "EVENTO", body, status="ON-AIR", status_color="ACID",
-            stamp=current_season_label()))
+            stamp=current_season_label()),
+            reply_markup=with_close(None, uid_ev))
     else:
         body = (
             ">> nenhum evento ativo agora\n"
@@ -8527,7 +8630,8 @@ async def royal_evento(message: Message):
         )
         await message.answer(term_block(
             "EVENTO", body, status="OFFLINE", status_color="AMBER",
-            stamp=current_season_label()))
+            stamp=current_season_label()),
+            reply_markup=with_close(None, uid_ev))
 
 
 async def healthcheck():
