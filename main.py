@@ -306,6 +306,31 @@ PALAVRA_DURATIONS_MIN = [5, 7, 10]
 PALAVRA_JITTER_SEC = 60
 PALAVRA_ATTEMPT_COOLDOWN_SEC = 3
 
+# M-luck — Emoji da Sorte: user manda o slot 🎰 no grupo; TRINCA (3 iguais)
+# premia XP+florins; jackpot 7️⃣7️⃣7️⃣ paga em dobro. Valores nativos do slot
+# do Telegram (1-64): 1(bar) 22(uva) 43(limão) 64(7️⃣7️⃣7️⃣). Cap diário
+# anti-farm (só vitórias contam).
+LUCKY_EMOJI = "🎰"
+LUCKY_SLOT_WINS = {1, 22, 43, 64}
+LUCKY_SLOT_JACKPOT = 64
+LUCKY_WIN_XP = 20
+LUCKY_WIN_GOLD = 30
+LUCKY_JACKPOT_XP = 100
+LUCKY_JACKPOT_GOLD = 200
+LUCKY_DAILY_CAP = 5
+
+
+def lucky_reward_for(value: int | None) -> tuple[int, int, bool]:
+    """Recompensa (xp, gold, jackpot) p/ um valor de slot 🎰 do Telegram.
+    Só TRINCAS (3 iguais) premiam; jackpot (7️⃣7️⃣7️⃣ = 64) paga em dobro.
+    Retorna (0, 0, False) p/ qualquer valor que não seja trinca (e p/ None)."""
+    if value == LUCKY_SLOT_JACKPOT:
+        return LUCKY_JACKPOT_XP, LUCKY_JACKPOT_GOLD, True
+    if value in LUCKY_SLOT_WINS:
+        return LUCKY_WIN_XP, LUCKY_WIN_GOLD, False
+    return 0, 0, False
+
+
 # Baú Real — spawna 30min após cada Palavra; primeiros 5 abrem
 CHEST_DELAY_MIN = 30
 CHEST_TTL_MIN = 30
@@ -908,6 +933,23 @@ def migrate_to_v13(c: sqlite3.Cursor) -> None:
     )
 
 
+def migrate_to_v14(c: sqlite3.Cursor) -> None:
+    """M-luck: Emoji da Sorte. lucky_emoji_daily = cap diário de vitórias
+    premiadas no 🎰 por user/chat (anti-farm em LUCKY_DAILY_CAP). Mesma forma
+    de reaction_xp_daily (PK composta, 1 linha por user/dia)."""
+    c.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS lucky_emoji_daily (
+            chat_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            day     TEXT    NOT NULL,
+            count   INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (chat_id, user_id, day)
+        );
+        """
+    )
+
+
 def migrate_to_v6(c: sqlite3.Cursor) -> None:
     """Randomiza royal_ids existentes (RYL-0001, 0002... -> RYL-NNNN
     sortidos entre 1000-9999). Pool por chat = 9000, retry on collision.
@@ -962,6 +1004,7 @@ MIGRATIONS = [
     (11, migrate_to_v11),
     (12, migrate_to_v12),
     (13, migrate_to_v13),
+    (14, migrate_to_v14),
 ]
 
 
@@ -4546,6 +4589,10 @@ ROYAL_TUTORIAL_PARTS: list[tuple[str, str]] = [
         "mais!\n"
         f"• <b>+{REACTION_XP} XP</b> por reagir com emoji a uma msg "
         f"(até {REACTION_XP_DAILY_CAP}/dia).\n"
+        f"• <b>🎰 Emoji da Sorte</b>: mande {LUCKY_EMOJI} no grupo — "
+        f"trinca paga <b>+{LUCKY_WIN_XP} XP +{LUCKY_WIN_GOLD}🪙</b> "
+        f"(jackpot 7️⃣7️⃣7️⃣: <b>+{LUCKY_JACKPOT_XP} XP "
+        f"+{LUCKY_JACKPOT_GOLD}🪙</b>), até {LUCKY_DAILY_CAP}/dia.\n"
         f"• <b>+{XP_PALAVRA_WIN_BONUS} XP</b> ao vencer a Palavra, "
         "XP no boss, em casórios, missões e baús.\n"
         "<i>// o cooldown evita spam: mandar 10 msgs em 5s não "
@@ -4891,6 +4938,8 @@ ROYAL_HELP = (
     "/royalevento — vê o boost de XP ativo agora "
     "<i>(datas especiais + fim de semana +50%)</i>\n"
     "<i>💡 Reagir a mensagens (emoji) também dá XP — até 10/dia.</i>\n"
+    f"<i>🎰 Mande {LUCKY_EMOJI} no grupo: trinca paga XP + florins "
+    f"(jackpot 7️⃣7️⃣7️⃣ em dobro), até {LUCKY_DAILY_CAP}/dia.</i>\n"
     "</blockquote>\n"
     "<blockquote expandable>📜 <b>Pessoal (DM ou grupo)</b>\n"
     "/royalinventario — ver seus itens\n"
@@ -7705,6 +7754,7 @@ _CHAT_MIGRATE_PK_TABLES = (
     "users", "daily_activity", "pair_scores", "chats", "players",
     "royal_id_seq", "inventory", "chats_rpg", "season_hall",
     "achievements", "quest_progress", "reaction_xp_daily",
+    "lucky_emoji_daily",
 )
 _CHAT_MIGRATE_FK_TABLES = (
     "couples", "challenges", "bosses", "chests", "gifts", "stars_purchases",
@@ -7828,6 +7878,71 @@ async def on_chat_migration(message: Message):
                     status="OK", status_color="CYAN"))
         except Exception:
             logger.exception("[MIGRATE] DM owner falhou")
+
+
+@dp.message(F.dice)
+async def lucky_emoji_handler(message: Message):
+    """🎰 Emoji da Sorte: quando um USER manda o slot 🎰 no grupo e tira uma
+    TRINCA (3 iguais), premia XP+florins (jackpot 7️⃣7️⃣7️⃣ em dobro) e o bot
+    reage com 🎉. Cap diário LUCKY_DAILY_CAP/user/chat (só vitórias contam,
+    anti-farm). Espera ~2s (animação do slot parar) antes de comemorar p/ não
+    dar spoiler. NÃO floda: vitória = só a reaction 🎉; jackpot = reaction + 1
+    ack efêmero (auto-delete). O 🎰 COSMÉTICO que o BOT manda no baú não
+    dispara isto (bot não recebe os próprios updates; user.is_bot é filtrado
+    por garantia). Registrado ANTES do catch-all `track` — senão o track
+    (que casa msg sem texto) engoliria o dice e pararia a propagação."""
+    try:
+        if message.chat.type not in {"group", "supergroup"}:
+            return
+        d = message.dice
+        if not d or d.emoji != LUCKY_EMOJI:
+            return
+        user = message.from_user
+        if not user or user.is_bot:
+            return
+        chat_id = message.chat.id
+        uid = user.id
+        if is_chat_muted(chat_id):
+            return
+        xp, gold, jackpot = lucky_reward_for(d.value)
+        if xp <= 0:
+            return  # não foi trinca — silencioso (sem flood)
+        # cap diário anti-farm: SELECT+INSERT sem await no meio (single-thread
+        # asyncio → sem corrida, mesmo padrão de on_message_reaction).
+        day = today_key()
+        row = cur.execute(
+            "SELECT count FROM lucky_emoji_daily "
+            "WHERE chat_id=? AND user_id=? AND day=?",
+            (chat_id, uid, day)).fetchone()
+        if (row["count"] if row else 0) >= LUCKY_DAILY_CAP:
+            return
+        ensure_player(chat_id, uid)
+        cur.execute(
+            "INSERT INTO lucky_emoji_daily (chat_id, user_id, day, count) "
+            "VALUES (?, ?, ?, 1) "
+            "ON CONFLICT(chat_id, user_id, day) DO UPDATE SET count=count+1",
+            (chat_id, uid, day))
+        cur.execute(
+            "UPDATE players SET gold=gold+? WHERE chat_id=? AND user_id=?",
+            (gold, chat_id, uid))
+        db.commit()
+        award_xp_immediate(chat_id, uid, xp, reason="lucky")
+        # espera a animação do slot parar (~2s) antes de comemorar (sem spoiler)
+        await asyncio.sleep(2.0)
+        await react_to(chat_id, message.message_id, "🎉")
+        if jackpot:
+            ack = await safe_send(
+                chat_id,
+                term_block(
+                    "JACKPOT",
+                    f">> {mention(uid, get_name(chat_id, uid))} tirou "
+                    f"<b>7️⃣7️⃣7️⃣</b> no 🎰!\n"
+                    f"// prêmio: <b>+{xp} XP +{format_br(gold)}🪙</b>",
+                    status="SORTE GRANDE", status_color="GOLD"))
+            if ack:
+                asyncio.create_task(auto_delete_after(ack, 30.0))
+    except Exception:
+        logger.exception("lucky_emoji_handler failed")
 
 
 @dp.message(

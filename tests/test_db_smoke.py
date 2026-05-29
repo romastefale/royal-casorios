@@ -7,7 +7,7 @@ import main
 
 def test_migrations_aplicam_ate_a_ultima_versao():
     v = main.cur.execute("PRAGMA user_version").fetchone()[0]
-    assert v >= 13
+    assert v >= 14
 
 
 def test_tabelas_criticas_existem():
@@ -15,7 +15,7 @@ def test_tabelas_criticas_existem():
         "SELECT name FROM sqlite_master WHERE type='table'").fetchall()
     names = {r["name"] for r in rows}
     for t in ("players", "couples", "gifts", "achievements",
-              "quest_progress", "stars_purchases"):
+              "quest_progress", "stars_purchases", "lucky_emoji_daily"):
         assert t in names, f"tabela {t} ausente"
 
 

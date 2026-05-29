@@ -158,3 +158,33 @@ def test_royal_plus_active_expirado_ou_vazio():
     # boost do M01 NAO conta como Royal Plus (badge violeta e so da assinatura)
     fut = (main.utc_now() + timedelta(hours=1)).isoformat()
     assert main._royal_plus_active({"xp_boost_until": fut}) is False
+
+
+# ----------------------------------------------- lucky_reward_for (Emoji Sorte)
+# 🎰 slot do Telegram: trincas = 1(bar) 22(uva) 43(limao) 64(7️⃣7️⃣7️⃣=jackpot).
+# So trinca premia; jackpot paga em dobro; resto (e None) NAO premia.
+def test_lucky_reward_jackpot():
+    xp, gold, jackpot = main.lucky_reward_for(64)
+    assert (xp, gold, jackpot) == (
+        main.LUCKY_JACKPOT_XP, main.LUCKY_JACKPOT_GOLD, True)
+
+
+def test_lucky_reward_trincas_simples():
+    for v in (1, 22, 43):
+        xp, gold, jackpot = main.lucky_reward_for(v)
+        assert (xp, gold, jackpot) == (
+            main.LUCKY_WIN_XP, main.LUCKY_WIN_GOLD, False), f"valor {v}"
+
+
+def test_lucky_reward_nao_trinca_e_none():
+    for v in (2, 10, 33, 50, 63, 0, None):
+        assert main.lucky_reward_for(v) == (0, 0, False), f"valor {v}"
+
+
+def test_lucky_constantes_coerentes():
+    # jackpot tem que estar dentro do conjunto de trincas e pagar mais
+    assert main.LUCKY_SLOT_JACKPOT in main.LUCKY_SLOT_WINS
+    assert main.LUCKY_JACKPOT_XP > main.LUCKY_WIN_XP
+    assert main.LUCKY_JACKPOT_GOLD > main.LUCKY_WIN_GOLD
+    assert main.LUCKY_DAILY_CAP >= 1
+    assert main.LUCKY_EMOJI == "🎰"

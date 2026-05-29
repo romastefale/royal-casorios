@@ -155,6 +155,21 @@ legítima: é **receita** do bot (usuário paga), processada direto pelo Telegra
   **Migration v13:** tabela `quest_progress`.
 - **👍 Reactions = XP (M06):** `REACTION_XP=3`, cap diário 10/user/chat. Handler
   `on_message_reaction` (só ao ADICIONAR). **Migration v13:** `reaction_xp_daily`.
+- **🎰 Emoji da Sorte (M-luck):** quando um **USER** manda o slot `🎰` no grupo e tira
+  **trinca** (3 iguais), ganha XP+florins; o bot **reage com 🎉**. Valores nativos do slot do
+  Telegram (1-64): trincas = `LUCKY_SLOT_WINS={1(bar),22(uva),43(limão),64(7️⃣7️⃣7️⃣=jackpot)}`;
+  jackpot (`LUCKY_SLOT_JACKPOT=64`) paga **em dobro** (`LUCKY_JACKPOT_XP=100`/`_GOLD=200` vs
+  `LUCKY_WIN_XP=20`/`_GOLD=30`). Helper puro `lucky_reward_for(value)→(xp,gold,jackpot)`. Cap
+  anti-farm `LUCKY_DAILY_CAP=5` **vitórias**/user/chat/dia (só trinca conta; SELECT+INSERT sem
+  await no meio, padrão do `on_message_reaction`). Handler `lucky_emoji_handler` (`@dp.message(F.dice)`)
+  registrado **ANTES** do catch-all `track` (senão `track` casa msg-sem-texto e engole o dice).
+  **UX sem flood:** vitória = só a reaction 🎉; jackpot = 🎉 + 1 ack efêmero (auto-delete 30s, GOLD,
+  marca via `mention()`). Espera `await asyncio.sleep(2.0)` p/ a animação do slot parar antes de
+  comemorar (sem spoiler). ⚠️ O `🎰` **cosmético** que o BOT manda no baú (`roll_dice_visual`)
+  **NÃO** dispara isto (bot não recebe os próprios updates; `user.is_bot` filtrado por garantia).
+  **Migration v14:** tabela `lucky_emoji_daily` (PK `chat_id,user_id,day`) — adicionada em
+  `_CHAT_MIGRATE_PK_TABLES`. Sincronizado em `/royaltutorial` + `ROYAL_HELP`. Testes:
+  `test_lucky_reward_*` (puros) + `lucky_emoji_daily` em `test_tabelas_criticas_existem`.
 - **🚪 Reentrada de membro:** quem já tem progresso e volta ao grupo é recebido com a ficha
   (foto). Progresso nunca é apagado na saída (só `/royaldados`). Handler `on_member_rejoin`.
 - **🎉 Eventos sazonais — `/royalevento` (M09):** boost de XP global por data, sem DB
