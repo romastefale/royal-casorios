@@ -48,6 +48,18 @@ do snapshot do repo. SQLite em path RELATIVO (`./data/...`) → volta ao estado 
 > redeploy). `.gitignore` ignora `data/` e `*.sqlite3`; o arquivo trackado precisa de
 > `git rm --cached data/royal_casorios.sqlite3` (destrutivo — pedir ao usuário / project task).
 
+**Migração grupo → supergrupo (CRÍTICO p/ não orfanar progresso):** quando um grupo vira
+supergrupo, o Telegram **troca o `chat_id`** e emite mensagem de serviço. Handler
+`on_chat_migration` (`F.migrate_to_chat_id | F.migrate_from_chat_id`, registrado ANTES do
+catch-all `track`) chama `migrate_chat_data(old, new)`: transacional + idempotente (no-op se o
+id antigo já não tem dados → reprocessar nunca apaga o migrado). Move as ~18 tabelas com
+`chat_id` (PK-tables: `UPDATE OR REPLACE` — progresso ANTIGO vence SÓ em conflito, linhas
+não-conflitantes do supergrupo são preservadas; FK-tables de PK surrogate: UPDATE direto sem
+perda) + reaponta `user_dm_settings.active_chat_id`. Sem FK/cascade/trigger no schema → REPLACE
+seguro. Confirma no grupo + DM do owner. Testes:
+`test_migrate_chat_data_preserva_progresso_e_e_idempotente` +
+`test_migrate_listas_cobrem_todas_as_tabelas_com_chat_id`.
+
 ---
 
 ## 📌 User preferences (regras do dono)

@@ -7569,6 +7569,147 @@ async def on_member_rejoin(event: ChatMemberUpdated):
                          u.id, chat_id)
 
 
+# =====================================================================
+# MIGRACAO grupo -> supergrupo (o Telegram troca o chat_id)
+# =====================================================================
+# Tabelas com coluna chat_id. Duas estrategias de conflito:
+#  - PK_TABLES: chat_id faz parte da PK/UNIQUE -> mover pode colidir com linhas
+#    ja existentes no novo id (perfis zerados criados na janela de deteccao OU
+#    progresso real, se o bot ficou offline durante a migracao e o supergrupo
+#    rodou por um tempo). `UPDATE OR REPLACE`: em CONFLITO o ANTIGO vence (a
+#    linha conflitante do novo id e descartada); linhas do novo id que NAO
+#    conflitam sao preservadas (sem FK/cascade/trigger no schema -> seguro).
+#  - FK_TABLES: PK surrogate (id autoincrement), chat_id NAO e unico -> UPDATE
+#    direto, sem perda (mantem antigo e qualquer linha nova).
+_CHAT_MIGRATE_PK_TABLES = (
+    "users", "daily_activity", "pair_scores", "chats", "players",
+    "royal_id_seq", "inventory", "chats_rpg", "season_hall",
+    "achievements", "quest_progress", "reaction_xp_daily",
+)
+_CHAT_MIGRATE_FK_TABLES = (
+    "couples", "challenges", "bosses", "chests", "gifts", "stars_purchases",
+)
+
+
+def migrate_chat_data(old_id: int, new_id: int) -> dict[str, int]:
+    """Move TODOS os dados de um chat antigo p/ o novo chat_id.
+
+    Transacional (tudo ou nada) e idempotente: se o chat antigo nao tem mais
+    dados, e no-op — isso protege contra reprocessamento do update (rodar 2x
+    NUNCA apaga os dados ja migrados). Tambem reaponta o "grupo ativo" das DMs
+    (`user_dm_settings.active_chat_id`). Sem awaits: roda no event-loop como
+    todo o resto do DB (cursor global single-thread).
+    """
+    if old_id == new_id:
+        return {}
+
+    # idempotencia: so age se o id ANTIGO ainda tem algo a migrar (dados em
+    # alguma tabela OU ponteiro de "grupo ativo" de DM apontando p/ ele).
+    # Rodar 2x e no-op: depois da 1a vez nada resta sob old_id.
+    has_old = False
+    for t in _CHAT_MIGRATE_PK_TABLES + _CHAT_MIGRATE_FK_TABLES:
+        try:
+            if cur.execute(
+                f"SELECT 1 FROM {t} WHERE chat_id=? LIMIT 1", (old_id,)
+            ).fetchone():
+                has_old = True
+                break
+        except Exception:
+            continue
+    if not has_old:
+        has_old = bool(cur.execute(
+            "SELECT 1 FROM user_dm_settings WHERE active_chat_id=? LIMIT 1",
+            (old_id,)).fetchone())
+    if not has_old:
+        logger.info("[MIGRATE] chat %d -> %d: nada a migrar (ja migrado/vazio)",
+                    old_id, new_id)
+        return {}
+
+    moved: dict[str, int] = {}
+    try:
+        # PK-tables: old vence SO em conflito; linhas novas nao-conflitantes
+        # do supergrupo sao preservadas.
+        for t in _CHAT_MIGRATE_PK_TABLES:
+            n = cur.execute(
+                f"SELECT COUNT(*) AS c FROM {t} WHERE chat_id=?", (old_id,)
+            ).fetchone()["c"]
+            cur.execute(f"UPDATE OR REPLACE {t} SET chat_id=? WHERE chat_id=?",
+                        (new_id, old_id))
+            if n:
+                moved[t] = n
+        # FK-tables (PK surrogate): UPDATE direto, sem perda.
+        for t in _CHAT_MIGRATE_FK_TABLES:
+            n = cur.execute(
+                f"SELECT COUNT(*) AS c FROM {t} WHERE chat_id=?", (old_id,)
+            ).fetchone()["c"]
+            cur.execute(f"UPDATE {t} SET chat_id=? WHERE chat_id=?",
+                        (new_id, old_id))
+            if n:
+                moved[t] = n
+        cur.execute(
+            "UPDATE user_dm_settings SET active_chat_id=? WHERE active_chat_id=?",
+            (new_id, old_id))
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception("[MIGRATE] FALHA chat %d -> %d (rollback)", old_id, new_id)
+        raise
+
+    bot_meta_set(f"chat_migrated:{old_id}->{new_id}", utc_iso())
+    logger.info("[MIGRATE] OK chat %d -> %d moved=%s", old_id, new_id, moved)
+    return moved
+
+
+@dp.message(F.migrate_to_chat_id | F.migrate_from_chat_id)
+async def on_chat_migration(message: Message):
+    """Grupo -> supergrupo: o Telegram emite uma mensagem de servico e troca o
+    chat_id. Sem migrar os dados, todo o progresso (XP, saldo, casorios,
+    conquistas...) ficaria orfao sob o id antigo. Handler registrado ANTES do
+    catch-all `track` (que casaria a msg de servico sem texto e a consumiria).
+    """
+    if message.migrate_to_chat_id:
+        old_id, new_id = message.chat.id, message.migrate_to_chat_id
+    elif message.migrate_from_chat_id:
+        old_id, new_id = message.migrate_from_chat_id, message.chat.id
+    else:
+        return
+
+    try:
+        moved = migrate_chat_data(old_id, new_id)
+    except Exception:
+        logger.exception("[MIGRATE] handler falhou %d -> %d", old_id, new_id)
+        return
+    if not moved:
+        return
+
+    total = sum(moved.values())
+    try:
+        await safe_send(
+            new_id,
+            term_block(
+                "MIGRACAO",
+                ">> grupo promovido a <b>supergrupo</b>.\n"
+                f"// progresso preservado: <b>{total}</b> registros migrados.\n"
+                "<i>Nada foi perdido — XP, saldo, casorios e conquistas "
+                "seguem aqui.</i>",
+                status="RESTAURADO", status_color="ACID"),
+        )
+    except Exception:
+        logger.exception("[MIGRATE] aviso no grupo falhou chat=%d", new_id)
+
+    if OWNER_USER_ID and bot is not None:
+        try:
+            await bot.send_message(
+                OWNER_USER_ID,
+                term_block(
+                    "MIGRACAO",
+                    f">> <code>{old_id}</code> -> <code>{new_id}</code>\n"
+                    f"// {total} registros: {html.escape(str(moved))}",
+                    status="OK", status_color="CYAN"))
+        except Exception:
+            logger.exception("[MIGRATE] DM owner falhou")
+
+
 @dp.message(
     F.chat.type.in_({"group", "supergroup"}),
     # NAO casar comandos: este catch-all roda ANTES de alguns
