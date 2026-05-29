@@ -172,6 +172,9 @@ Transferência atômica de florins entre players (grupo-only).
 ### 🏅 Conquistas — `/royalconquistas` (M11)
 11 slugs MVP em `ACHIEVEMENTS`: primeiro_acerto, dez_acertos, cem_acertos, primeiro_boss,
 lvl_dez/vinte_cinco/cinquenta, primeiro_amor, mecenas, nobreza, generoso.
+- **Card visual** (`render_conquistas_card`/`ConquistasData`, accent GOLD): handler é card-first
+  (avatar + barra got/total + lista 1-coluna OK/LOCK) com fallback texto se o render falhar.
+  Emoji do título é stripado no main (`re.sub(r"^\W+","")`) p/ não virar tofu no Pillow.
 - API `unlock_achievement(chat_id, uid, slug)` — idempotente (PK `chat_id,user_id,slug`),
   retorna True só na 1ª unlock + DM `_notify_achievement_dm` (`EFFECT_PARTY`).
 - **Triggers:** level-up→lvl 10/25/50 · PALAVRA win→1/10/100 · `finalize_boss`→primeiro_boss
@@ -201,6 +204,11 @@ Flags em `user_dm_settings.prefs_json` (migration v12). API `get_user_prefs(uid)
 - `quest_bump(chat_id, uid, event, n)` incrementa (cap atomic `MIN(progress+?, ?)`, só grupo).
   Claim via `r:quest:{id}` (`UPDATE … WHERE progress>=target AND claimed=0`).
 - **Triggers:** `track()` · `attempt_word` win · `boss_attack` · `on_message_reaction`.
+- **Card visual** (`render_missoes_card`/`MissoesData`+`MissaoRow`, accent CYAN): handler é
+  card-first (avatar + 4 blocos c/ `draw_chunky_bar` + tag PRONTA!/RESGATADA + recompensa),
+  **teclado de claim anexado à foto** (fallback texto se render falhar). ⚠️ `quest_claim_cb`
+  faz `edit_text` (msg texto) e, em caso de exceção (msg é FOTO → `edit_text` falha), cai pra
+  `edit_message_reply_markup` p/ só remover o botão resgatado in-place (sem re-render do card).
 - **Migration v13:** tabela `quest_progress` (PK `chat_id,user_id,day,quest_id`).
 
 ### 👍 Reactions = XP (M06)
@@ -238,6 +246,11 @@ Boost de XP global por data, sem DB — `SEASONAL_EVENTS`:
 
 API `active_seasonal_event(d=None)` (datas especiais > FDS) · `event_xp_mult()`. Aplicado em
 `award_xp_immediate` e `award_xp_message` (após bônus de classe/casamento).
+- **Card visual** (`render_evento_card`/`EventoData`, accent ACID se ativo / AMBER se off):
+  card global (mesmo p/ todos, sem avatar) — sigilo central + multiplicador gigante (`+50%`/`OFF`)
+  + nome do evento + estado ON-AIR/OFFLINE. Handler card-first com fallback texto. Label tem
+  emoji stripado no main; posições verticais FIXAS (não confiar no `bh` de `text_size_smart`,
+  que subestima a altura e causava sobreposição).
 
 ### 🔇 `/royalmudo` — master switch (owner)
 - **Grupo** (owner): toggle do chat (ON/OFF).

@@ -73,8 +73,12 @@ from royal_render import (
     BossKillData,
     CasorioPartner,
     ClasseCardData,
+    ConquistasData,
+    EventoData,
     IdentityCardData,
     LojaDropData,
+    MissaoRow,
+    MissoesData,
     ProfileCardData,
     RankingEntry,
     render_boss_kill_card,
@@ -82,12 +86,15 @@ from royal_render import (
     render_boss_status_card,
     render_casorios_ranking_card,
     render_classe_card,
+    render_conquistas_card,
+    render_evento_card,
     render_identity_card,
     render_inventario_card,
     render_levelup_card,
     render_loja_card,
     render_loja_drop_card,
     render_meuscasorios_card,
+    render_missoes_card,
     render_palavra_active_card,
     render_palavra_spoiler_card,
     render_profile_card,
@@ -8079,9 +8086,38 @@ async def royal_conquistas(message: Message):
         "WHERE chat_id=? AND user_id=? ORDER BY unlocked_at DESC",
         (owner_chat, uid)).fetchall()
     unlocked = {r["slug"]: r["unlocked_at"] for r in rows}
-    lines = []
     total = len(ACHIEVEMENTS)
     got = len(unlocked)
+    # === CARD VISUAL (card-first com text fallback) ===
+    try:
+        p = ensure_player(owner_chat, uid)
+        db.commit()
+        rid = p.get("royal_id") or "RYL-????"
+        items = tuple(
+            (re.sub(r"^\W+", "", title).strip(), slug in unlocked)
+            for slug, (title, _desc) in ACHIEVEMENTS.items()
+        )
+        data = ConquistasData(
+            self_royal_id=rid,
+            self_name=get_anon_name(owner_chat, uid),
+            self_avatar_slug=p.get("avatar_slug"),
+            owner_uid=int(uid),
+            got=got, total=total, items=items,
+        )
+        await safe_typing(message.chat.id, "upload_photo")
+        png = await asyncio.to_thread(render_conquistas_card, data)
+        if png and bot is not None:
+            caption = (f"<i>Conquistas — <b>{got}/{total}</b> "
+                       f"desbloqueadas.</i>")
+            await bot.send_photo(
+                message.chat.id,
+                BufferedInputFile(png, filename=f"conquistas-{rid}.jpg"),
+                caption=cap1024(caption), parse_mode="HTML")
+            return
+    except Exception:
+        logger.exception("render_conquistas_card path failed; fallback texto")
+    # === Fallback texto ===
+    lines = []
     lines.append(f">> <b>{got}/{total}</b> conquistas desbloqueadas")
     lines.append("")
     for slug, (title, desc) in ACHIEVEMENTS.items():
@@ -8194,6 +8230,42 @@ async def royal_missoes(message: Message):
         return
     uid = message.from_user.id
     body, kb = _quests_render(owner_chat, uid)
+    # === CARD VISUAL (card-first com text fallback) ===
+    try:
+        p = ensure_player(owner_chat, uid)
+        db.commit()
+        rid = p.get("royal_id") or "RYL-????"
+        qstate = get_quest_state(owner_chat, uid)
+        qrows = tuple(
+            MissaoRow(
+                desc=re.sub(r"^\W+", "", q["desc"]).strip(),
+                progress=int(q["progress"]),
+                target=int(q["target"]),
+                xp=int(q["xp"]), gold=int(q["gold"]),
+                state=("claimed" if q["claimed"]
+                       else "ready" if q["done"] else "progress"),
+            ) for q in qstate
+        )
+        data = MissoesData(
+            self_royal_id=rid,
+            self_name=get_anon_name(owner_chat, uid),
+            self_avatar_slug=p.get("avatar_slug"),
+            owner_uid=int(uid),
+            quests=qrows,
+        )
+        await safe_typing(message.chat.id, "upload_photo")
+        png = await asyncio.to_thread(render_missoes_card, data)
+        if png and bot is not None:
+            caption = f"<i>Missões diárias — reset 00:00 {TZ_NAME}.</i>"
+            await bot.send_photo(
+                message.chat.id,
+                BufferedInputFile(png, filename=f"missoes-{rid}.jpg"),
+                caption=cap1024(caption), parse_mode="HTML",
+                reply_markup=kb)
+            return
+    except Exception:
+        logger.exception("render_missoes_card path failed; fallback texto")
+    # === Fallback texto ===
     await message.answer(
         term_block("MISSOES", body, status="DIARIAS",
                    status_color="CYAN",
@@ -8246,8 +8318,17 @@ async def quest_claim_cb(cb: CallbackQuery):
                        status_color="CYAN",
                        stamp="reset 00:00 " + TZ_NAME),
             reply_markup=kb)
+    except TelegramBadRequest:
+        # A mensagem pode ser uma FOTO (card de missoes): edit_text falha
+        # em mensagens-foto. Atualiza so o teclado (remove o botao
+        # resgatado) — mantem o fluxo in-place sem re-renderizar o card.
+        try:
+            await cb.message.edit_reply_markup(reply_markup=kb)
+        except TelegramBadRequest:
+            pass
     except Exception:
-        pass
+        logger.exception("[M05] quest_claim_cb edit falhou uid=%s chat=%s",
+                         uid, chat_id)
     await cb.answer(f"🎁 +{q['xp']}XP +{q['gold']}🪙!", show_alert=False)
 
 
@@ -8256,8 +8337,39 @@ async def royal_evento(message: Message):
     """M09: mostra o evento sazonal ativo (boost de XP) ou avisa que nao
     ha nenhum no momento."""
     ev = active_seasonal_event()
+    active = ev is not None
     if ev:
         pct = int(round((ev["xp_mult"] - 1.0) * 100))
+        label = re.sub(r"^\W+", "", ev["label"]).strip()
+        eid = str(ev.get("id") or ev["label"])
+    else:
+        pct = 0
+        label = "Sem evento ativo"
+        eid = "off"
+    # === CARD VISUAL (card-first com text fallback) ===
+    try:
+        data = EventoData(
+            label=label, pct=pct, active=active,
+            season_label=current_season_label(), event_id=eid,
+        )
+        await safe_typing(message.chat.id, "upload_photo")
+        png = await asyncio.to_thread(render_evento_card, data)
+        if png and bot is not None:
+            if active:
+                caption = (f"<i>{html.escape(label)} — "
+                           f"<b>+{pct}% XP</b> em todo o reino agora.</i>")
+            else:
+                caption = ("<i>Sem evento agora — fins de semana têm "
+                           "<b>+50% XP</b> automático.</i>")
+            await bot.send_photo(
+                message.chat.id,
+                BufferedInputFile(png, filename="evento.jpg"),
+                caption=cap1024(caption), parse_mode="HTML")
+            return
+    except Exception:
+        logger.exception("render_evento_card path failed; fallback texto")
+    # === Fallback texto ===
+    if ev:
         body = (
             f">> {ev['label']}\n"
             f"// boost de <b>+{pct}% XP</b> em TODO o reino agora\n"

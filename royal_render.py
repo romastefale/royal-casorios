@@ -3896,3 +3896,404 @@ def render_shipper_card(data: ShipperData) -> bytes | None:
         logger.exception("ROYAL_SHIPPER_CARD_RENDER_FAILED rid=%r",
                          data.royal_id)
         return None
+
+
+# =====================================================================
+# CONQUISTAS CARD — grade de conquistas (desbloqueada vs trancada)
+# =====================================================================
+
+@dataclass(frozen=True)
+class ConquistasData:
+    self_royal_id: str
+    self_name: str
+    self_avatar_slug: str | None
+    owner_uid: int
+    got: int
+    total: int
+    items: tuple[tuple[str, bool], ...]  # (titulo_limpo, desbloqueada)
+
+
+def render_conquistas_card(data: ConquistasData) -> bytes | None:
+    """Card 1080x1080 com a lista de conquistas do jogador: cada linha
+    mostra o titulo + um marcador (OK/aceso = desbloqueada, LOCK/apagado =
+    trancada) + barra de progresso geral. Acento GOLD. JPEG bytes ou None."""
+    try:
+        royal_id = (data.self_royal_id or "RYL-????").upper()
+        pal = pick_palette(royal_id)
+        accent = GOLD
+        W = H = CARD_SIZE
+        img = Image.new("RGB", (W, H), BG_DEEP)
+        draw = ImageDraw.Draw(img)
+
+        rng = random.Random(hash(("conq", royal_id)) & 0xFFFF)
+        for _ in range(1100):
+            x = rng.randrange(W); y = rng.randrange(H)
+            c = rng.choice([(20, 16, 22), (16, 14, 20), (28, 22, 30),
+                            (40, 30, 10)])
+            pixel_rect(draw, (x, y, x + 3, y + 3), c)
+
+        OUT_PAD = 28
+        panel_box = (OUT_PAD, OUT_PAD, W - OUT_PAD, H - OUT_PAD)
+        pixel_rect(draw, panel_box, BG)
+        chunky_border(draw, panel_box, outer=BLACK, inner=accent, thick=8)
+
+        header_box = (OUT_PAD + 28, OUT_PAD + 28,
+                      W - OUT_PAD - 28, OUT_PAD + 110)
+        pixel_rect(draw, header_box, PANEL)
+        pixel_rect(draw, (header_box[0], header_box[1],
+                          header_box[2], header_box[1] + 4), accent)
+        pixel_rect(draw, (header_box[0], header_box[3] - 4,
+                          header_box[2], header_box[3]), accent)
+        title_font = load_font(26, mono=True, bold=True)
+        draw.text((header_box[0] + 22, header_box[1] + 24),
+                  "> CONQUISTAS.SYS", font=title_font, fill=accent)
+        cnt_font = load_font(22, mono=True, bold=True)
+        cnt_txt = f"{data.got}/{data.total}"
+        cw, _ = text_size(draw, cnt_txt, cnt_font)
+        draw.text((header_box[2] - 22 - cw, header_box[1] + 26),
+                  cnt_txt, font=cnt_font, fill=INK)
+
+        # Avatar + nome + barra de progresso
+        av = 120
+        ax = OUT_PAD + 48
+        ay = OUT_PAD + 140
+        resolved = royal_avatars.resolve_slug(data.self_avatar_slug, royal_id)
+        portrait = royal_avatars.load_avatar(resolved, av)
+        pixel_rect(draw, (ax - 5, ay - 5, ax + av + 5, ay + av + 5), BLACK)
+        pixel_rect(draw, (ax - 2, ay - 2, ax + av + 2, ay + av + 2), accent)
+        if portrait is not None:
+            img.paste(portrait, (ax, ay),
+                      portrait if portrait.mode == "RGBA" else None)
+        else:
+            sig = procedural_sigil(royal_id, av, palette=pal)
+            img.paste(sig, (ax, ay))
+
+        name_font = load_font(24, mono=True, bold=True)
+        name = ellipsize(data.self_name, 20).upper()
+        draw_text_smart(draw, (ax + av + 26, ay + 12), name, name_font, INK)
+        id_font = load_font(18, mono=True, bold=False)
+        draw.text((ax + av + 26, ay + 48), royal_id, font=id_font, fill=DIM)
+        bar_box = (ax + av + 26, ay + 82, W - OUT_PAD - 48, ay + 108)
+        draw_chunky_bar(draw, bar_box, data.got, max(1, data.total),
+                        fill=accent, segments=max(1, data.total))
+
+        # Lista de conquistas (1 coluna)
+        list_top = ay + av + 38
+        list_bottom = H - OUT_PAD - 70
+        n = max(1, len(data.items))
+        row_h = min((list_bottom - list_top) // n, 64)
+        lbl_font = load_font(19, mono=True, bold=True)
+        st_font = load_font(15, mono=True, bold=True)
+        for i, (title, unlocked) in enumerate(data.items):
+            ry = list_top + i * row_h
+            bx = OUT_PAD + 48
+            bs = 26
+            box_col = accent if unlocked else PANEL_HI
+            pixel_rect(draw, (bx, ry, bx + bs, ry + bs), BLACK)
+            pixel_rect(draw, (bx + 2, ry + 2, bx + bs - 2, ry + bs - 2),
+                       box_col)
+            tcol = INK if unlocked else DIM
+            tx = bx + bs + 18
+            draw_text_smart(draw, (tx, ry + 2),
+                            ellipsize(title, 32), lbl_font, tcol)
+            stxt = "OK" if unlocked else "LOCK"
+            scol = accent if unlocked else DIM
+            sw, _ = text_size(draw, stxt, st_font)
+            draw.text((W - OUT_PAD - 48 - sw, ry + 4),
+                      stxt, font=st_font, fill=scol)
+
+        foot_font = load_font(12, mono=True, bold=False)
+        draw.text((OUT_PAD + 48, H - OUT_PAD - 44),
+                  "> /royalconquistas", font=foot_font, fill=DIM)
+        fr = f"v0.1 // {pal['name']}_MODE"
+        fw, _ = text_size(draw, fr, foot_font)
+        draw.text((W - OUT_PAD - 48 - fw, H - OUT_PAD - 44),
+                  fr, font=foot_font, fill=pal["footer"])
+
+        img = img.convert("RGBA")
+        apply_scanlines(img, every=3, alpha=55)
+        vimg = img.convert("RGB")
+        apply_vignette(vimg, strength=160)
+        img = vimg.convert("RGBA")
+        apply_grain(img, intensity=18)
+        img = img.convert("RGB")
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=90, optimize=True)
+        return buf.getvalue()
+    except Exception:
+        logger.exception("ROYAL_CONQUISTAS_CARD_RENDER_FAILED rid=%r",
+                         data.self_royal_id)
+        return None
+
+
+# =====================================================================
+# MISSOES CARD — quests diarias com barra de progresso + estado
+# =====================================================================
+
+@dataclass(frozen=True)
+class MissaoRow:
+    desc: str
+    progress: int
+    target: int
+    xp: int
+    gold: int
+    state: str  # "claimed" | "ready" | "progress"
+
+
+@dataclass(frozen=True)
+class MissoesData:
+    self_royal_id: str
+    self_name: str
+    self_avatar_slug: str | None
+    owner_uid: int
+    quests: tuple[MissaoRow, ...]
+
+
+def render_missoes_card(data: MissoesData) -> bytes | None:
+    """Card 1080x1080 das missoes diarias: cada bloco mostra a descricao,
+    barra de progresso 8-bit, recompensa e estado (PRONTA / RESGATADA / em
+    andamento). Acento CYAN. JPEG bytes ou None."""
+    try:
+        royal_id = (data.self_royal_id or "RYL-????").upper()
+        pal = pick_palette(royal_id)
+        accent = CYAN
+        W = H = CARD_SIZE
+        img = Image.new("RGB", (W, H), BG_DEEP)
+        draw = ImageDraw.Draw(img)
+
+        rng = random.Random(hash(("miss", royal_id)) & 0xFFFF)
+        for _ in range(1100):
+            x = rng.randrange(W); y = rng.randrange(H)
+            c = rng.choice([(18, 16, 22), (14, 12, 20), (24, 20, 28),
+                            (12, 26, 28)])
+            pixel_rect(draw, (x, y, x + 3, y + 3), c)
+
+        OUT_PAD = 28
+        panel_box = (OUT_PAD, OUT_PAD, W - OUT_PAD, H - OUT_PAD)
+        pixel_rect(draw, panel_box, BG)
+        chunky_border(draw, panel_box, outer=BLACK, inner=accent, thick=8)
+
+        header_box = (OUT_PAD + 28, OUT_PAD + 28,
+                      W - OUT_PAD - 28, OUT_PAD + 110)
+        pixel_rect(draw, header_box, PANEL)
+        pixel_rect(draw, (header_box[0], header_box[1],
+                          header_box[2], header_box[1] + 4), accent)
+        pixel_rect(draw, (header_box[0], header_box[3] - 4,
+                          header_box[2], header_box[3]), accent)
+        title_font = load_font(26, mono=True, bold=True)
+        draw.text((header_box[0] + 22, header_box[1] + 24),
+                  "> MISSOES.SYS", font=title_font, fill=accent)
+        sub_font = load_font(18, mono=True, bold=False)
+        sub = ">> DIARIAS"
+        sw, _ = text_size(draw, sub, sub_font)
+        draw.text((header_box[2] - 22 - sw, header_box[1] + 30),
+                  sub, font=sub_font, fill=DIM)
+
+        av = 110
+        ax = OUT_PAD + 48
+        ay = OUT_PAD + 140
+        resolved = royal_avatars.resolve_slug(data.self_avatar_slug, royal_id)
+        portrait = royal_avatars.load_avatar(resolved, av)
+        pixel_rect(draw, (ax - 5, ay - 5, ax + av + 5, ay + av + 5), BLACK)
+        pixel_rect(draw, (ax - 2, ay - 2, ax + av + 2, ay + av + 2), accent)
+        if portrait is not None:
+            img.paste(portrait, (ax, ay),
+                      portrait if portrait.mode == "RGBA" else None)
+        else:
+            sig = procedural_sigil(royal_id, av, palette=pal)
+            img.paste(sig, (ax, ay))
+        name_font = load_font(24, mono=True, bold=True)
+        name = ellipsize(data.self_name, 20).upper()
+        draw_text_smart(draw, (ax + av + 26, ay + 22), name, name_font, INK)
+        id_font = load_font(18, mono=True, bold=False)
+        draw.text((ax + av + 26, ay + 58), royal_id, font=id_font, fill=DIM)
+
+        # Blocos de missao
+        list_top = ay + av + 36
+        list_bottom = H - OUT_PAD - 70
+        n = max(1, len(data.quests))
+        blk_h = min((list_bottom - list_top) // n, 168)
+        desc_font = load_font(20, mono=True, bold=True)
+        small_font = load_font(15, mono=True, bold=False)
+        tag_font = load_font(16, mono=True, bold=True)
+        for i, q in enumerate(data.quests):
+            by = list_top + i * blk_h
+            blk = (OUT_PAD + 44, by, W - OUT_PAD - 44, by + blk_h - 16)
+            pixel_rect(draw, blk, PANEL)
+            pixel_rect(draw, (blk[0], blk[1], blk[0] + 4, blk[3]), accent)
+            # descricao + tag de estado
+            if q.state == "claimed":
+                tag, tcol, dcol = "RESGATADA", DIM, DIM
+            elif q.state == "ready":
+                tag, tcol, dcol = "PRONTA!", ACID, INK
+            else:
+                tag, tcol, dcol = "", accent, INK
+            draw_text_smart(draw, (blk[0] + 20, blk[1] + 14),
+                            ellipsize(q.desc, 34), desc_font, dcol)
+            if tag:
+                tw, _ = text_size(draw, tag, tag_font)
+                draw.text((blk[2] - 18 - tw, blk[1] + 16),
+                          tag, font=tag_font, fill=tcol)
+            # barra de progresso
+            bar = (blk[0] + 20, blk[1] + 52, blk[2] - 160, blk[1] + 78)
+            barcol = ACID if q.state in ("ready", "claimed") else accent
+            draw_chunky_bar(draw, bar, q.progress, max(1, q.target),
+                            fill=barcol, segments=max(1, min(q.target, 20)))
+            cnt = f"{min(q.progress, q.target)}/{q.target}"
+            draw.text((bar[2] + 16, blk[1] + 54),
+                      cnt, font=small_font, fill=INK)
+            # recompensa
+            rwd = f"+{q.xp} XP  +{q.gold} FL"
+            draw.text((blk[0] + 20, blk[1] + 88),
+                      rwd, font=small_font, fill=DIM)
+
+        foot_font = load_font(12, mono=True, bold=False)
+        draw.text((OUT_PAD + 48, H - OUT_PAD - 44),
+                  "> reset 00:00 // /royalmissoes", font=foot_font, fill=DIM)
+        fr = f"v0.1 // {pal['name']}_MODE"
+        fw, _ = text_size(draw, fr, foot_font)
+        draw.text((W - OUT_PAD - 48 - fw, H - OUT_PAD - 44),
+                  fr, font=foot_font, fill=pal["footer"])
+
+        img = img.convert("RGBA")
+        apply_scanlines(img, every=3, alpha=55)
+        vimg = img.convert("RGB")
+        apply_vignette(vimg, strength=160)
+        img = vimg.convert("RGBA")
+        apply_grain(img, intensity=18)
+        img = img.convert("RGB")
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=90, optimize=True)
+        return buf.getvalue()
+    except Exception:
+        logger.exception("ROYAL_MISSOES_CARD_RENDER_FAILED rid=%r",
+                         data.self_royal_id)
+        return None
+
+
+# =====================================================================
+# EVENTO CARD — boost sazonal de XP (global, mesmo p/ todos)
+# =====================================================================
+
+@dataclass(frozen=True)
+class EventoData:
+    label: str
+    pct: int
+    active: bool
+    season_label: str
+    event_id: str = "evt"
+
+
+def render_evento_card(data: EventoData) -> bytes | None:
+    """Card 1080x1080 do evento sazonal: sigilo central + multiplicador de
+    XP gigante + nome do evento + estado (ON-AIR / OFFLINE). Acento ACID se
+    ativo, AMBER se nao. JPEG bytes ou None."""
+    try:
+        seed = data.event_id or data.label or "evt"
+        pal = pick_palette(seed)
+        accent = ACID if data.active else AMBER
+        W = H = CARD_SIZE
+        img = Image.new("RGB", (W, H), BG_DEEP)
+        draw = ImageDraw.Draw(img)
+
+        rng = random.Random(hash(("evt", seed)) & 0xFFFF)
+        tint = (16, 28, 16) if data.active else (30, 22, 12)
+        for _ in range(1200):
+            x = rng.randrange(W); y = rng.randrange(H)
+            c = rng.choice([(18, 16, 22), (14, 12, 20), (24, 20, 28), tint])
+            pixel_rect(draw, (x, y, x + 3, y + 3), c)
+
+        OUT_PAD = 28
+        panel_box = (OUT_PAD, OUT_PAD, W - OUT_PAD, H - OUT_PAD)
+        pixel_rect(draw, panel_box, BG)
+        chunky_border(draw, panel_box, outer=BLACK, inner=accent, thick=8)
+
+        header_box = (OUT_PAD + 28, OUT_PAD + 28,
+                      W - OUT_PAD - 28, OUT_PAD + 110)
+        pixel_rect(draw, header_box, PANEL)
+        pixel_rect(draw, (header_box[0], header_box[1],
+                          header_box[2], header_box[1] + 4), accent)
+        pixel_rect(draw, (header_box[0], header_box[3] - 4,
+                          header_box[2], header_box[3]), accent)
+        title_font = load_font(26, mono=True, bold=True)
+        draw.text((header_box[0] + 22, header_box[1] + 24),
+                  "> EVENTO.SYS", font=title_font, fill=accent)
+        st_font = load_font(18, mono=True, bold=True)
+        st_txt = "ON-AIR" if data.active else "OFFLINE"
+        stw, _ = text_size(draw, st_txt, st_font)
+        draw.text((header_box[2] - 22 - stw, header_box[1] + 28),
+                  st_txt, font=st_font, fill=accent if data.active else DIM)
+
+        # Sigilo central grande
+        SIG = 300
+        sx = (W - SIG) // 2
+        sy = OUT_PAD + 150
+        pixel_rect(draw, (sx - 8, sy - 8, sx + SIG + 8, sy + SIG + 8), BLACK)
+        pixel_rect(draw, (sx - 4, sy - 4, sx + SIG + 4, sy + SIG + 4), accent)
+        pixel_rect(draw, (sx, sy, sx + SIG, sy + SIG), BLACK)
+        sig = procedural_sigil(seed, SIG, palette=pal)
+        img.paste(sig, (sx, sy))
+
+        # Multiplicador gigante (posicoes fixas — evita sobreposicao)
+        big_font = load_font(100, mono=True, bold=True)
+        big_txt = f"+{data.pct}%" if data.active else "OFF"
+        bw, _ = text_size_smart(draw, big_txt, big_font)
+        if bw > W - 160:
+            big_font = load_font(80, mono=True, bold=True)
+            bw, _ = text_size_smart(draw, big_txt, big_font)
+        big_y = sy + SIG + 36
+        draw_text_smart(draw, ((W - bw) // 2 + 4, big_y + 4),
+                        big_txt, big_font, BLACK)
+        draw_text_smart(draw, ((W - bw) // 2, big_y),
+                        big_txt, big_font, accent)
+        y = big_y + 128
+        if data.active:
+            xpl_font = load_font(22, mono=True, bold=True)
+            xpl = ">> XP BOOST GLOBAL"
+            xw, _ = text_size(draw, xpl, xpl_font)
+            draw.text(((W - xw) // 2, y), xpl, font=xpl_font, fill=DIM)
+            y += 44
+
+        # Nome do evento
+        lbl_font = load_font(30, mono=True, bold=True)
+        label = ellipsize(data.label, 28).upper()
+        lw, _ = text_size_smart(draw, label, lbl_font)
+        if lw > W - 120:
+            lbl_font = load_font(24, mono=True, bold=True)
+            lw, _ = text_size_smart(draw, label, lbl_font)
+        draw_text_smart(draw, ((W - lw) // 2, y), label, lbl_font, INK)
+        y += 52
+
+        # Linha de apoio
+        info_font = load_font(16, mono=True, bold=False)
+        info = ("vale p/ msg, palavra, boss, casorio e reactions"
+                if data.active
+                else "fins de semana tem +50% XP automatico")
+        iw, _ = text_size(draw, info, info_font)
+        if iw > W - 120:
+            info = ellipsize(info, 52)
+            iw, _ = text_size(draw, info, info_font)
+        draw.text(((W - iw) // 2, y), info, font=info_font, fill=DIM)
+
+        foot_font = load_font(12, mono=True, bold=False)
+        draw.text((OUT_PAD + 48, H - OUT_PAD - 44),
+                  "> /royalevento", font=foot_font, fill=DIM)
+        fr = ellipsize(data.season_label or f"{pal['name']}_MODE", 28)
+        fw, _ = text_size(draw, fr, foot_font)
+        draw.text((W - OUT_PAD - 48 - fw, H - OUT_PAD - 44),
+                  fr, font=foot_font, fill=pal["footer"])
+
+        img = img.convert("RGBA")
+        apply_scanlines(img, every=3, alpha=55)
+        vimg = img.convert("RGB")
+        apply_vignette(vimg, strength=160)
+        img = vimg.convert("RGBA")
+        apply_grain(img, intensity=18)
+        img = img.convert("RGB")
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=90, optimize=True)
+        return buf.getvalue()
+    except Exception:
+        logger.exception("ROYAL_EVENTO_CARD_RENDER_FAILED label=%r",
+                         data.label)
+        return None
