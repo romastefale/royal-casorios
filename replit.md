@@ -264,6 +264,14 @@ Palavra (1⭐ → `prm_hints`) · 🔱 Ressurreição no Boss (10⭐ → `prm_re
 > na corte por engano (royal_id/perfil de bot). Posts de canal também caem aqui. Mensagens de
 > outros bots não chegam (regra do Telegram), mas o filtro blinda o pseudo-bot de admin anônimo.
 > Anúncio one-shot da correção: `announce_no_bots_feature()` (flag `boot_announce_nobots_v1`).
+> Limpeza one-shot do legado: `cleanup_legacy_bot_players()` (flag `boot_cleanup_bot_players_v1`,
+> chamada em `main()`) apaga os bots conhecidos já cadastrados antes do filtro em TODA coluna de
+> referência de usuário (`_USER_REF_COLS`: `user_id`, `user1`/`user2` em couples/pair_scores,
+> `from_user`/`to_user` em gifts, `winner_user_id` em challenges, `voter_id` em votes) — descoberta
+> por PRAGMA, robusta a schema novo. `_LEGACY_BOT_USER_IDS` = `{1087968824 @GroupAnonymousBot,
+> 136817688 @Channel_Bot, MUSIC_BOT_ID}` (regra do Telegram: msgs de bots comuns não chegam → só
+> esses pseudo-bots viravam jogador; nenhum humano possui esses ids). Transacional + idempotente,
+> silencioso (só loga). Teste: `test_cleanup_remove_bots_legados_e_e_idempotente`.
 
 ## 📋 Menus (BotCommands)
 

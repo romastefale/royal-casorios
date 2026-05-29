@@ -9091,6 +9091,69 @@ async def announce_typewriter_feature() -> None:
                 sent_ok, len(chats))
 
 
+# IDs que o Telegram ENTREGA ao nosso bot e que podiam ter virado "jogador"
+# ANTES do filtro is_bot. Pela regra do Telegram (msgs de bots COMUNS nao chegam
+# a outro bot), o legado se restringe a estes pseudo-bots/bot conhecidos — nenhum
+# humano possui esses ids, entao a remocao e segura (confirmados como bot):
+#   1087968824 = @GroupAnonymousBot  (admins anonimos)
+#    136817688 = @Channel_Bot        (posts em nome de canal)
+#   MUSIC_BOT_ID = bot de musica
+_LEGACY_BOT_USER_IDS = {1087968824, 136817688, MUSIC_BOT_ID}
+BOOT_CLEANUP_BOTS_KEY = "boot_cleanup_bot_players_v1"
+# Toda coluna do schema que referencia um usuario. A varredura apaga o bot de
+# TODAS: user_id (players/users/achievements/quest_progress/*_daily/dm_settings),
+# user1/user2 (couples, pair_scores), from_user/to_user (gifts),
+# winner_user_id (challenges), voter_id (votes).
+_USER_REF_COLS = ("user_id", "user1", "user2", "from_user", "to_user",
+                  "winner_user_id", "voter_id")
+
+
+def cleanup_legacy_bot_players() -> dict[str, int]:
+    """One-shot: remove do banco os bots conhecidos que foram cadastrados como
+    jogadores ANTES do filtro is_bot. Varre TODA tabela e apaga linhas onde
+    qualquer coluna de referencia de usuario (_USER_REF_COLS, descoberta via
+    PRAGMA — robusto a schema novo) aponte p/ um bot conhecido. Transacional
+    (1 commit; rollback em erro) + idempotente (flag em bot_meta + re-rodar nao
+    acha nada). Silencioso: so loga, nao posta no grupo."""
+    if bot_meta_get(BOOT_CLEANUP_BOTS_KEY):
+        return {}
+    bot_ids = sorted(i for i in _LEGACY_BOT_USER_IDS if i and i > 0)
+    if not bot_ids:
+        bot_meta_set(BOOT_CLEANUP_BOTS_KEY, "no_ids")
+        return {}
+    ph = ",".join("?" for _ in bot_ids)
+    deleted: dict[str, int] = {}
+    try:
+        tabelas = [r["name"] for r in cur.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
+        for t in tabelas:
+            cols = [c["name"] for c in cur.execute(
+                f'PRAGMA table_info("{t}")').fetchall()]
+            ref = [c for c in cols if c in _USER_REF_COLS]
+            if not ref:
+                continue
+            # DELETE onde QUALQUER coluna de usuario for um bot conhecido.
+            where = " OR ".join(f'"{c}" IN ({ph})' for c in ref)
+            args = tuple(bot_ids) * len(ref)
+            cur.execute(f'DELETE FROM "{t}" WHERE {where}', args)
+            if cur.rowcount:
+                deleted[t] = cur.rowcount
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception("cleanup_legacy_bot_players: falhou — rollback")
+        return {}
+    total = sum(deleted.values())
+    bot_meta_set(BOOT_CLEANUP_BOTS_KEY,
+                 f"deleted={total} tables={len(deleted)} at={utc_iso()}")
+    if total:
+        logger.info("cleanup_legacy_bot_players: removidas %d linhas de bots "
+                    "legados em %s", total, deleted)
+    else:
+        logger.info("cleanup_legacy_bot_players: nada a limpar")
+    return deleted
+
+
 BOOT_ANNOUNCE_NOBOTS_KEY = "boot_announce_nobots_v1"
 
 
@@ -9162,6 +9225,7 @@ async def main():
     asyncio.create_task(scheduler())
     asyncio.create_task(healthcheck())
     asyncio.create_task(identity_card_sweep_job())
+    cleanup_legacy_bot_players()  # one-shot: remove bots cadastrados antes do filtro
     asyncio.create_task(announce_typewriter_feature())
     asyncio.create_task(announce_no_bots_feature())
     asyncio.create_task(log_dump_job())

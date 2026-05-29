@@ -71,6 +71,51 @@ def test_middleware_nao_bloqueia_migracao_de_admin_anonimo():
         is_bot=True, uid=1087968824, migrate_from=-100456)) is True
 
 
+def test_cleanup_remove_bots_legados_e_e_idempotente():
+    """Varredura one-shot remove SO os bots conhecidos (legado pre-filtro),
+    preserva humanos e e idempotente (flag em bot_meta)."""
+    chat = -99900123
+    bot_uid = 1087968824   # @GroupAnonymousBot (confirmado bot)
+    human = 70123          # jogador humano
+    main.ensure_player(chat, bot_uid)
+    main.ensure_player(chat, human)
+    # ref de usuario sob outros nomes de coluna: couples(user1/user2),
+    # gifts(from_user/to_user)
+    main.cur.execute(
+        "INSERT INTO couples (chat_id, user1, user2, source, created_at) "
+        "VALUES (?, ?, ?, 'auto', '2026-01-01')", (chat, bot_uid, human))
+    main.cur.execute(
+        "INSERT INTO gifts (chat_id, from_user, to_user, amount, sent_at) "
+        "VALUES (?, ?, ?, 50, '2026-01-01')", (chat, human, bot_uid))
+    # votes(voter_id) — outra coluna de ref de usuario
+    main.cur.execute(
+        "INSERT INTO votes (couple_id, voter_id, type, created_at) "
+        "VALUES (?, ?, 'like', '2026-01-01')", (999111, bot_uid))
+
+    res = main.cleanup_legacy_bot_players()
+    assert res.get("players", 0) >= 1
+    assert res.get("couples", 0) >= 1
+    assert res.get("gifts", 0) >= 1
+    assert res.get("votes", 0) >= 1
+    assert main.cur.execute(
+        "SELECT 1 FROM votes WHERE voter_id=?", (bot_uid,)).fetchone() is None
+    # bot removido em todas as superficies, humano preservado
+    assert main.cur.execute(
+        "SELECT 1 FROM players WHERE chat_id=? AND user_id=?",
+        (chat, bot_uid)).fetchone() is None
+    assert main.cur.execute(
+        "SELECT 1 FROM players WHERE chat_id=? AND user_id=?",
+        (chat, human)).fetchone() is not None
+    assert main.cur.execute(
+        "SELECT 1 FROM couples WHERE chat_id=? AND (user1=? OR user2=?)",
+        (chat, bot_uid, bot_uid)).fetchone() is None
+    assert main.cur.execute(
+        "SELECT 1 FROM gifts WHERE chat_id=? AND (from_user=? OR to_user=?)",
+        (chat, bot_uid, bot_uid)).fetchone() is None
+    # idempotente: 2a chamada nao faz nada (flag setada)
+    assert main.cleanup_legacy_bot_players() == {}
+
+
 def test_migrations_aplicam_ate_a_ultima_versao():
     v = main.cur.execute("PRAGMA user_version").fetchone()[0]
     assert v >= 14
