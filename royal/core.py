@@ -4301,11 +4301,12 @@ ROYAL_TUTORIAL_PARTS: list[tuple[str, str]] = [
 
         "<blockquote expandable>"
         "<b>>> 🧠 QUIZ REAL</b>\n"
-        "Um <b>admin</b> abre um quiz com <code>/rquiz &lt;tema&gt;</code>: "
-        "a inteligência royal monta as perguntas e o grupo responde em "
-        "<b>enquetes</b>. Quem entrar na rodada e acertar mais leva o "
-        "<b>pódio (top-5)</b>.\n"
-        "<i>// é por diversão: o quiz não dá XP.</i>"
+        "Um <b>admin</b> abre um quiz com <code>/rquiz &lt;tema&gt;</code> e "
+        "escolhe <b>5 ou 10 perguntas</b>: a inteligência royal monta a "
+        "rodada e o grupo responde em <b>enquetes</b>. Entrou e acertou "
+        "mais? Leva o <b>pódio (top-5)</b>.\n"
+        "<i>// no fim fica só o pódio (as enquetes somem) e ele some "
+        "sozinho depois. É por diversão: o quiz não dá XP.</i>"
         "</blockquote>"
 
         "<blockquote expandable>"

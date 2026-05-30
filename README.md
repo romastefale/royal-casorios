@@ -1,641 +1,519 @@
-# 👑 Royal RPG (ex-Royal Casórios)
+<div align="center">
 
-Bot de Telegram de RPG retro-futurista para grupos. Construído com **aiogram 3.28.2** (Python 3.12, Bot API 10), persistência em **SQLite WAL**, renderização de cards 1080×1080 em **Pillow puro** (sem Chromium). Deploy como **worker no Railway**.
+# 👑 RPG — Royal para Geeks
 
-> Identidade visual: 8-bit dystopian. Terminal CRT velho, monospace, ASCII art, paleta escura com acentos ácidos. Cada jogador recebe uma paleta consistente (TOXIC, AMBER, PLASMA, ARCTIC, BIOLAB, BLOOD) derivada do `royal_id`.
+### O reino que vive dentro do seu grupo de Telegram
 
----
+*Um RPG social retro-futurista que transforma a conversa do dia a dia em XP, níveis,
+classes, casórios, raids contra chefões e disputas de quiz — tudo com **cartões 8-bit**
+gerados pelo próprio jogo.*
 
-## 🆕 Novidades (mai/2026)
+<br>
 
-**Onboarding & docs:**
-- 📖 **Tutorial reescrito em 6 partes** super-didáticas (`ROYAL_TUTORIAL_PARTS` + `send_tutorial()`) — cada parte é enviada como mensagem separada, respeitando o limite de 4096 chars do Telegram. Usado por `/start`, `/royaltutorial`, `/royalajuda`, `/help` e o botão "📖 Tutorial".
-- 📝 **README e `/royalajuda` sincronizados** com todos os comandos atuais (presentes, missões, eventos, conquistas, config).
-- 🧹 Limpeza de dead code (imports/vars não usados) + correção de copy falsa no help ("slot extra de casório", nunca implementado).
+<img src="attached_assets/casorios_preview/16_perfil_card.jpg" width="420" alt="Cartão de perfil Royal"/>
 
-**Inteligência royal (custo zero) — invisível ao player:**
-- 🤖 **Ponte @Mira:** a IA roda no bot SEPARADO **@Mira** (do dono); o jogo só solicita/ingere conteúdo pela ponte — nenhuma IA paga dentro do jogo. Exige **Bot-to-Bot Mode** ligado no @BotFather.
-- 📚 **Palavras do dia:** 1×/dia o jogo pede uma leva de palavras à @Mira → banco dinâmico `palavra_pool` (junto da lista fixa, evitando repetir as últimas usadas). A "Palavra da Hora" fica mais variada sem mudar nada pro jogador. Owner testa com `/royalmiratest`.
-- 🧠 **Quiz Real — `/rquiz` (admin):** o admin abre um quiz no grupo (tema livre + 5 ou 10 perguntas geradas pela @Mira). Sai uma **janela de inscrição** (botão Entrar), roda em **enquetes nativas** do Telegram (1 correta, 30s cada) e no fim entrega um **Card top-5** com o placar. Pontuam só os inscritos que acertam; o quiz é efêmero (não dá XP, não persiste entre restarts). Indisponível se a ponte @Mira estiver off.
+<br><br>
 
-**UX viva (Bot API 10):**
-- ⚡ **Bot reage ao seu comando** com `👀` / `✍` antes de responder — feedback instantâneo via `set_message_reaction` (helper `react_to()`)
-- ⌨️ **"Digitando..."** simulado em renders pesados (`type_then_send`, `safe_typing`)
-- 🧹 **Auto-deletar acks efêmeros** (rate-limit, "sem pontos") em N segundos pra não poluir grupo (`auto_delete_after`)
-- 🎨 **Botões coloridos nativos (Bot API 10)** — `style='success'` (verde), `'danger'` (vermelho), `'primary'` (azul) em `InlineKeyboardButton`/`KeyboardButton`. Helper `ikb()` em `main.py:587`. Emoji líder (`BTN_OK ✅`, `BTN_NO ❌`, `BTN_INFO 🔵`, `BTN_WARN ⚠️`) mantido como fallback pra clientes antigos. *Não existe `warning`/amarelo nativo — pra essa categoria só emoji.*
-- 🎉 Message effects (`EFFECT_*`) já em uso em DM 1:1
+`💬 conversar dá XP` · `🏆 temporadas seguem as estações` · `💍 o bot te shippa` · `🐉 boss em grupo` · `🧠 quiz ao vivo` · `🪙 economia 100% interna`
 
+<br>
 
-**Visual do cartão de perfil:**
-- 🎨 **8 sprites 8-bit estilo Stardew** desenhados pixel-por-pixel em grids 10×10 (`SPRITE_SWORD`, `BOOT`, `HEART`, `MASK`, `TROPHY`, `BOOK`, `RINGS`, `COIN`) renderizados via helper genérico `draw_sprite()` acima de cada label
-- 📝 **Abreviações → palavras inteiras:** `FOR/DES/VIT/CAR` → `FORÇA/DESTREZA/VITAL/CARISMA`, `NIVEL`→`NÍVEL`, `RANK`→`POSIÇÃO`, `CASORIOS`→`CASÓRIOS`, `[SIGIL]`→`[BRASÃO]`, `[FACE]`→`[FOTO]`. Chip alargado p/ 184 px, fonte ajustada (40→30 attrs, 28→26 status)
+> 🎮 **É um produto, não um setup.** O jogo roda sozinho no grupo: o bot observa as
+> interações e devolve eventos, cartões e rankings. Ninguém precisa saber jogar —
+> só conversar.
 
-**Bugs corrigidos:**
-- 🐛 **XP off-by-one** em `_build_level_table`: cartão mostrava `XP -282 / 519` no level 1. Adicionado sentinela `append(0)` no índice 1. Level 1 começa em 0 XP e exige 282 p/ subir.
-- 🐛 **`ANON-X` aparecendo como nome do próprio dono** no cartão: `/royalperfil` não populava `users.display_name`, então quando o jogador nunca falava no grupo o fallback caía pro `user_id` numérico e o `anonize()` disparava. Novo helper `refresh_user_identity()` corrige isso sem inflar `message_count` (ver §13).
-
-**Cascata de nome público do user:**
-- `full_name` → `first_name` → `@username` → `ANON-<sufixo>` (último recurso)
-- Aplicado em `display_name(message)` helper + callbacks `r:perfil` e baú
+</div>
 
 ---
 
-## Índice
-1. [Como rodar](#como-rodar)
-2. [Arquitetura](#arquitetura)
-3. [Comandos](#comandos)
-4. [Sistema de XP e Níveis](#xp-e-nivel)
-5. [Atributos, Classes e HP](#atributos-classes-e-hp)
-6. [Economia (Florins 🪙)](#economia)
-7. [Loja & Inventário](#loja--inventário)
-8. [Palavra da Hora](#palavra-da-hora)
-9. [Baú Real](#baú-real)
-10. [Boss Semanal](#boss-semanal)
-11. [Casórios (Shipper)](#casórios)
-12. [Temporadas & Hall da Fama](#temporadas)
-13. [Privacidade & Anonimização](#privacidade)
-14. [Renderização de Cards](#renderização)
-15. [Schema do Banco](#schema)
-16. [Constantes (cheat sheet)](#constantes)
+## 📖 Índice
 
----
-
-<a name="como-rodar"></a>
-## 1. Como rodar
-
-### Secret obrigatório
-- `BOT_TOKEN` — token do @BotFather
-
-### Variáveis opcionais
-| Var | Default | Função |
+| | | |
 |---|---|---|
-| `DATABASE_PATH` | `./data/royal_casorios.sqlite3` | Caminho do SQLite |
-| `TZ` | `America/Sao_Paulo` | Fuso para temporadas e boss |
-| `AUTO_HOURS` | `9,15,21` | Horários dos casórios automáticos |
-
-### Deploy
-Railway (config em `railway.json`). Worker, sem porta HTTP. SQLite local persistido em volume.
-
-```bash
-pip install -r requirements.txt
-python main.py
-```
+| 1. [O que é](#1-o-que-é) | 6. [Economia — Florins 🪙](#6-economia--florins-) | 11. [Quiz Real 🧠](#11-quiz-real-) |
+| 2. [O ciclo do jogo](#2-o-ciclo-do-jogo) | 7. [Loja & Inventário](#7-loja--inventário) | 12. [Missões & Eventos](#12-missões--eventos) |
+| 3. [Comandos](#3-comandos) | 8. [Palavra da Hora 🎯](#8-palavra-da-hora-) | 13. [Temporadas & Hall da Fama](#13-temporadas--hall-da-fama) |
+| 4. [XP & Níveis](#4-xp--níveis) | 9. [Baú Real 🎁](#9-baú-real-) | 14. [Privacidade](#14-privacidade) |
+| 5. [Atributos, Classes & HP](#5-atributos-classes--hp) | 10. [Boss Semanal 🐉](#10-boss-semanal-) | 15. [Galeria de cartões](#15-galeria-de-cartões) |
 
 ---
 
-<a name="arquitetura"></a>
-## 2. Arquitetura
+## 1. O que é
 
-```
-main.py            # bot completo (~3.650 linhas): handlers, gameplay, scheduler, DB
-royal_render.py    # cards 1080×1080 e 1080×540 com Pillow (~1.000 linhas)
-royal_words.py     # 154 palavras PT-BR + 35 charadas
-requirements.txt   # aiogram>=3.28.2, Pillow>=11.0.0
-railway.json       # deploy config
-```
+O **Royal para Geeks** é um bot de RPG **para grupos de Telegram**. Ele acompanha o que
+acontece no chat e transforma isso num jogo de progressão contínua:
 
-**Scheduler** roda a cada 20 s e cuida de:
-- spawn de Palavra da Hora
-- timeout de palavra (5/7/10 min ± jitter)
-- spawn de baú 30 min depois da palavra
-- expiração de baú 30 min depois do spawn
-- spawn semanal do boss (Domingo 20h)
-- rotação automática de temporada
-- flush dos buffers `activity_buffer` e `pair_buffer` (reduz IO)
-- casórios automáticos em `AUTO_HOURS`
+- 🗣️ **Cada mensagem vira XP.** Quem participa, sobe de nível.
+- 🎭 **Cada jogador tem uma ficha:** classe, atributos, HP, inventário e um **Royal ID** público.
+- 🎉 **O bot cria eventos sozinho:** Palavra da Hora, Baús, Boss semanal, casórios automáticos e quizzes.
+- 🖼️ **Tudo vira imagem.** Perfis, rankings e pódios saem como **cartões 1080×1080** num estilo
+  *8-bit distópico* (terminal CRT velho, ASCII, paleta ácida) — cada jogador ganha uma paleta única.
+- 🪙 **Economia interna de florins.** Ganha-se jogando, gasta-se na loja do jogo. **O bot nunca cobra nada.**
 
-**SQLite WAL** com `synchronous=NORMAL` e `busy_timeout=5000` ms (suporta concorrência alta).
+<div align="center">
+<table>
+<tr>
+<td align="center"><img src="attached_assets/casorios_preview/17_ranking_card.jpg" width="250"/><br><sub><b>Pódio da temporada</b></sub></td>
+<td align="center"><img src="attached_assets/casorios_preview/18_quiz_card.jpg" width="250"/><br><sub><b>Placar do Quiz</b></sub></td>
+<td align="center"><img src="attached_assets/casorios_preview/13_boss_75pct.jpg" width="250"/><br><sub><b>Boss da semana</b></sub></td>
+</tr>
+</table>
+</div>
 
 ---
 
-<a name="comandos"></a>
+## 2. O ciclo do jogo
+
+```
+        ┌──────────────────────────────────────────────────────────┐
+        │                    VOCÊ CONVERSA NO GRUPO                  │
+        └──────────────────────────────────────────────────────────┘
+                                     │
+              +2 XP/msg · +5 XP/reply · +3 XP/reação (cap diário)
+                                     ▼
+        ┌──────────────┐      sobe de    ┌──────────────────────────┐
+        │  GANHA XP     │ ───────────▶   │  SOBE DE NÍVEL            │
+        │  & FLORINS    │      nível      │  +3 pontos de atributo    │
+        └──────────────┘                 └──────────────────────────┘
+              │                                        │
+              │ gasta na loja                          │ distribui em FOR/DES/VIT/CAR
+              ▼                                        ▼
+        ┌──────────────┐                 ┌──────────────────────────┐
+        │  INVENTÁRIO   │                 │  FICHA MAIS FORTE        │
+        │  equipa itens │ ───────────▶   │  + dano, + HP, + carisma  │
+        └──────────────┘                 └──────────────────────────┘
+                                     │
+        eventos automáticos que o bot solta no grupo o dia inteiro:
+                                     ▼
+   🎯 Palavra da Hora   🎁 Baú Real   🐉 Boss semanal   💍 Casórios   🧠 Quiz   🎰 Caça-níquel
+                                     │
+                                     ▼
+        ┌──────────────────────────────────────────────────────────┐
+        │   RANKING DA TEMPORADA  →  HALL DA FAMA quando a estação vira │
+        └──────────────────────────────────────────────────────────┘
+```
+
+**A cada estação do ano** o ranking zera, o Top 10 é eternizado no **Hall da Fama** e todo
+mundo pode trocar de classe de novo. O jogo nunca "acaba".
+
+---
+
 ## 3. Comandos
 
-### Hub
-| Comando | Função |
-|---|---|
-| `/royal` | Abre o Hub/Terminal principal (botões inline) |
-| `/royalajuda`, `/help` | Lista comandos |
-| `/royaltutorial` | Tutorial guiado |
+Tudo começa com **`/royal`** (o Hub) ou **`/royaltutorial`**. Lista completa:
 
-### Perfil & Progressão
-| Comando | Função |
+### 🏰 Geral & Perfil
+| Comando | O que faz |
 |---|---|
-| `/royalperfil [RYL-ID]`, `/royalficha` | Card 1080×1080 com stats. Sem ID, mostra o seu. |
-| `/royalavatar` | Escolhe/troca avatar (1× por temporada) |
-| `/royalup` | Distribui pontos de atributo (1 por clique) |
-| `/royalclasse` | Escolhe/troca classe (1× por temporada) |
-| `/royalsaldo` | Mostra ouro atual |
-| `/royalinventario` | Lista itens + botões equipar/usar |
-| `/royalloja` | Compra itens com florins 🪙 |
+| `/royal` | Abre o Hub/Terminal principal (menu de botões) |
+| `/royalperfil [RYL-ID]` · `/royalficha` | Seu cartão de identidade. Com um ID, mostra o de outro nobre. |
+| `/royalavatar` | Escolhe/troca o avatar (1× por temporada) |
+| `/royalup` | Distribui pontos de atributo conquistados |
+| `/royalclasse` | Escolhe/troca a classe (1× por temporada) |
+| `/royaltutorial` · `/royalajuda` · `/help` | Tutorial guiado + manual completo |
 
-### Rankings & PvE
-| Comando | Função |
+### 💰 Economia & Itens
+| Comando | O que faz |
 |---|---|
-| `/royalranking` | Top 10 da temporada (XP) |
+| `/royalsaldo` | Quantos florins 🪙 você tem |
+| `/royalloja` | Compra itens com florins |
+| `/royalinventario` | Lista itens + equipar/usar |
+| `/royalpresentear @user N` | Transfere N florins (10–5000); também via *reply* |
+
+### 🎯 Eventos & Rankings
+| Comando | O que faz |
+|---|---|
+| `/royalranking` | Top 10 da temporada (por XP) |
 | `/royalpalavra` | Status da Palavra da Hora |
-| `/royalboss` | Status/HP do boss semanal |
+| `/royalboss` | Status/HP do boss da semana e dá o golpe |
+| `/rquiz <tema>` | **(admin)** Abre um quiz ao vivo no grupo |
+| `/royalmissoes` | 4 missões diárias → resgata XP + florins |
+| `/royalevento` | Mostra o boost de XP ativo agora |
+| `/royalconquistas` | Suas medalhas (desbloqueadas/bloqueadas) |
 
-### Casórios
-| Comando | Função |
+### 💍 Casórios (Shipper)
+| Comando | O que faz |
 |---|---|
-| `/royalcasar`, `/querocasar` | (admin) Força casamento agora |
-| `/royalencalhar`, `/encalhado` | Opt-out do shipper |
-| `/royaldesencalhar`, `/desencalhar` | Volta a participar |
-| `/royalmeuscasorios`, `/meusdivorcios` | Seu histórico + top pares |
-| `/royalcasorios`, `/divorcios` | Ranking de casais do grupo |
+| `/royalcasar` · `/querocasar` | **(admin)** Força um casamento agora |
+| `/royalmeuscasorios` | Seu histórico + top pares |
+| `/royalcasorios` | Ranking de casais do grupo |
+| `/royalencalhar` · `/royaldesencalhar` | Sair / voltar pro shipper |
 
-### Social & Economia
-| Comando | Função |
+### 🔒 Conta & Privacidade
+| Comando | O que faz |
 |---|---|
-| `/royalpresentear @user N` | Transfere N florins 🪙 (10–5000). Também via reply + `/royalpresentear N` |
-| `/royalconquistas` | Lista suas medalhas (desbloqueadas/bloqueadas) |
-
-### Diário & Eventos
-| Comando | Função |
-|---|---|
-| `/royalmissoes` | 4 missões diárias (msgs, Palavra, boss, reações) → resgata XP + 🪙 |
-| `/royalevento` | Mostra o boost de XP ativo (datas especiais + fim de semana) |
-| `/royalconfig` | Preferências (privacidade no ranking, etc.) |
-
-### DM
-| Comando | Função |
-|---|---|
-| `/royalgrupo` | Vê/troca o grupo Royal ativo na DM (quando você está em vários) |
-
-### Admin / Privacidade
-| Comando | Função |
-|---|---|
-| `/royalativar`, `/noivado` | (admin) Ativa o bot no grupo |
+| `/royalconfig` | Preferências (esconder do ranking, etc.) |
 | `/royalprivacidade` | Esconder/mostrar nos rankings |
-| `/royaldados` | Exportar ou apagar (GDPR) |
+| `/royaldados` | Exportar ou apagar seus dados |
+| `/royalgrupo` | Trocar o grupo Royal ativo na sua DM |
+| `/royalativar` | **(admin)** Liga o bot no grupo |
 
-### Menu Privado (botões)
-- `👑 Reino` → `/royal`
-- `📖 Tutorial` → tutorial
-- `📊 Meus casórios` → `/royalmeuscasorios`
-- `❓ Como funciona` → ajuda
+> 🔗 **Modo inline:** digite `@nome_do_bot` em **qualquer** conversa para enviar seu cartão de perfil.
 
 ---
 
-<a name="xp-e-nivel"></a>
 ## 4. XP & Níveis
 
-### Tabela
-Calculada via `_LEVEL_TABLE` em `level_progress(xp)`. Curva quadrática suave; cada level exige mais XP que o anterior.
+A curva de níveis é **quadrática suave**: cada nível pede um pouco mais de XP que o anterior.
+O nível 1 começa em **0 XP** e exige **282 XP** para passar pro nível 2 — e a partir daí a
+exigência cresce de forma constante.
 
-### Como ganhar XP
+### 💡 De onde vem o XP
 
 | Ação | XP | Cooldown |
-|---|---|---|
-| Mensagem normal | **2** | 60 s |
-| Reply para outro user | **5** | 30 s |
-| Vencer Palavra da Hora | **+150** | — |
-| Participar da palavra (não venceu) | **30–75** (random) | — |
-| Tentou palavra errada | **+5** consolação | — |
-| Casamento formado | **+25** (ambos) | — |
-| Voto ❤️ no casamento | **+2** | — |
-| Atacar boss | **2 + (dano)** | 300 s (5 min) |
-| Tomo de Sabedoria 📚 (item) | **+100** | — |
-| Baú Real (1º…5º) | **150 / 100 / 75 / 50 / 25** | — |
+|---|---:|---|
+| 💬 Mensagem normal | **+2** | 60 s |
+| ↩️ Responder alguém | **+5** | 30 s |
+| 😀 Reagir a uma mensagem | **+3** | até **10/dia** |
+| 🎯 **Vencer** a Palavra da Hora | **+150** | — |
+| 🎯 Participar (chegou perto) | **+30 a +75** | — |
+| 🎯 Tentou e errou | **+5** (consolação) | — |
+| 🎁 Baú Real (1º→5º) | **150 / 100 / 75 / 50 / 25** | — |
+| 🐉 Atacar o boss | **2 + dano causado** | 5 min |
+| 💍 Casamento formado | **+25** (os dois) | — |
+| ❤️ Votar num casamento | **+2** | — |
+| 📚 Tomo de Sabedoria (item) | **+100** | — |
+| 🎰 Caça-níquel (trinca) | **+20** · jackpot **+100** | até 5/dia |
 
-### Bônus multiplicativos (cumulativos)
-- **Classe Cronista 📜** → **+10 % XP**
-- **Casado nos últimos 14 dias** → **+10 % XP** (`COUPLE_XP_BUFF`)
+### ✖️ Bônus multiplicativos (se acumulam)
 
-### Level-up
-- Notifica o jogador via DM (se possível) com card 1080×540
-- Concede **3 pontos de atributo** (`PTS_PER_LEVEL`) para gastar em `/royalup`
+| Bônus | Efeito |
+|---|---|
+| 📜 Classe **Cronista** | **+10% de todo XP** |
+| 💍 **Casado** (últimos 14 dias) | **+10% de todo XP** |
+| 🎉 **Evento ativo** | **+50% a +100%** (veja §12) |
+
+> **🧮 Exemplo de cálculo.** Uma **Cronista** que também está **casada** vence a Palavra da Hora:
+> ```
+> 150 XP  ×  1,10 (Cronista)  ×  1,10 (casada)  ≈  181 XP
+> ```
+> E se isso cair num fim de semana (+50%): `181 × 1,5 ≈ 272 XP` numa única vitória. 🚀
+
+### ⬆️ Quando você sobe de nível
+- 🔔 O grupo te parabeniza com uma menção (sem floodar a DM de ninguém).
+- 🎁 Você ganha **3 pontos de atributo** para gastar em `/royalup`.
 
 ---
 
-<a name="atributos-classes-e-hp"></a>
 ## 5. Atributos, Classes & HP
 
-### Atributos (start = 5 cada)
-| Sigla | Efeito |
-|---|---|
-| **FOR** | Dano no boss: `FOR + random(1, 10)` |
-| **DES** | Reservado p/ esquiva e cooldowns futuros |
-| **VIT** | +10 HP máx por ponto |
-| **CAR** | Score no shipper / casórios |
+### 🎲 Atributos (todos começam em **5**)
 
-**Atributo efetivo** = base + bônus de classe + bônus de equipamento.
+| Sigla | Nome | Para que serve |
+|---|---|---|
+| **FOR** | Força | Dano no boss: `FOR + sorte(1–10)` |
+| **DES** | Destreza | Agilidade (esquiva/cooldowns futuros) |
+| **VIT** | Vitalidade | **+10 de HP máximo** por ponto |
+| **CAR** | Carisma | Peso no shipper / casórios |
 
-### Classes
+> **Atributo efetivo** = base **+** bônus da classe **+** bônus do equipamento.
+
+### 🎭 Classes (troca 1× por temporada)
+
 | Classe | Bônus |
 |---|---|
-| 👑 **Monarca** | +20 % HP base |
+| 👑 **Monarca** | +20% de HP base |
 | 🗡️ **Cavaleiro** | +2 FOR |
 | 🌹 **Cortesã** | +2 CAR |
 | 🧙 **Bruxo** | +2 DES |
-| 📜 **Cronista** | +10 % XP |
-| 🗝️ **Bobo** | +50 % ouro |
+| 📜 **Cronista** | +10% de XP |
+| 🗝️ **Bobo** | +50% de florins |
 
-> Troca de classe permitida **1× por temporada**.
+### ❤️ HP máximo
 
-### HP máximo
 ```
-hp_max = (50 + VIT * 10 + level * 5)
-       * (1.20 se Monarca senão 1.0)
-       + 10 por bônus VIT de item equipado
+HP máx = ( 50  +  VIT × 10  +  nível × 5 )  ×  ( 1,20 se Monarca, senão 1,0 )
 ```
 
-HP regenera 100 % consumindo **Poção de Vigor 🧪**.
+> **🧮 Exemplo.** Um **Monarca** nível 12 com **VIT 13**:
+> ```
+> ( 50 + 13×10 + 12×5 ) × 1,20  =  ( 50 + 130 + 60 ) × 1,20  =  240 × 1,20  =  288 HP
+> ```
+> O mesmo personagem, sem ser Monarca, teria **240 HP**. O HP volta a 100% com a **Poção de Vigor 🧪**.
 
 ---
 
-<a name="economia"></a>
 ## 6. Economia — Florins 🪙
 
-- **Saldo inicial:** 50 🪙
-- **Ganhos:**
-  - Vencer palavra → **50 🪙**
-  - Matar boss → **500 🪙** divididos **proporcionalmente ao dano** entre todos que bateram
-  - Baú Real → **10 🪙** por slot
-  - Bobo 🗝️ → todos os ganhos × 1.5
-- **Gastos:** apenas na `/royalloja`.
+A única moeda é o **florim**. Não há compra com dinheiro real, item pago, nem assinatura —
+**o bot jamais cobra nada**. Tudo gira dentro do jogo.
+
+| | Florins |
+|---|---:|
+| 💰 Saldo inicial | **50** |
+| 🎯 Vencer a Palavra | **+50** |
+| 🐉 Matar o boss (em grupo) | **500 no total**, divididos *proporcionalmente ao dano* |
+| 🎁 Baú Real | **+10** por posição |
+| 🎰 Caça-níquel (trinca) | **+30** · jackpot **+200** |
+| 🗝️ Classe **Bobo** | **todos os ganhos × 1,5** |
+
+> **🧮 Exemplo.** Um **Bobo** vence a Palavra: `50 × 1,5 = 75 🪙`. Mata o boss e teria 80 de
+> recompensa: `80 × 1,5 = 120 🪙`. O florim só sai do bolso na **loja** ou em **`/royalpresentear`**.
+
+<div align="center">
+<table>
+<tr>
+<td align="center"><img src="attached_assets/casorios_preview/08_saldo_normal.jpg" width="230"/><br><sub>saldo comum</sub></td>
+<td align="center"><img src="attached_assets/casorios_preview/10_saldo_rico.jpg" width="230"/><br><sub>arca cheia</sub></td>
+<td align="center"><img src="attached_assets/casorios_preview/09_saldo_zero.jpg" width="230"/><br><sub>falido</sub></td>
+</tr>
+</table>
+</div>
 
 ---
 
-<a name="loja--inventário"></a>
 ## 7. Loja & Inventário
 
 | Item | Preço | Tipo | Efeito |
-|---|---|---|---|
-| 🧪 Poção de Vigor | 50 🪙 | consumível | Restaura HP completo |
-| 🥾 Botas Ágeis | 150 🪙 | equip | +2 DES |
-| 🗡️ Espada de Ferro | 200 🪙 | equip | +3 FOR |
-| 🛡️ Armadura de Couro | 200 🪙 | equip | +2 VIT (= +20 HP) |
-| 💍 Anel da Corte | 250 🪙 | equip | +2 CAR |
-| 📚 Tomo de Sabedoria | 300 🪙 | consumível | +100 XP instantâneo |
-| 👑 Coroa Decorativa | 500 🪙 | cosmético | Mostra no perfil |
+|---|---:|---|---|
+| 🧪 Poção de Vigor | 50 🪙 | consumível | Restaura **todo** o HP |
+| 🥾 Botas Ágeis | 150 🪙 | equipar | +2 DES |
+| 🗡️ Espada de Ferro | 200 🪙 | equipar | +3 FOR |
+| 🛡️ Armadura de Couro | 200 🪙 | equipar | +2 VIT (= +20 HP) |
+| 💍 Anel da Corte | 250 🪙 | equipar | +2 CAR |
+| 📚 Tomo de Sabedoria | 300 🪙 | consumível | **+100 XP** na hora |
+| 👑 Coroa Decorativa | 500 🪙 | cosmético | Aparece no perfil |
 
-Só pode ter **1 equipamento de cada tipo** ativo (espada/armadura/botas/anel).
+> Só **1 equipamento de cada tipo** fica ativo por vez (espada, armadura, botas, anel).
 
-> 💸 **O bot nunca cobra nada.** Toda a economia é interna, em florins 🪙 (ganhos no jogo, gastos na
-> loja in-game e em `/royalpresentear`). Não há itens pagos de nenhum tipo.
-
----
-
-<a name="palavra-da-hora"></a>
-## 8. Palavra da Hora
-
-- **Spawn:** automático pelo scheduler, com janela de `5 / 7 / 10` min (`PALAVRA_DURATIONS_MIN`) ± 60 s de jitter
-- **Tipos:** Anagrama, Letras Faltando, **Charada** (25 % de chance)
-- **Banco:** 154 palavras de 4–8 letras (`royal_words.PALAVRAS`) + 35 charadas
-- **Como jogar:** primeiro que digitar a palavra normalizada no chat vence
-- **Anti-bot:** cooldown de **3 s** entre tentativas por user (`PALAVRA_ATTEMPT_COOLDOWN_SEC`)
-- **Recompensas:**
-  - Vencedor: **150 XP + 50 🪙** (effect 🎉 PARTY em DM)
-  - Quem tentou e errou: **5 XP** consolação
-  - Quem tentou e estava perto: **30–75 XP** (random)
+<div align="center">
+<table>
+<tr>
+<td align="center"><img src="attached_assets/casorios_preview/11_loja_normal.jpg" width="260"/><br><sub><b>A loja</b></sub></td>
+<td align="center"><img src="attached_assets/casorios_preview/07_inventario_8itens_cheio.jpg" width="260"/><br><sub><b>Inventário cheio</b></sub></td>
+</tr>
+</table>
+</div>
 
 ---
 
-<a name="baú-real"></a>
-## 9. Baú Real
+## 8. Palavra da Hora 🎯
 
-- **Spawn:** **30 min depois** de toda Palavra resolvida (`CHEST_DELAY_MIN`)
-- **TTL:** **30 min** para abrir (`CHEST_TTL_MIN`)
-- **Capacidade:** primeiros **5** clicantes (`CHEST_MAX_CLAIMS`)
-- **Recompensas por ordem:**
+De tempos em tempos o bot solta um desafio de palavra no grupo. **O 1º a digitar a resposta certa vence.**
+
+| Parâmetro | Valor |
+|---|---|
+| ⏱️ Janela aberta | **5 / 7 / 10 min** (sorteado, ± jitter) |
+| 🧩 Tipos | Anagrama · Letras Faltando · **Charada** (~25% das vezes) |
+| 🏆 Prêmio do vencedor | **150 XP + 50 🪙** |
+| 🙌 Quem chegou perto | **30 a 75 XP** |
+| 😅 Quem tentou e errou | **5 XP** (consolação) |
+| 🛡️ Anti-spam | **3 s** de cooldown entre tentativas |
+
+> 🧠 As palavras vêm de um banco que se **renova sozinho** com a *inteligência royal* (veja §11),
+> então o jogo quase nunca repete o mesmo desafio.
+
+<div align="center">
+<table>
+<tr>
+<td align="center"><img src="attached_assets/casorios_preview/palavra_1.jpg" width="240"/></td>
+<td align="center"><img src="attached_assets/casorios_preview/palavra_2.jpg" width="240"/></td>
+<td align="center"><img src="attached_assets/casorios_preview/palavra_3.jpg" width="240"/></td>
+</tr>
+</table>
+</div>
+
+---
+
+## 9. Baú Real 🎁
+
+**30 minutos depois** de cada Palavra resolvida, um baú aparece no grupo. Os **5 primeiros** a
+clicar abrem um slot (1 slot por pessoa).
 
 | Posição | XP | 🪙 |
-|---|---|---|
-| 1º | 150 | 10 |
-| 2º | 100 | 10 |
-| 3º | 75 | 10 |
+|:---:|---:|---:|
+| 🥇 1º | 150 | 10 |
+| 🥈 2º | 100 | 10 |
+| 🥉 3º | 75 | 10 |
 | 4º | 50 | 10 |
 | 5º | 25 | 10 |
 
-Cada user só pode reclamar **1 slot por baú**.
+O baú fica **30 min** disponível. Reflexo conta. ⚡
 
 ---
 
-<a name="boss-semanal"></a>
-## 10. Boss Semanal
+## 10. Boss Semanal 🐉
 
-- **Spawn:** todo **Domingo às 20h** local (`BOSS_SPAWN_WEEKDAY=6`, `BOSS_SPAWN_HOUR=20`), idempotente via `current_week_marker`
-- **Nomes (random):** 🐉 Dragão da Corte · 👹 Ogro do Pântano · 💀 Lich Ancião · 🦂 Escorpião Real · 🦇 Vampiro da Torre · 🐺 Lobo das Sombras
-- **HP:** `max(500, n_players × 200)` — escala com o grupo
-- **Ataque:**
-  - Cooldown **300 s (5 min)** por jogador
-  - Dano: `FOR_efetivo + random(1, 10)`
-  - XP por hit: **2 + dano**
-- **Loot (kill):** 500 🪙 totais distribuídos proporcionalmente ao dano (effect 🔥 FIRE no golpe final)
+Todo **domingo às 20h** nasce um chefão e o **grupo inteiro ataca junto** — é cooperativo.
 
----
+| Mecânica | Como funciona |
+|---|---|
+| ❤️ HP do boss | `máx( 500 , nº de jogadores × 200 )` — escala com o grupo |
+| ⚔️ Seu dano | `FOR efetivo + sorte(1–10)` |
+| ⭐ XP por golpe | `2 + dano` |
+| ⏱️ Cooldown | **5 min** entre os seus ataques |
+| 🪙 Loot da morte | **500 florins** divididos *proporcionalmente ao dano de cada um* |
 
-<a name="casórios"></a>
-## 11. Casórios (Shipper)
+> **🧮 Exemplo.** Grupo de **30 jogadores** → boss com `30 × 200 = 6.000 HP`. Um Cavaleiro com
+> **FOR 15** causa de **16 a 25** de dano por golpe. Quem mais bate, mais leva do butim. 💰
 
-### Formação automática
-- **3× por dia** nos horários de `AUTO_HOURS` (default `9, 15, 21`)
-- Algoritmo casa quem tem maior **afinidade** mas ainda não ficou junto recentemente
-- Mínimo de afinidade: **5** (`MIN_PAIR_SCORE`)
-
-### Afinidade
-Score acumulado em `pair_scores`:
-- Reply pra outro user → **+6**
-- Mencionar → **+4**
-- Estar ativo na mesma janela de 3 min (`RECENT_WINDOW_SECONDS=180`) → **+1**
-
-### Recompensas do casamento
-- **+25 XP** para os dois (effect ❤️ HEART)
-- **+10 % XP** durante 14 dias enquanto "casado"
-- Voto ❤️ de espectador rende **+2 XP** ao votante
-
-### Comandos
-- `/royalencalhar` desativa você do pool
-- `/royalcasar` (admin) força o casamento imediato
-- `/royalmeuscasorios` mostra seu histórico + TOP PARES
-- `/royalcasorios` ranking de casais mais frequentes
+<div align="center">
+<table>
+<tr>
+<td align="center"><img src="attached_assets/casorios_preview/15_boss_full.jpg" width="240"/><br><sub>HP cheio</sub></td>
+<td align="center"><img src="attached_assets/casorios_preview/13_boss_75pct.jpg" width="240"/><br><sub>75%</sub></td>
+<td align="center"><img src="attached_assets/casorios_preview/14_boss_15pct.jpg" width="240"/><br><sub>quase lá</sub></td>
+</tr>
+</table>
+</div>
 
 ---
 
-<a name="temporadas"></a>
-## 12. Temporadas & Hall da Fama
+## 11. Quiz Real 🧠
 
-- Fuso **hemisfério sul**:
-  - 🌸 **Primavera** 22/09 → 20/12
-  - ☀️ **Verão** 21/12 → 19/03 (cruza ano)
-  - 🍂 **Outono** 20/03 → 20/06
-  - ❄️ **Inverno** 21/06 → 21/09
-- **Código:** `verao-2026`, `outono-2026`… ano = ano em que a estação **termina**
-- **Rotação automática:** scheduler detecta mudança, então:
-  1. Salva **Top 10** em `season_hall` (snapshot anonimizado)
-  2. Zera `season_xp` de todos
-  3. Posta o Hall da Fama no grupo
-  4. Libera nova troca de classe
+Um **administrador** abre um quiz ao vivo com **`/rquiz <tema>`** e escolhe **5 ou 10 perguntas**.
+A *inteligência royal* monta a rodada sobre o tema pedido e o grupo responde em **enquetes nativas
+do Telegram**.
+
+| Etapa | O que acontece |
+|---|---|
+| 1️⃣ Inscrição | Sai uma janela com botão **Entrar** — só inscritos pontuam |
+| 2️⃣ Rodada | Cada pergunta vira uma enquete (1 resposta certa, ~30 s) |
+| 3️⃣ Placar | No fim, um **cartão Top-5** mostra quem mais acertou |
+| 🧹 Limpeza | As enquetes somem e **fica só o pódio** — que se apaga sozinho depois |
+
+> 🎈 O quiz é **por diversão**: não dá XP nem mexe no ranking da temporada. É um show à parte,
+> que não polui o grupo.
+
+<div align="center">
+<img src="attached_assets/casorios_preview/18_quiz_card.jpg" width="360" alt="Cartão do Quiz"/>
+</div>
 
 ---
 
-<a name="privacidade"></a>
-## 13. Privacidade & Anonimização
+## 12. Missões & Eventos
 
-Política: **nunca** vazar `user_id` numérico do Telegram em caption, mensagem ou registro persistido.
+### 🗺️ Missões diárias (`/royalmissoes`)
 
-### Royal ID
-- Formato `RYL-XXXX` (4 dígitos por grupo)
-- Alocação sequencial via tabela `royal_id_seq`
-- Único identificador público
-
-### Cascata de nome público (`display_name(message)`)
-Helper define o que vai parar em `users.display_name`:
-1. `full_name` (Telegram display name completo) — preferido
-2. `first_name` (só primeiro nome)
-3. `@username` (handle público) — fallback
-4. `""` vazio → chamador decide ANON via `anonize`
-
-Mesma cascata aplicada inline nos callbacks (`r:perfil` no hub, claim de baú).
-
-### Helper `anonize(name, royal_id)`
-Se `name` é numérico (= user_id leakado) ou vazio, retorna `ANON-NN` derivado determinístico do `royal_id` (`ANON-1`…`ANON-99`).
-
-### Helper `get_anon_name(chat_id, user_id)`
-JOIN único em `users + players`, já aplica `anonize` automaticamente. **Sempre** use isso para renderizar nome de terceiros.
-
-### Helper `refresh_user_identity(chat_id, user_id, name, username)`
-Atualiza **só** `display_name`/`username`/`last_seen` em `users`. **Não** incrementa `message_count` — pode ser chamado a partir de DM ou callback sem distorcer ranking/shipper do grupo. Use sempre antes de renderizar perfil/cartão p/ garantir que o nome vivo do Telegram esteja no DB e o `anonize` não dispare pro próprio dono. Aplicado em:
-- `/royalperfil` sem arg (branches grupo + DM)
-- `/royalperfil RYL-XXXX` quando target == requisitante
-- Callback `r:perfil` do hub inline
-
-### Cobertura (11/11 sites)
-| # | Onde | Função |
+| Missão | Meta | Recompensa |
 |---|---|---|
-| 1–4 | Cards de perfil, level-up, captions | `anonize(get_name, royal_id)` |
-| 5 | Casamento (anúncio) | `get_anon_name` |
-| 6 | Boss kill drops | `get_anon_name` |
-| 7 | Hall da Fama (**persistido em DB**) | `anonize` |
-| 8 | Ranking público | `anonize` |
-| 9 | Meus casórios → TOP PARES | `get_anon_name` |
-| 10 | `/royalcasorios` ranking | `get_anon_name` |
-| 11 | Callback hub casórios | `get_anon_name` |
+| 💬 Mande mensagens no reino | 20 | **60 XP + 30 🪙** |
+| 🎯 Acerte 1 Palavra da Hora | 1 | **80 XP + 50 🪙** |
+| 🐉 Acerte o boss da semana | 3× | **50 XP + 40 🪙** |
+| 👍 Reaja a mensagens | 5 | **30 XP + 20 🪙** |
 
-### `/royalprivacidade`
-- `privacy_hide_stats` → esconde do ranking público
-- `privacy_hide_photo` → não usa foto real no card (só sigil procedural)
+> ✅ Fechando as quatro num dia: **220 XP + 140 🪙**.
 
-### `/royaldados` (GDPR)
-- **Export** → dump JSON dos dados pessoais
-- **Wipe** → apaga `players`, `pair_scores`, `couples`, `inventory`, mantém `royal_id` reservado
+### 🎉 Eventos de XP (`/royalevento`)
 
----
+| Evento | Boost |
+|---|---|
+| 📅 **Todo fim de semana** | **+50% XP** |
+| 🎆 Reveillon Real (31/12–01/01) | **×2** |
+| 🎄 Natal dos Nobres (24–25/12) | **×2** |
+| 🔥 Festa Junina Real (23–24/06) | ×1,5 |
+| 🎃 Noite Sombria (31/10) | ×1,5 |
+| ❤️ Dia dos Namorados (12/06) | ×1,5 |
 
-<a name="renderização"></a>
-## 14. Renderização de Cards
+### 🎰 Caça-níquel
+Mande o emoji 🎰 no grupo: se a **trinca** bater, leva **20 XP + 30 🪙**; o jackpot **7️⃣7️⃣7️⃣**
+dobra para **100 XP + 200 🪙**. Até **5 prêmios por dia**.
 
-Tudo via **Pillow puro** em `royal_render.py`. Sem headless browser.
+### 🏅 Conquistas (`/royalconquistas`)
 
-### Funções públicas
-| Função | Tamanho | Uso |
-|---|---|---|
-| `render_profile_card(data, avatar_bytes)` | 1080×1080 | `/royalperfil` |
-| `render_ranking_card(season_label, entries)` | 1080×1080 | Pódio do `/royalranking` |
-| `render_levelup_card(royal_id, name, lvl, class_name)` | 1080×540 | (legado, sem uso — level-up agora é só anúncio no grupo) |
-
-Render roda em `asyncio.to_thread(...)` para não travar o loop.
-
-### Paleta base (dystopian)
-| Token | RGB | Uso |
-|---|---|---|
-| `BG_DEEP` | (12, 10, 14) | vazio cósmico |
-| `BG` | (22, 18, 22) | painel CRT |
-| `INK` | (210, 196, 168) | texto bone |
-| `DIM` | (112, 96, 84) | texto secundário |
-| `HOT` | (192, 50, 50) | HP / alerta |
-| `ACID` | (130, 198, 80) | toxic |
-| `CYAN` | (88, 188, 200) | hologram |
-| `GOLD` | (192, 152, 64) | XP / coroa |
-| `RUST` | (140, 70, 40) | ferrugem |
-| `PURPLE` | (110, 70, 132) | corruption |
-| `AMBER` | (220, 140, 60) | terminal CRT |
-| `MAGENTA` | (200, 90, 160) | plasma glitch |
-| `NEON_BLUE` | (80, 140, 220) | hologram blue |
-| `JADE` | (60, 180, 130) | biolab |
-
-### Variantes por `royal_id` (`pick_palette`)
-| Variante | Header | Footer | Level | XP |
-|---|---|---|---|---|
-| **TOXIC** | ACID | RUST | GOLD | ACID |
-| **AMBER** | AMBER | RUST | AMBER | AMBER |
-| **PLASMA** | MAGENTA | PURPLE | MAGENTA | MAGENTA |
-| **ARCTIC** | NEON_BLUE | CYAN | CYAN | NEON_BLUE |
-| **BIOLAB** | JADE | ACID | GOLD | JADE |
-| **BLOOD** | HOT | RUST | GOLD | HOT |
-
-### `load_font(size)` — escala anti-Railway
-| Faixa | Escala | Piso |
-|---|---|---|
-| `< 14` | ×1.55 | 22 px |
-| `14–63` | ×1.6 | 26 px |
-| `64–119` | ×1.10 | — |
-| `≥ 120` | sem escala | — |
-
-Fallback se nenhum truetype existir: `ImageFont.load_default(size=scaled)` (Pillow ≥ 10.1).
-
-### Avatar híbrido
-1. **Brasão principal:** `procedural_sigil()` 10×10, ~55 % densidade, espelhado horizontalmente — determinístico por `royal_id`. Tag `[ BRASÃO ]`
-2. **Thumbnail:** foto real 92×92 pixelizada (downscale 36×36 → quantize 16 cores → upscale NEAREST), tag `[ FOTO ]`
-
-### Sprites 8-bit estilo Stardew (`draw_sprite`)
-8 sprites desenhados pixel-por-pixel em grids 10×10, renderizados acima de cada label nos painéis ATRIBUTOS (scale 3 = 30 px) e STATUS (scale 2 = 20 px):
-
-| Sprite | Label | Cor (variante por paleta) |
-|---|---|---|
-| `SPRITE_SWORD` ⚔️ | FORÇA | acento header |
-| `SPRITE_BOOT` 👢 | DESTREZA | acento header |
-| `SPRITE_HEART` ❤️ | VITAL | HOT |
-| `SPRITE_MASK` 🎭 | CARISMA | CYAN |
-| `SPRITE_TROPHY` 🏆 | POSIÇÃO | GOLD |
-| `SPRITE_BOOK` 📜 | PALAVRAS | acento header |
-| `SPRITE_RINGS` 💍 | CASÓRIOS | HOT |
-| `SPRITE_COIN` 🪙 | FLORINS | GOLD |
-
-Helper `draw_sprite(draw, x, y, sprite, scale, color, highlight=None)` em `royal_render.py:489` — basta criar matriz 10×10 com `0/1/2` (0 = transparente, 1 = base, 2 = highlight opcional) e chamar com qualquer escala/cor.
-
-### Pós-processamento (sempre)
-1. `apply_scanlines(every=3, alpha=55–70)` — CRT
-2. `apply_vignette(strength=140–180)` — distopia
-3. `apply_grain(intensity=14–18)` — TV velha
-
-### Cache de cards
-- LRU `_CARD_CACHE` (OrderedDict), max **256** entradas, TTL **300 s**
-- Chave inclui `md5(avatar_bytes)` para invalidar quando foto muda
-
-### Efeitos de mensagem (Bot API 7.7)
-**Só funcionam em DM 1:1** — helper `effect_kw(chat_type, ID)` retorna `{}` em grupo.
-
-| Constante | ID | Quando |
-|---|---|---|
-| `EFFECT_PARTY` 🎉 | 5046509860389126442 | Welcome, ganhar palavra |
-| `EFFECT_FIRE` 🔥 | 5104841245755180586 | Dano crítico, golpe final no boss |
-| `EFFECT_HEART` ❤️ | 5044134455711629726 | Casório |
-| `EFFECT_THUMBS_UP` 👍 | 5107584321108051014 | OK |
-| `EFFECT_THUMBS_DOWN` 👎 | 5104858069142078462 | Vote 🤮 |
-| `EFFECT_POO` 💩 | 5046589136895476101 | Diss |
-
-### Helpers de texto (em `main.py`)
-- `term_block(title, body, status, status_color, stamp)` — header `> TITLE.SYS // STATUS` + corpo `<blockquote>` + stamp
-- `term_pre(rows)` — tabela monospace `KEY :: VALUE` em `<pre>`
-- Caption de foto: **limite 1024 chars** (guarda no código)
+| Medalha | Como desbloquear |
+|---|---|
+| 🎯 Primeiro Acerto | Acertar a 1ª Palavra |
+| 🏹 Caçador de Palavras | 10 Palavras |
+| ⚡ Mestre das Letras | 100 Palavras |
+| 🐉 Matador de Titãs | Participar de 1 boss kill |
+| ⭐ Veterano · 🌟 Lendário · 👑 Imortal | Níveis 10 · 25 · 50 |
+| 💍 Coração da Corte | Primeiro casório |
+| 🎁 Generoso | Presentear outro jogador |
 
 ---
 
-<a name="schema"></a>
-## 15. Schema do Banco (SQLite WAL)
+## 13. Temporadas & Hall da Fama
 
-| Tabela | Função | Colunas chave |
-|---|---|---|
-| `users` | Tracking global do user | user_id, chat_id, display_name, username, opt_out, message_count, last_seen |
-| `players` | Estado RPG por chat | chat_id, user_id, royal_id, class_id, total_xp, season_xp, attr_for/des/vit/car, pts_available, gold, joined_at |
-| `royal_id_seq` | Contador sequencial por chat | chat_id, next_id |
-| `inventory` | Itens do jogador | chat_id, user_id, item_id, qty, equipped |
-| `daily_activity` | Mensagens por dia | chat_id, user_id, day, message_count |
-| `pair_scores` | Afinidade entre pares | chat_id, user1, user2, score, last_seen |
-| `couples` | Histórico de casórios | chat_id, user1, user2, source, created_at |
-| `couple_votes` | Votos ❤️/🤮 | couple_id, voter, kind |
-| `challenges` | Palavra da Hora ativa/histórico | chat_id, word, hint, kind, deadline_at, winner |
-| `chests` | Baús ativos | chat_id, challenge_id, spawn_at, expire_at, status |
-| `chest_claims` | Quem pegou cada slot | chest_id, user_id, slot, xp, gold |
-| `bosses` | Bosses ativos/históricos | chat_id, name, hp, hp_max, week_marker, status |
-| `boss_hits` | Dano por jogador | boss_id, user_id, dmg, ts |
-| `season_hall` | Snapshot do Top 10 anonimizado | chat_id, season_code, rank, royal_id, user_id, display_name, season_xp |
-| `chats` | Config + auto-post markers | chat_id, activated_at, last_palavra_at, last_boss_week |
+O calendário segue as **estações do hemisfério sul**:
 
-### Migrations
-Controladas por `PRAGMA user_version`. Cada `migrate_to_vN` é idempotente.
+| Estação | Período |
+|---|---|
+| 🌸 Primavera | 22/09 → 20/12 |
+| ☀️ Verão | 21/12 → 19/03 |
+| 🍂 Outono | 20/03 → 20/06 |
+| ❄️ Inverno | 21/06 → 21/09 |
+
+Quando a estação vira, o jogo automaticamente:
+1. 🏆 Eterniza o **Top 10** no **Hall da Fama**.
+2. 🔄 Zera o XP da temporada de todo mundo (o XP total/histórico continua).
+3. 📣 Publica o Hall da Fama no grupo.
+4. 🎭 Libera uma nova troca de classe.
+
+<div align="center">
+<img src="attached_assets/casorios_preview/17_ranking_card.jpg" width="360" alt="Pódio da temporada"/>
+</div>
 
 ---
 
-<a name="constantes"></a>
-## 16. Constantes — cheat sheet
+## 14. Privacidade
 
-### Tempo & janelas
-```python
-RECENT_WINDOW_SECONDS    = 180     # janela de afinidade
-FLUSH_INTERVAL_SECONDS   = 20      # buffer → DB
-MIN_PAIR_SCORE           = 5       # afinidade mínima p/ casar
-ADMIN_CACHE_TTL_SECONDS  = 300
-PHOTO_CACHE_TTL_SECONDS  = 86400   # 1 dia
-```
+Privacidade é parte do design. **O número de usuário do Telegram nunca vaza** — em lugar nenhum.
 
-### XP
-```python
-XP_PER_MESSAGE             = 2
-XP_PER_REPLY               = 5
-XP_COOLDOWN_MSG_SECONDS    = 60
-XP_COOLDOWN_REPLY_SECONDS  = 30
-XP_PALAVRA_MIN             = 30
-XP_PALAVRA_MAX             = 75
-XP_PALAVRA_WIN_BONUS       = 150
-XP_PALAVRA_CONSOLATION     = 5
-XP_COUPLE_FORMED           = 25
-XP_VOTE_LIKE               = 2
-XP_BOSS_HIT                = 2     # + dano causado
-```
-
-### Economia
-```python
-STARTING_GOLD          = 50
-GOLD_PALAVRA_WIN       = 50
-GOLD_BOSS_KILL_TOTAL   = 500
-COUPLE_XP_BUFF         = 0.10
-```
-
-### Atributos
-```python
-ATTR_START      = 5
-PTS_PER_LEVEL   = 3
-```
-
-### Palavra da Hora
-```python
-PALAVRA_DURATIONS_MIN          = [5, 7, 10]
-PALAVRA_JITTER_SEC             = 60
-PALAVRA_ATTEMPT_COOLDOWN_SEC   = 3
-```
-
-### Baú Real
-```python
-CHEST_DELAY_MIN     = 30
-CHEST_TTL_MIN       = 30
-CHEST_MAX_CLAIMS    = 5
-CHEST_REWARDS       = [(150, 10), (100, 10), (75, 10), (50, 10), (25, 10)]
-```
-
-### Boss
-```python
-BOSS_SPAWN_WEEKDAY        = 6      # Domingo
-BOSS_SPAWN_HOUR           = 20     # 20h local
-BOSS_ATTACK_COOLDOWN_SEC  = 300    # 5 min entre ataques
-# HP = max(500, n_players * 200)
-```
+- 🆔 **Royal ID** (`RYL-XXXX`): o **único** identificador público de cada jogador, exclusivo por grupo.
+- 🕶️ **Anonimização automática:** se um jogador nunca falou ou pediu sigilo, ele aparece como
+  `ANON-NN` — nunca como um número real.
+- 🔒 **`/royalprivacidade`:** esconde você do ranking público e/ou usa só o brasão procedural no
+  lugar da sua foto.
+- 📦 **`/royaldados` (LGPD/GDPR):** **exporta** tudo o que o jogo guarda sobre você, ou **apaga**
+  seus dados quando quiser.
+- 🙅 **Sem DM proativa:** avisos (level-up, conquistas) são postados **no grupo**, mencionando você —
+  o bot não enche sua caixa privada.
 
 ---
 
-## Convenções de tom (voz do bot)
+## 15. Galeria de cartões
 
-- Título em CAPS, formato `PALAVRA.SYS`
-- Prefixos: `>` saída do terminal, `>>` sub-comando, `//` comentário, `!!` alerta
-- Status: `OK`, `CONECTADO`, `CONFIG`, `ALERTA`, `OFFLINE`, `RANKING`, `HISTORICO`
-- Stamp final em itálico entre `[ ... ]`
-- HTML do Telegram usado integralmente: `<b> <i> <u> <s> <code> <pre> <a> <blockquote expandable> <tg-spoiler>`
+Todos os cartões abaixo foram **gerados pelo próprio jogo** (estilo *8-bit distópico*, com
+ruído de TV, scanlines e vinheta). Cada jogador recebe uma paleta consistente derivada do seu Royal ID.
+
+<div align="center">
+<table>
+<tr>
+<td align="center"><img src="attached_assets/casorios_preview/16_perfil_card.jpg" width="250"/><br><sub><b>Perfil</b></sub></td>
+<td align="center"><img src="attached_assets/casorios_preview/01_casorios_ranking_top10.jpg" width="250"/><br><sub><b>Ranking de casais</b></sub></td>
+<td align="center"><img src="attached_assets/casorios_preview/03_meuscasorios_com_pares.jpg" width="250"/><br><sub><b>Meus casórios</b></sub></td>
+</tr>
+<tr>
+<td align="center"><img src="attached_assets/casorios_preview/05_inventario_6itens.jpg" width="250"/><br><sub><b>Inventário</b></sub></td>
+<td align="center"><img src="attached_assets/casorios_preview/12_loja_rico.jpg" width="250"/><br><sub><b>Loja</b></sub></td>
+<td align="center"><img src="attached_assets/casorios_preview/shipper_in.jpg" width="250"/><br><sub><b>Shipper</b></sub></td>
+</tr>
+</table>
+</div>
 
 ---
 
-## Decisão: imagem vs caption
+<div align="center">
 
-| Quando | Renderizar card 1080×… | Mandar caption pura |
-|---|---|---|
-| Perfil próprio / ranking pódio / casório / boss derrotado | ✅ | — |
-| Tudo o mais (status, listas, votos, comandos rápidos) | — | ✅ `term_block` |
+### 💍 Casórios (Shipper) — bônus
 
-Cards são caros (Pillow + scanlines + vignette + grain). Caption é instantâneo.
+O bot **shippa** o grupo sozinho **3× por dia**, escolhendo o par com maior **afinidade**.
+A afinidade cresce com a convivência: `responder (+6)` · `mencionar (+4)` · `estar ativo na mesma
+janela de 3 min (+1)`. Casamento ativo dá **+10% de XP por 14 dias** e os espectadores votam ❤️/🤮.
+
+<table>
+<tr>
+<td align="center"><img src="attached_assets/casorios_preview/02_casorios_ranking_1casal.jpg" width="240"/></td>
+<td align="center"><img src="attached_assets/casorios_preview/04_meuscasorios_vazio.jpg" width="240"/></td>
+</tr>
+</table>
+
+</div>
 
 ---
 
-## Licença
-Projeto privado. Sem licença pública declarada.
+<div align="center">
+
+## ⚙️ Sob o capô
+
+Bot **worker** em **Python 3.12** com **aiogram (Bot API 10)** · persistência em **SQLite** ·
+cartões renderizados em **Pillow puro** (sem navegador headless) · deploy como serviço contínuo.
+
+<br>
+
+*Projeto privado. Sem licença pública declarada.*
+
+**👑 RPG — Royal para Geeks** · *o reino vive enquanto vocês conversam.*
+
+</div>
