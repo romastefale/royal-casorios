@@ -52,9 +52,16 @@ config. `MIRA_USERNAME` default `"Mira"` (ponte ligada); `""` desliga.
 3. **Trocar a @Mira por uma IA rodando em conta de USUÁRIO** (aí o bot leria com privacy
    OFF+admin+re-add) — mas a @Mira atual é bot público, não dá.
 
-⚠️ **TR3 (repo `romastefale/TR3`) — reinterpretar:** se o TR3 "funciona", é porque o lado que
-CAPTURA lá é um USERBOT (user lê bot), OU os dois lados não são ambos bots. Bot↔bot puro não
-funciona em lugar nenhum. Não copiar do TR3 a ideia de "bot lê bot".
+⚠️ **TR3 (repo `romastefale/TR3`) — auditado linha a linha (mai/2026):** é **só aiogram Bot API
+via webhook**, ZERO Telethon/Pyrogram/MTProto (grep no repo todo confirma). A captura
+(`app/bot/tigraoresponde.py::_handle_mira_reply`) manda relay `"Mira, <q>"` ao grupo-alvo,
+guarda o `message_id` do relay e captura **qualquer msg que dê REPLY a esse relay** — **não
+checa quem é a Mira** (sem `is_bot`, sem user-id). Funciona por UM motivo: a "Mira" que responde
+no TR3 é uma **CONTA DE USUÁRIO** (Telegram entrega reply de USER à própria msg do bot, mesmo com
+privacy ON; reply de BOT é sempre dropado). Webhook NÃO contorna o drop bot↔bot. **Logo: a
+diferença TR3-funciona × Royal-não-funciona NÃO é o código, é o tipo de conta que responde** —
+no Royal a @mira (id `8377231659`) é BOT; no TR3 é user. Replicar o código não resolve enquanto
+a conta da @mira do Royal for bot.
 
 ✅ **Regra do dono (custo zero):** a IA roda do LADO da @Mira (bot externo que o dono
 mantém); o jogo só SOLICITA e INGERE → nenhuma IA paga dentro do jogo.
