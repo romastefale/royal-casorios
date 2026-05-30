@@ -7715,7 +7715,7 @@ async def lucky_emoji_handler(message: Message):
 @dp.message(
     F.chat.type.in_({"group", "supergroup"}),
     # NAO casar comandos: este catch-all roda ANTES de alguns
-    # @dp.message(Command(...)) (royalpresentear/paldica/conquistas/
+    # @dp.message(Command(...)) (royalpresentear/conquistas/
     # missoes/evento). Em aiogram o 1o handler que casa vence e PARA a
     # propagacao — sem este filtro, esses comandos nunca rodavam em grupo.
     ~(F.text & F.text.startswith("/")),
@@ -8626,7 +8626,6 @@ async def register_bot_commands():
     group_cmds = [
         BotCommand(command="royal",             description="👑 Menu principal"),
         BotCommand(command="royalperfil",       description="📜 Ver perfil"),
-        BotCommand(command="royalficha",        description="📜 Ver ficha"),
         BotCommand(command="royalavatar",       description="👑 Escolher avatar"),
         BotCommand(command="royalup",           description="⬆️ Distribuir pontos"),
         BotCommand(command="royalclasse",       description="🎭 Escolher classe"),
@@ -8653,7 +8652,6 @@ async def register_bot_commands():
         BotCommand(command="royal",             description="👑 Menu principal"),
         BotCommand(command="royalperfil",       description="📜 Meu perfil"),
         BotCommand(command="royalavatar",       description="👑 Escolher avatar"),
-        BotCommand(command="royalficha",        description="📜 Minha ficha"),
         BotCommand(command="royalranking",      description="🏆 Ranking"),
         BotCommand(command="royalinventario",   description="🎒 Inventário"),
         BotCommand(command="royalsaldo",        description="💰 Saldo"),
