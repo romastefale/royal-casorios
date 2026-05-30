@@ -102,7 +102,7 @@ from aiogram import Router
 
 from royal import core
 from royal.config import (AUTO_HOURS, FLUSH_INTERVAL_SECONDS, LOG_DUMP_ENABLED, LOG_DUMP_INTERVAL_SEC, MIRA_ENABLED, MIRA_PALAVRAS_HOUR, MUSIC_BOT_ID, STASH_CHAT_ID, TEST_CHAT_IDS, logger)
-from royal.core import (BACKUP_ENABLED, BACKUP_HOUR, _compute_next_palavra_at, _identity_card_hash, activity_buffer, admin_cache, attempt_cooldowns, boss_attack_cooldowns, bot, bot_meta_get, bot_meta_set, check_season_change, cur, db, dp, dump_logs_to_gist, dump_logs_to_file, ensure_identity_card_async, expire_old_chests, finalize_expired_challenges, flush_buffers_once, get_active_challenge, is_chat_muted, local_now, pair_buffer, photo_cache, run_backup, schedule_next_palavra, send_couple, spawn_boss_if_due, spawn_chest, spawn_palavra, term_block, typewriter_animate, utc_iso, utc_now)
+from royal.core import (BACKUP_ENABLED, BACKUP_HOUR, _compute_next_palavra_at, _identity_card_hash, activity_buffer, admin_cache, attempt_cooldowns, boss_attack_cooldowns, bot, bot_meta_get, bot_meta_set, check_season_change, cur, db, dp, dump_logs_to_gist, dump_logs_to_file, ensure_identity_card_async, expire_old_chests, finalize_expired_challenges, flush_buffers_once, get_active_challenge, is_chat_muted, local_now, pair_buffer, photo_cache, run_backup, schedule_next_palavra, send_couple, spawn_boss_if_due, spawn_chest, spawn_palavra, term_block, typewriter_animate, utc_iso, utc_now, render_update_card, UpdateGreetingData)
 
 async def log_dump_job() -> None:
     """Background: dump dos logs a cada LOG_DUMP_INTERVAL_SEC."""
@@ -728,6 +728,116 @@ async def announce_no_bots_feature() -> None:
         logger.info("announce_no_bots: ok sent=%d/%d", sent_ok, eligible)
     else:
         logger.warning("announce_no_bots: 0/%d enviados — sem flag, retry no "
+                       "proximo boot", eligible)
+
+
+BOOT_ANNOUNCE_UPDATE_KEY = "boot_announce_update_v1"
+
+# Trava em processo contra runs concorrentes (boot + /royalsaudacao, ou
+# /royalsaudacao repetido). Seguro em asyncio single-thread: o set acontece
+# ANTES de qualquer await, entao um 2o run que entre depois ja ve True e sai —
+# evita double-post/double-pin (regra do dono: nao floodar).
+_UPDATE_ANNOUNCE_RUNNING = False
+
+# Novidades player-facing das ultimas etapas (card = labels curtas, texto =
+# linhas completas). Fonte unica p/ card + mensagem ficarem em sincronia.
+_UPDATE_CARD_LINES = (
+    "sair e voltar quando quiser",
+    "cards mais nitidos, sem tofu",
+    "reino mais estavel",
+)
+_UPDATE_BODY = (
+    ">> nova atualizacao aplicada ao reino\n"
+    "// agora da pra SAIR e VOLTAR quando quiser:\n"
+    "   <code>/royalsair</code> e <code>/royalvoltar</code> — seu\n"
+    "   progresso fica todo guardado, nada se perde.\n"
+    "// cards mais nitidos: nomes, classes e itens\n"
+    "   sem caractere quebrado.\n"
+    "// varios bugs corrigidos — reino mais estavel."
+)
+
+
+async def announce_update_greeting() -> None:
+    """One-shot: saudacao de atualizacao nos grupos RPG ativos — card de
+    comemoracao (com a data de hoje) + changelog player-facing, e FIXA a
+    mensagem no grupo (pin). Flag persistente em bot_meta — roda 1x apos o
+    deploy; retry-safe (so marca a flag se ao menos 1 enviou). Re-disparo
+    manual = reset da flag via /royalsaudacao (owner)."""
+    global _UPDATE_ANNOUNCE_RUNNING
+    if bot_meta_get(BOOT_ANNOUNCE_UPDATE_KEY):
+        return
+    if _UPDATE_ANNOUNCE_RUNNING:  # ja tem um run em voo → nao duplica/floda
+        logger.info("announce_update: ja em execucao — ignorando run concorrente")
+        return
+    _UPDATE_ANNOUNCE_RUNNING = True  # set ANTES de qualquer await (single-thread)
+    try:
+        await _announce_update_greeting_impl()
+    finally:
+        _UPDATE_ANNOUNCE_RUNNING = False
+
+
+async def _announce_update_greeting_impl() -> None:
+    await asyncio.sleep(12.0)  # deixa o polling/anuncios anteriores estabilizarem
+    try:
+        cur.execute(
+            "SELECT DISTINCT p.chat_id AS chat_id "
+            "FROM players p "
+            "INNER JOIN chats_rpg c ON c.chat_id = p.chat_id")
+        chats = [r["chat_id"] for r in cur.fetchall()]
+    except Exception:
+        logger.exception("announce_update: query chats falhou")
+        return
+    if not chats:
+        bot_meta_set(BOOT_ANNOUNCE_UPDATE_KEY, "no_chats")
+        return
+    date_str = local_now().strftime("%d/%m/%Y")
+    caption = term_block(
+        "ATUALIZACAO",
+        _UPDATE_BODY + f"\n// data: {date_str}",
+        status="APLICADO", status_color="ACID")
+    try:
+        card = render_update_card(UpdateGreetingData(
+            date_str=date_str, lines=_UPDATE_CARD_LINES))
+    except Exception:
+        logger.exception("announce_update: render do card falhou")
+        card = None
+    eligible = 0
+    sent_ok = 0
+    for chat_id in chats:
+        if TEST_CHAT_IDS and chat_id in TEST_CHAT_IDS:
+            continue
+        if is_chat_muted(chat_id):
+            continue
+        eligible += 1
+        msg = None
+        try:
+            if card:
+                msg = await bot.send_photo(
+                    chat_id,
+                    BufferedInputFile(card, filename="atualizacao.jpg"),
+                    caption=caption)
+            else:
+                msg = await bot.send_message(chat_id, caption)
+            sent_ok += 1
+        except Exception:
+            logger.exception("announce_update: send falhou chat=%s", chat_id)
+        # Fixa a mensagem no grupo (pin silencioso). Falha de permissao/etc
+        # nao impede a saudacao nem o retry — so loga.
+        if msg is not None:
+            try:
+                await bot.pin_chat_message(
+                    chat_id, msg.message_id, disable_notification=True)
+            except Exception:
+                logger.warning("announce_update: pin falhou chat=%s", chat_id)
+        await asyncio.sleep(2.0)  # respeita rate-limit cross-chat
+    # So persiste a flag se nao havia elegiveis OU se ao menos 1 enviou
+    # (mesma regra retry-safe dos outros anuncios).
+    if eligible == 0 or sent_ok > 0:
+        bot_meta_set(BOOT_ANNOUNCE_UPDATE_KEY,
+                     f"sent={sent_ok}/{eligible} at={utc_iso()}")
+        logger.info("announce_update: ok sent=%d/%d", sent_ok, eligible)
+    else:
+        logger.warning("announce_update: 0/%d enviados — sem flag, retry no "
                        "proximo boot", eligible)
 
 

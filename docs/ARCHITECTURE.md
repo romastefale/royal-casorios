@@ -91,6 +91,15 @@
 - **🔇 `/royalmudo` (owner):** grupo → toggle do chat; DM do owner → broadcast (silencia/religa
   todos). **📜 `/royallog` (owner) + auto 5min:** ring buffer → **arquivo em `backup/logs/`**
   (rotação `LOG_BACKUP_KEEP`) + gist (se `GH_TOKEN`). **Não manda mais o log na DM.**
+- **📣 Saudação de atualização (one-shot):** `announce_update_greeting()` (`royal/jobs.py`, flag
+  `boot_announce_update_v1`) posta 1× nos grupos RPG ativos um card de comemoração
+  (`render_update_card`/`UpdateGreetingData`, acento GOLD, com a **data de hoje** + changelog
+  player-facing) e **FIXA a msg no grupo** (`pin_chat_message`, silencioso). Mesmo padrão retry-safe
+  dos outros anúncios (pula `TEST_CHAT_IDS`/mutados; só marca a flag se ≥1 enviou). Sem
+  `message_effect_id` (regra do grupo). Conteúdo (card + texto) tem fonte única em jobs
+  (`_UPDATE_CARD_LINES`/`_UPDATE_BODY`). **Re-disparo manual (owner, off-menu):** `/royalsaudacao`
+  reseta a flag e re-dispara. Testes: `test_render_update_card_gera_jpeg`,
+  `test_update_card_lines_cabem_no_card`, `test_saudacao_anuncia_comandos_de_sair_e_voltar`.
 
 > ⚠️ **Cards card-first:** todos os handlers tentam `render_*` → `send_photo` e caem em fallback texto
 > se falhar. Emoji de título é stripado (`re.sub(r"^\W+","")`) antes do Pillow (senão tofu).

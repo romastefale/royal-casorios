@@ -219,6 +219,30 @@ def test_todo_item_tem_sprite_no_card():
     assert not faltando, f"itens sem sprite (dao tofu no card): {faltando}"
 
 
+def test_render_update_card_gera_jpeg():
+    import royal_render as rr
+    card = rr.render_update_card(rr.UpdateGreetingData(
+        date_str="30/05/2026",
+        lines=("sair e voltar quando quiser", "cards mais nitidos",
+               "reino mais estavel")))
+    assert card is not None and len(card) > 1000
+    assert card[:3] == b"\xff\xd8\xff"  # magic bytes JPEG
+
+
+def test_update_card_lines_cabem_no_card():
+    # Card desenha no maximo 6 linhas; manter o conteudo dentro do limite.
+    import royal.jobs as jobs
+    assert len(jobs._UPDATE_CARD_LINES) <= 6
+    assert all(s.strip() for s in jobs._UPDATE_CARD_LINES)
+
+
+def test_saudacao_anuncia_comandos_de_sair_e_voltar():
+    # A novidade headline (/royalsair + /royalvoltar) tem que estar no texto.
+    import royal.jobs as jobs
+    assert "/royalsair" in jobs._UPDATE_BODY
+    assert "/royalvoltar" in jobs._UPDATE_BODY
+
+
 # ---------------------------------------------------- sistema de alerta/erros
 # (royal/alerts.py: classifica erros e so manda DM pro dono nos relevantes)
 import logging

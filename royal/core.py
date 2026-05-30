@@ -84,6 +84,8 @@ from royal_render import (
     render_shipper_card,
     render_ranking_card,
     render_saldo_card,
+    render_update_card,
+    UpdateGreetingData,
     BossStatusData,
     CouplePodiumEntry,
     InventarioData,

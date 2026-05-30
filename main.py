@@ -46,6 +46,7 @@ from royal.jobs import (  # noqa: F401
     cleanup_legacy_bot_players,
     announce_typewriter_feature,
     announce_no_bots_feature,
+    announce_update_greeting,
     log_dump_job,
     backup_job,
     mira_palavras_job,
@@ -92,6 +93,7 @@ async def main():
     cleanup_legacy_bot_players()  # one-shot: remove bots cadastrados antes do filtro
     asyncio.create_task(announce_typewriter_feature())
     asyncio.create_task(announce_no_bots_feature())
+    asyncio.create_task(announce_update_greeting())  # saudacao de atualizacao (1x, fixa no grupo)
     asyncio.create_task(log_dump_job())
     asyncio.create_task(backup_job())  # F10: backup diario do DB
     asyncio.create_task(mira_palavras_job())  # Inteligencia: palavras do dia (@Mira)

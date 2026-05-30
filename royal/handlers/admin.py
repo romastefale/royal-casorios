@@ -101,7 +101,7 @@ import hashlib
 from aiogram import Router
 
 from royal.config import (MIRA_ENABLED, OWNER_USER_ID, STASH_CHAT_ID, _log_ring, logger)
-from royal.core import (BACKUP_DIR, BACKUP_RETENTION_DAYS, GROUP_ONLY_MSG, auto_delete_after, bot, cur, current_season_label, dp, dump_logs_to_gist, dump_logs_to_file, get_active_challenge, is_chat_muted, is_group, run_backup, safe_typing, set_chat_muted, spawn_palavra, term_block)
+from royal.core import (BACKUP_DIR, BACKUP_RETENTION_DAYS, GROUP_ONLY_MSG, auto_delete_after, bot, bot_meta_set, cur, current_season_label, dp, dump_logs_to_gist, dump_logs_to_file, get_active_challenge, is_chat_muted, is_group, run_backup, safe_typing, set_chat_muted, spawn_palavra, term_block)
 from royal.mira import fetch_and_store_palavras
 
 router = Router()
@@ -302,5 +302,39 @@ async def royal_mudo(message: Message):
                                           status=status, status_color=color))
     if ack:
         await auto_delete_after(ack, delay=12.0)
+
+
+@router.message(Command("royalsaudacao"))
+async def royal_saudacao(message: Message):
+    """Owner-only, off-menu, qualquer chat (use na DM): reseta a flag da
+    saudacao de atualizacao e re-dispara o anuncio one-shot (card + changelog,
+    fixado no grupo). NAO floda: a propria announce_update_greeting so posta nos
+    grupos elegiveis (pula test/mutados) e marca a flag de novo ao terminar."""
+    uid = message.from_user.id if message.from_user else 0
+    if OWNER_USER_ID is None or uid != OWNER_USER_ID:
+        return
+    # Import diferido p/ manter handlers/jobs como modulos irmaos (sem
+    # acoplamento no nivel de modulo).
+    from royal import jobs
+    if jobs._UPDATE_ANNOUNCE_RUNNING:  # ja tem um anuncio em voo → nao duplica
+        ack = await message.answer(term_block(
+            "SAUDACAO",
+            ">> <b>ja em andamento</b>\n"
+            "<i>// um anuncio de atualizacao ja esta sendo postado.</i>\n"
+            "<i>// espere terminar antes de re-disparar.</i>",
+            status="OCUPADO", status_color="AMBER"))
+        if ack:
+            await auto_delete_after(ack, delay=8.0)
+        return
+    bot_meta_set(jobs.BOOT_ANNOUNCE_UPDATE_KEY, "")  # "" e falsy → re-dispara
+    asyncio.create_task(jobs.announce_update_greeting())
+    ack = await message.answer(term_block(
+        "SAUDACAO",
+        ">> <b>re-disparando</b> a saudacao de atualizacao\n"
+        "<i>// card + novidades serao postados e fixados nos</i>\n"
+        "<i>// grupos elegiveis (pula teste/mutados) em ~12s.</i>",
+        status="OK", status_color="ACID"))
+    if ack:
+        await auto_delete_after(ack, delay=10.0)
 
 

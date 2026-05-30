@@ -4579,3 +4579,109 @@ def render_evento_card(data: EventoData) -> bytes | None:
         logger.exception("ROYAL_EVENTO_CARD_RENDER_FAILED label=%r",
                          data.label)
         return None
+
+
+# =====================================================================
+# UPDATE CARD — saudacao de atualizacao one-shot (changelog + data de hoje)
+# =====================================================================
+
+@dataclass(frozen=True)
+class UpdateGreetingData:
+    date_str: str
+    lines: tuple[str, ...]
+    title: str = "ATUALIZACAO"
+    subtitle: str = "novidades no reino"
+    seed: str = "update"
+
+
+def render_update_card(data: UpdateGreetingData) -> bytes | None:
+    """Card 1080x1080 de comemoracao de atualizacao: header ROYAL.SYS + data
+    de hoje + titulo gigante + lista de novidades (changelog). Acento GOLD.
+    JPEG bytes ou None (fallback texto fica a cargo do chamador)."""
+    try:
+        pal = pick_palette(data.seed)
+        accent = GOLD
+        W = H = CARD_SIZE
+        img = Image.new("RGB", (W, H), BG_DEEP)
+        draw = ImageDraw.Draw(img)
+
+        rng = random.Random(hash(("update", data.seed)) & 0xFFFF)
+        for _ in range(1200):
+            x = rng.randrange(W); y = rng.randrange(H)
+            c = rng.choice([(18, 16, 22), (14, 12, 20), (24, 20, 28),
+                            (30, 24, 12)])
+            pixel_rect(draw, (x, y, x + 3, y + 3), c)
+
+        OUT_PAD = 28
+        panel_box = (OUT_PAD, OUT_PAD, W - OUT_PAD, H - OUT_PAD)
+        pixel_rect(draw, panel_box, BG)
+        chunky_border(draw, panel_box, outer=BLACK, inner=accent, thick=8)
+
+        header_box = (OUT_PAD + 28, OUT_PAD + 28,
+                      W - OUT_PAD - 28, OUT_PAD + 110)
+        pixel_rect(draw, header_box, PANEL)
+        pixel_rect(draw, (header_box[0], header_box[1],
+                          header_box[2], header_box[1] + 4), accent)
+        pixel_rect(draw, (header_box[0], header_box[3] - 4,
+                          header_box[2], header_box[3]), accent)
+        title_font = load_font(26, mono=True, bold=True)
+        draw.text((header_box[0] + 22, header_box[1] + 24),
+                  "> ROYAL.SYS", font=title_font, fill=accent)
+        dt_font = load_font(18, mono=True, bold=True)
+        dtw, _ = text_size(draw, data.date_str, dt_font)
+        draw.text((header_box[2] - 22 - dtw, header_box[1] + 28),
+                  data.date_str, font=dt_font, fill=INK)
+
+        # Titulo gigante centralizado (autosize)
+        big_font = load_font(76, mono=True, bold=True)
+        big_txt = ellipsize(data.title, 16).upper()
+        bw, _ = text_size_smart(draw, big_txt, big_font)
+        if bw > W - 160:
+            big_font = load_font(58, mono=True, bold=True)
+            bw, _ = text_size_smart(draw, big_txt, big_font)
+        big_y = OUT_PAD + 150
+        draw_text_smart(draw, ((W - bw) // 2 + 4, big_y + 4),
+                        big_txt, big_font, BLACK)
+        draw_text_smart(draw, ((W - bw) // 2, big_y), big_txt, big_font, accent)
+        y = big_y + (big_font.size + 28)
+
+        # Subtitulo
+        sub_font = load_font(22, mono=True, bold=True)
+        sub = f">> {ellipsize(data.subtitle, 30)}"
+        sw, _ = text_size(draw, sub, sub_font)
+        draw.text(((W - sw) // 2, y), sub, font=sub_font, fill=DIM)
+        y += 64
+
+        # Divisoria
+        pixel_rect(draw, (OUT_PAD + 70, y, W - OUT_PAD - 70, y + 4), accent)
+        y += 36
+
+        # Lista de novidades (changelog)
+        line_font = load_font(22, mono=True, bold=True)
+        for raw in data.lines[:6]:
+            line = f">> {ellipsize(raw, 40)}"
+            draw.text((OUT_PAD + 70, y), line, font=line_font, fill=INK)
+            y += 58
+
+        foot_font = load_font(12, mono=True, bold=False)
+        draw.text((OUT_PAD + 48, H - OUT_PAD - 44),
+                  "> /royalajuda", font=foot_font, fill=DIM)
+        fr = ellipsize(f"{pal['name']}_MODE", 28)
+        fw, _ = text_size(draw, fr, foot_font)
+        draw.text((W - OUT_PAD - 48 - fw, H - OUT_PAD - 44),
+                  fr, font=foot_font, fill=pal["footer"])
+
+        img = img.convert("RGBA")
+        apply_scanlines(img, every=3, alpha=55)
+        vimg = img.convert("RGB")
+        apply_vignette(vimg, strength=160)
+        img = vimg.convert("RGBA")
+        apply_grain(img, intensity=18)
+        img = img.convert("RGB")
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=90, optimize=True)
+        return buf.getvalue()
+    except Exception:
+        logger.exception("ROYAL_UPDATE_CARD_RENDER_FAILED title=%r",
+                         data.title)
+        return None
