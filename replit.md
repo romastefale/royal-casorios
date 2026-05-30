@@ -15,15 +15,23 @@ rodar/configurar workflow aqui).
 
 ## 🚀 Deploy & push (CRÍTICO)
 
-**Deploy:** Railway (`railway.json`), escuta a branch **`royalRPG`**.
+> ⚠️ **BRANCH DE TRABALHO ATUAL = `rrpg` (experimental).** Por decisão do dono, todo push agora vai
+> pra **`rrpg`** (NÃO dispara deploy de produção). A `royalRPG` (produção/Railway) só recebe push
+> quando o dono pedir **explicitamente** "promover/produção". Default = `main:rrpg`.
 
-**Push (sempre `GITHUB_TOKEN`, NUNCA `GH_TOKEN`):**
+**Deploy (produção):** Railway (`railway.json`), escuta a branch **`royalRPG`**.
+
+**Push de trabalho (sempre `GITHUB_TOKEN`, NUNCA `GH_TOKEN`):**
+```bash
+git push "https://x-access-token:${GITHUB_TOKEN}@github.com/romastefale/royal-casorios.git" main:rrpg
+```
+**Push de produção (SÓ quando o dono pedir explicitamente p/ promover):**
 ```bash
 git push "https://x-access-token:${GITHUB_TOKEN}@github.com/romastefale/royal-casorios.git" main:royalRPG
 ```
 - `GITHUB_TOKEN` é auto-provisionado pelo Replit. `GH_TOKEN` **não existe** como secret aqui (é só
   env var de runtime do Railway, p/ gist).
-- A branch `main` LOCAL **nunca** é alterada no remoto — sempre `main:royalRPG`.
+- A branch `main` LOCAL **nunca** é alterada no remoto — sempre `main:<branch>`.
 - Só fazer push quando o usuário pedir **explicitamente**.
 
 ---
@@ -62,6 +70,8 @@ Confirma no grupo + DM do owner. Testes: `test_migrate_chat_data_preserva_progre
 
 ## 📌 User preferences (regras do dono)
 
+- **🌿 Trabalho atual SÓ na branch `rrpg` (experimental).** Push default = `main:rrpg`. A `royalRPG`
+  (produção/Railway) só recebe push quando o dono pedir explicitamente p/ promover. Ver § Deploy & push.
 - **Versões fixas (não fazer downgrade):** Bot API **10** · aiogram **3.28.2**.
 - **💸 Custo zero — NUNCA usar funções/serviços pagos.** Só recursos gratuitos (nada de gateways
   pagos, APIs com cobrança por uso, geração de mídia paga).
