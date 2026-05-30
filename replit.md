@@ -167,7 +167,7 @@ sozinho no 1º post pós-migração e os próximos posts já vão pro id novo. `
 | `BACKUP_ENABLED` | — | `1` | `0` desliga backup diário. |
 | `BACKUP_HOUR` | — | `12` | Hora local do backup diário. |
 | `BACKUP_RETENTION_DAYS` | — | `7` | Dias de backup mantidos em `<DB_DIR>/backups/`. |
-| `MIRA_USERNAME` | — | — | @username da IA **@Mira** (sem `@`). **Vazio = ponte off.** Usado p/ ENDEREÇAR o pedido (`@username <prompt>`). Ver § Inteligência royal. |
+| `MIRA_USERNAME` | — | `Mira` | @username da IA **@Mira** (sem `@`). **Default `Mira` = ponte LIGADA**; setar `""` (vazio explícito) desliga. Usado p/ ENDEREÇAR o pedido (`@username <prompt>`). Ver § Inteligência royal. |
 | `MIRA_USER_ID` | — | `8377231659` | user_id da @Mira. Critério **principal** p/ casar a resposta dela (mais robusto que username). `0` desliga o match por ID (cai pro username); vazio/inválido = usa o default. |
 | `IA_BRIDGE_CHAT_ID` | — | `-1003624946383` | chat_id do grupo-ponte jogo↔@Mira (supergrupo, prefixo -100). |
 | `MIRA_PALAVRAS_HOUR` | — | `6` | Hora local do pedido diário de "palavras do dia". |

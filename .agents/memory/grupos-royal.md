@@ -35,11 +35,11 @@ falhou"). O catch-all `track` descarta `is_bot`, então a captura precisa de rou
 `system` (já feito — order `inteligencia, quiz, system`).
 
 🔴 **Cadeia de falha do `/rquiz` (diagnóstico real via logs de produção):**
-1. `MIRA_USERNAME` **não setado** no Railway → `MIRA_ENABLED=False` → `/rquiz` responde
-   **"quiz indisponível"** (log: `[MIRA] ponte desligada (sem MIRA_USERNAME/IA_BRIDGE_CHAT_ID)`).
-2. Mesmo com `MIRA_USERNAME` setado: se o **Bot-to-Bot Mode** estiver OFF no bot do jogo,
-   o pedido sai mas a resposta da @Mira nunca chega → **"A geração falhou"**.
-   → Fix é **config externa** (Railway env + @BotFather), NÃO código. O código está correto.
+1. `MIRA_USERNAME` agora tem **default `"Mira"`** no código (ponte LIGADA por padrão) → não
+   precisa mais setar no Railway. Setar `MIRA_USERNAME=""` (vazio explícito) desliga.
+2. Único passo externo restante: **Bot-to-Bot Mode** LIGADO no @BotFather pro bot do jogo —
+   se estiver OFF o pedido sai mas a resposta da @Mira nunca chega → **"A geração falhou"**.
+   → Fix é **config externa** (@BotFather), NÃO código. O código está correto.
 
 🟢 **TR3 (repo `romastefale/TR3`) é a PROVA, não a contradição:** o dono apontou o TR3
 ("ele faz") como exemplo de bot que lê a Mira. Li `app/bot/tigraoresponde.py` +

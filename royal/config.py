@@ -248,9 +248,10 @@ AUTO_HOURS = [int(x.strip()) for x in os.getenv("AUTO_HOURS", "9,15,21").split("
 # só SOLICITA e INGERE conteúdo → custo zero, nenhuma IA paga no jogo). Requer
 # o "Bot-to-Bot Communication Mode" LIGADO no @BotFather p/ o bot do jogo —
 # sem isso o Telegram não entrega as mensagens da @Mira ao jogo.
-# @username da @Mira (sem o @). Vazio = ponte desligada (feature off). Ainda é
-# usado p/ ENDEREÇAR o pedido no grupo-ponte (texto "@username <prompt>").
-MIRA_USERNAME = os.getenv("MIRA_USERNAME", "").strip().lstrip("@")
+# @username da @Mira (sem o @). Default = "Mira" (ponte LIGADA por padrão). Vazio
+# explícito (MIRA_USERNAME="") desliga a feature. Também é usado p/ ENDEREÇAR o
+# pedido no grupo-ponte (texto "@username <prompt>").
+MIRA_USERNAME = os.getenv("MIRA_USERNAME", "Mira").strip().lstrip("@")
 
 
 # user_id da @Mira (bot). Critério PRINCIPAL p/ casar a resposta dela (mais
