@@ -1,1 +1,2 @@
 - [Premium removido — bot nunca cobra](premium-removido.md) — Premium/Telegram Stars/perks pagos foram removidos por completo; o bot NUNCA cobra; colunas/tabela do DB ficaram inertes (não dropar).
+- [Ícones dos cards = sprites pixel-art](card-icons-sprites.md) — cards usam SPRITE_* (não emoji-fonte) pra evitar tofu; novo classe/item precisa de sprite + entrada em EMOJI_SPRITES.

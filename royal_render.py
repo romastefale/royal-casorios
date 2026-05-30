@@ -624,6 +624,119 @@ SPRITE_COIN = [    # FLORINS — moeda com F dentro
     ".########.",
     "..######..",
 ]
+SPRITE_CROWN = [   # 👑 MONARCA / COROA — coroa de 3 pontas
+    "#...#...#.",
+    "##.###.##.",
+    "##########",
+    "#oooooooo#",
+    "##########",
+    "..........",
+    "..........",
+    "..........",
+    "..........",
+    "..........",
+]
+SPRITE_ROSE = [    # 🌹 CORTESÃ — rosa com caule e folha
+    "..####....",
+    ".######...",
+    ".#oooo#...",
+    ".#o#oo#...",
+    ".#oooo#...",
+    "..####....",
+    "...##.....",
+    "...##.##..",
+    "..##.##...",
+    "...##.....",
+]
+SPRITE_WIZARD = [  # 🧙 BRUXO — chapéu de mago com estrela
+    "....#.....",
+    "...###....",
+    "...#o#....",
+    "..#ooo#...",
+    "..#o#o#...",
+    ".#ooooo#..",
+    ".#o###o#..",
+    ".#ooooo#..",
+    "#########.",
+    "#########.",
+]
+SPRITE_SCROLL = [  # 📜 CRONISTA — pergaminho enrolado
+    ".########.",
+    ".#oooooo#.",
+    "#oooooooo#",
+    "#.######.#",
+    "#........#",
+    "#.######.#",
+    "#........#",
+    "#oooooooo#",
+    ".#oooooo#.",
+    ".########.",
+]
+SPRITE_KEY = [     # 🗝️ BOBO — chave antiga
+    "..###.....",
+    ".#ooo#....",
+    ".#o#o#....",
+    ".#ooo#....",
+    "..###.....",
+    "...#......",
+    "...#......",
+    "...##.....",
+    "...#......",
+    "...##.....",
+]
+SPRITE_POTION = [  # 🧪 POÇÃO — frasco com líquido
+    "...####...",
+    "...#oo#...",
+    "...#oo#...",
+    "..#oooo#..",
+    "..#oooo#..",
+    ".#o####o#.",
+    ".#oo##oo#.",
+    ".#oooooo#.",
+    ".#oooooo#.",
+    "..######..",
+]
+SPRITE_SHIELD = [  # 🛡️ ARMADURA — escudo
+    "##########",
+    "#oooooooo#",
+    "#o#....#o#",
+    "#o#....#o#",
+    "#o######o#",
+    ".#oooooo#.",
+    ".#oooooo#.",
+    "..#oooo#..",
+    "...#oo#...",
+    "....##....",
+]
+SPRITE_RING = [    # 💍 ANEL — anel com gema
+    "....##....",
+    "...#oo#...",
+    "...#oo#...",
+    "....##....",
+    "..######..",
+    ".##....##.",
+    "#o#....#o#",
+    "#o#....#o#",
+    ".##....##.",
+    "..####....",
+]
+
+# Mapa emoji -> sprite pixel-art (chaves normalizadas sem variation selector
+# U+FE0F). Cards usam sprite quando existe; senão caem no emoji como texto.
+_EMOJI_SPRITE_RAW = {
+    "👑": SPRITE_CROWN,
+    "🌹": SPRITE_ROSE,
+    "🧙": SPRITE_WIZARD,
+    "📜": SPRITE_SCROLL,
+    "🗝️": SPRITE_KEY,
+    "🧪": SPRITE_POTION,
+    "🛡️": SPRITE_SHIELD,
+    "🥾": SPRITE_BOOT,
+    "💍": SPRITE_RING,
+    "🗡️": SPRITE_SWORD,
+    "📚": SPRITE_BOOK,
+}
+EMOJI_SPRITES = {k.replace("\ufe0f", ""): v for k, v in _EMOJI_SPRITE_RAW.items()}
 
 
 def draw_sprite(draw, x: int, y: int, sprite: list[str],
@@ -645,6 +758,39 @@ def draw_sprite(draw, x: int, y: int, sprite: list[str],
                 px = x + col * scale
                 py = y + row * scale
                 pixel_rect(draw, (px, py, px + scale, py + scale), highlight)
+
+
+def draw_icon_centered(draw, cx: int, cy: int, emoji: str, target_px: int,
+                       color, *, shadow: bool = False) -> int:
+    """Desenha o ícone centrado em (cx, cy) com altura ~target_px.
+
+    Usa sprite pixel-art de EMOJI_SPRITES quando o emoji tem um; senão cai no
+    fallback de desenhar o emoji como texto (fontes do projeto). Retorna a
+    altura efetiva desenhada (para layouts que posicionam algo abaixo).
+    """
+    key = (emoji or "").replace("\ufe0f", "")
+    sprite = EMOJI_SPRITES.get(key)
+    if sprite:
+        rows = len(sprite)
+        cols = max(len(r) for r in sprite)
+        scale = max(1, target_px // rows)
+        sw, sh = cols * scale, rows * scale
+        x = int(cx - sw / 2)
+        y = int(cy - sh / 2)
+        if shadow:
+            off = max(2, scale // 2)
+            draw_sprite(draw, x + off, y + off, sprite, scale, BLACK)
+        draw_sprite(draw, x, y, sprite, scale, color)
+        return sh
+    # fallback: emoji como texto
+    font = load_font(target_px, mono=False, bold=True)
+    ew, eh = text_size_smart(draw, emoji, font)
+    x = int(cx - ew / 2)
+    y = int(cy - eh / 2)
+    if shadow:
+        draw_text_smart(draw, (x + 4, y + 4), emoji, font, BLACK)
+    draw_text_smart(draw, (x, y), emoji, font, color)
+    return eh
 
 
 def apply_scanlines(img: Image.Image, every: int = 3, alpha: int = 70):
@@ -2128,11 +2274,10 @@ def render_classe_card(data: ClasseCardData) -> bytes | None:
         chunky_border(draw, (BX, BY, BX + BW, BY + BH),
                       outer=BLACK, inner=accent, thick=6)
 
-        # Emoji da classe gigante
-        emoji_font = load_font(120, mono=False, bold=True)
-        ew, eh = text_size(draw, data.class_emoji, emoji_font)
-        draw.text((BX + (BW - ew) // 2, BY + 30),
-                  data.class_emoji, font=emoji_font, fill=INK)
+        # Ícone da classe gigante (sprite pixel-art; fallback emoji)
+        eh = 120
+        draw_icon_centered(draw, BX + BW // 2, BY + 30 + eh // 2,
+                           data.class_emoji, eh, accent, shadow=True)
 
         # Nome da classe
         cname_font = load_font(32, mono=True, bold=True)
@@ -2259,16 +2404,9 @@ def render_loja_drop_card(data: LojaDropData) -> bytes | None:
         chunky_border(draw, (IX, IY, IX + ITEM_BOX, IY + ITEM_BOX),
                       outer=BLACK, inner=accent, thick=8)
 
-        # Emoji do item GIGANTE (centro do quadrado)
-        em_font = load_font(280, mono=False, bold=True)
-        ew, eh = text_size(draw, data.item_emoji, em_font)
-        # textbbox tem offset weird com emojis; compensa
-        ex = IX + (ITEM_BOX - ew) // 2
-        ey = IY + (ITEM_BOX - eh) // 2 - 30
-        # sombra
-        draw.text((ex + 4, ey + 4), data.item_emoji,
-                  font=em_font, fill=BLACK)
-        draw.text((ex, ey), data.item_emoji, font=em_font, fill=INK)
+        # Ícone do item GIGANTE (sprite pixel-art; fallback emoji)
+        draw_icon_centered(draw, IX + ITEM_BOX // 2, IY + ITEM_BOX // 2 - 30,
+                           data.item_emoji, 300, accent, shadow=True)
 
         # Nome do item
         nm_font = load_font(36, mono=True, bold=True)
@@ -2910,12 +3048,9 @@ def render_inventario_card(data: InventarioData) -> bytes | None:
             pixel_rect(draw, (sx0, sy0, sx0 + 3, sy1), border_color)
             pixel_rect(draw, (sx1 - 3, sy0, sx1, sy1), border_color)
 
-            # emoji grande no centro-cima
-            emj_font = load_font(48, mono=True, bold=False)
-            ew, eh = text_size_smart(draw, slot.emoji, emj_font)
-            draw_text_smart(draw,
-                            (sx0 + (slot_w - ew) // 2, sy0 + 16),
-                            slot.emoji, emj_font, INK)
+            # ícone grande no centro-cima (sprite pixel-art; fallback emoji)
+            draw_icon_centered(draw, sx0 + slot_w // 2, sy0 + 40,
+                               slot.emoji, 48, INK)
 
             # nome (max 2 linhas)
             nm_font = load_font(13, mono=True, bold=True)
@@ -3271,12 +3406,9 @@ def render_loja_card(data: LojaData) -> bytes | None:
             pixel_rect(draw, (sx0, sy0, sx0 + 3, sy1), DIM)
             pixel_rect(draw, (sx1 - 3, sy0, sx1, sy1), DIM)
 
-            # emoji
-            emj_font = load_font(48, mono=True, bold=False)
-            ew, eh = text_size_smart(draw, slot.emoji, emj_font)
-            draw_text_smart(draw,
-                            (sx0 + (slot_w - ew) // 2, sy0 + 16),
-                            slot.emoji, emj_font, INK)
+            # ícone (sprite pixel-art; fallback emoji)
+            draw_icon_centered(draw, sx0 + slot_w // 2, sy0 + 40,
+                               slot.emoji, 48, INK)
 
             # nome
             nm2_font = load_font(13, mono=True, bold=True)

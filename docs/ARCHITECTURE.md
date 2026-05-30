@@ -188,5 +188,14 @@ acentos ácidos), **cor por player** (cada `royal_id` recebe paleta consistente)
   `EFFECT_THUMBS_UP/DOWN` · `EFFECT_POO`.
 - **Paleta (`royal_render.py`):** `BG_DEEP` `#0C0A0E`, `BG` `#16121A`, `INK` `#D2C4A8`, `DIM`
   `#706054`; acentos `HOT ACID CYAN GOLD RUST PURPLE AMBER MAGENTA NEON_BLUE JADE`.
+- **Ícones nos cards = sprites pixel-art, NÃO emoji-fonte.** As fontes do projeto (DejaVu/Noto
+  Sans/Math/Symbols/Symbols2) não cobrem vários emojis (👑🌹🧙📜🧪🥾💍) → davam **tofu** nos cards.
+  Solução: sprites 8-bit (`SPRITE_*`, '#'/'o' em grid) desenhados por `draw_sprite()`. Classes e itens
+  são desenhados via `draw_icon_centered(draw, cx, cy, emoji, target_px, color, shadow=)`, que mapeia
+  o emoji → sprite por `EMOJI_SPRITES` (chaves **sem** variation selector `U+FE0F`) e cai no emoji
+  como texto só se não houver sprite. Cobertos: classes (`SPRITE_CROWN ROSE WIZARD SCROLL KEY` +
+  `SWORD`) e itens (`POTION RING SHIELD` + `BOOT SWORD BOOK CROWN`). ⚠️ Emoji em **menu/texto** do
+  Telegram (ex. 🐉 em BotCommand) renderiza nativo — não precisa de sprite. Ao adicionar classe/item
+  novo, adicione o sprite + entrada em `EMOJI_SPRITES` senão volta o tofu no card.
 - **Pós-processamento de cards (sempre):** `apply_scanlines(every=3, alpha=55)` →
   `apply_vignette(strength=160)` → `apply_grain(intensity=18)`.

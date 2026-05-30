@@ -189,3 +189,31 @@ def test_avatar_kb_lock_duravel_uid_embutido():
     closes = [b for b in _flat_buttons(kb)
               if b.callback_data == f"r:close:{uid}"]
     assert closes, "mosaico de avatar sem botao Fechar owner-locked"
+
+
+# ---------------------------------------------------- icones dos cards (sprites)
+# (regressao: fontes do projeto nao cobrem 👑🌹🧙📜🧪🥾💍 -> tofu no card.
+#  Cada classe/item precisa de um sprite mapeado em EMOJI_SPRITES.)
+def _strip_vs(s: str) -> str:
+    return (s or "").replace("\ufe0f", "")
+
+
+def test_emoji_sprites_lookup_ignora_variation_selector():
+    import royal_render as rr
+    # 🛡️ (com U+FE0F) e 🛡 (sem) resolvem o mesmo sprite
+    assert _strip_vs("🛡️") in rr.EMOJI_SPRITES
+    assert rr.EMOJI_SPRITES[_strip_vs("🛡️")] is rr.EMOJI_SPRITES[_strip_vs("🛡")]
+
+
+def test_toda_classe_tem_sprite_no_card():
+    import royal_render as rr
+    faltando = [cid for cid, info in main.CLASSES.items()
+                if _strip_vs(info["emoji"]) not in rr.EMOJI_SPRITES]
+    assert not faltando, f"classes sem sprite (dao tofu no card): {faltando}"
+
+
+def test_todo_item_tem_sprite_no_card():
+    import royal_render as rr
+    faltando = [iid for iid, info in main.ITEMS.items()
+                if _strip_vs(info["emoji"]) not in rr.EMOJI_SPRITES]
+    assert not faltando, f"itens sem sprite (dao tofu no card): {faltando}"

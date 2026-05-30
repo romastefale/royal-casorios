@@ -181,4 +181,9 @@ Confirma no grupo + DM do owner. Testes: `test_migrate_chat_data_preserva_progre
   `UPDATE … WHERE` de guarda. → `docs/ARCHITECTURE.md` (§ Infra, anti-duplicação).
 - **Cards são card-first** com fallback texto; emoji de título é stripado antes do Pillow (senão
   tofu). → `docs/ARCHITECTURE.md` (§ Features, nota card-first).
+- **Ícones de classe/item nos cards são sprites pixel-art, NÃO emoji-fonte.** As fontes do projeto
+  não cobrem 👑🌹🧙📜🧪🥾💍 → davam tofu. `draw_icon_centered()` mapeia emoji→`SPRITE_*` via
+  `EMOJI_SPRITES` (chaves sem `U+FE0F`). Ao criar classe/item novo, adicione o sprite + entrada no
+  mapa senão o tofu volta. Emoji em menu/texto (ex. 🐉) renderiza nativo no Telegram — não precisa
+  sprite. → `docs/ARCHITECTURE.md` (§ Identidade visual).
 - **`ROADMAP.md` está desatualizado** — a fonte de verdade do estado real é o código + `docs/`.
