@@ -1,4 +1,1 @@
-- [Premium removido — bot nunca cobra](premium-removido.md) — Premium/Telegram Stars/perks pagos foram removidos por completo; o bot NUNCA cobra; colunas/tabela do DB ficaram inertes (não dropar).
-- [Ícones dos cards = sprites pixel-art](card-icons-sprites.md) — cards usam SPRITE_* (não emoji-fonte) pra evitar tofu; novo classe/item precisa de sprite + entrada em EMOJI_SPRITES.
-- [Ordem de include dos Routers](router-include-order.md) — pacote royal/: `system` por último (track) e `hub` antes de `cfg`/`missoes` (hub_cb casa r:cfg:/r:quest:); não reordenar.
-- [Log dump + alerta inteligente](log-alert-system.md) — log periódico vai pra backup/logs (não DM); royal/alerts.py só DMa erro relevante; OWNER_ALERTS_ENABLED corta só a DM, nunca o arquivo.
+- [Grupos do Royal](grupos-royal.md) — chat IDs dos 3 grupos (real/pontua `-1002556760909`, teste `-1004225775299`, ponte-IA @Mira `-5204321141`); gotchas Telegram bot-to-bot + custo zero.
