@@ -26,37 +26,35 @@ dia → banco dinâmico `palavra_pool`). Config: `MIRA_USERNAME`/`IA_BRIDGE_CHAT
 os prompts máquina→máquina contêm `<...>` (ex. template do quiz `<pergunta>`/`<alternativa>`) →
 sem isso o Telegram rejeita com `TelegramBadRequest: can't parse entities: Unsupported start tag`.
 
-🟢 **CORREÇÃO DEFINITIVA (o dono confirmou): a @Mira é uma conta de USUÁRIO (userbot),
-NÃO um bot do @BotFather.** Isso vira o diagnóstico de cabeça: passamos sessões focados em
-"Bot-to-Bot Communication Mode" — que é o lever ERRADO. Bot-to-Bot Mode só importa quando os
-DOIS lados são bots. Como a @Mira é USER, o que gateia a entrega das msgs dela ao bot do jogo
-é o **PRIVACY MODE** (regra oficial Telegram, core.telegram.org Bots FAQ/Features).
+🔴 **CAUSA-RAIZ DEFINITIVA (provada por export do cliente Telegram, ambos os lados): a @Mira é
+um BOT, não um userbot.** O export das duas msgs do grupo-ponte mostra `botInfo` no autor TANTO
+do relay (`RoyalRPGbot` id `8846613568`) QUANTO da resposta (`Mira` id `8377231659` =
+`MIRA_USER_ID`, username `mira`, `subscriberCount` ~1.05M → é um BOT público de IA). Ou seja:
+**bot↔bot.** Regra ABSOLUTA do Telegram (core.telegram.org Bots FAQ): *"bots will not be able
+to see messages from other bots regardless of mode"* — um bot NUNCA recebe msg de outro bot via
+getUpdates. **Não existe** "Bot-to-Bot Communication Mode" público; aquilo era teoria errada.
 
-⚠️ **Regra oficial Telegram (verificada por pesquisa, mai/2026):**
-- Bot com **privacy mode ON** (default) só recebe no grupo: comandos a ele, replies às
-  PRÓPRIAS msgs dele, service msgs, e msgs de chat privado. **NÃO recebe** msgs normais de
-  usuários.
-- Bot **admin** OU bot com **privacy mode OFF** recebe TODAS as msgs de usuários (menos msgs
-  de OUTROS bots — bot↔bot é proibido salvo Bot-to-Bot Mode).
-- ⚠️ **Mudar privacy/admin SÓ vale depois de REMOVER + RE-ADICIONAR o bot ao grupo existente**
-  (o grupo cacheia o estado antigo). Provável causa de continuar mudo mesmo "sendo admin": o
-  grupo virou supergrupo e o estado efetivo não atualizou → re-adicionar resolve.
+⛔ **Por isso privacy mode / admin / re-add NÃO resolvem.** Esses levers só afetam msgs de
+USUÁRIOS. Como a @Mira é bot, o `RoyalRPGbot` (bot) jamais receberá a resposta dela, com
+qualquer config. O relay É enviado (msg 29 ok) e a @Mira responde certo (msg 30, reply à 29,
+formato perfeito, id casa) — só que a entrega ao bot do jogo é impossível.
 
-✅ **FIX (ação do dono, garantido pq a @Mira é user):** @BotFather → `/setprivacy` →
-@RoyalRPGbot → **Disable**; depois **remover e re-adicionar** o bot ao grupo-ponte (e manter
-como admin). Aí o bot passa a RECEBER as msgs da @Mira → captura funciona. Alternativa que
-dribla privacy sem mexer em nada: fazer a @Mira **REPLICAR (reply_to)** a msg do relay do bot
-(reply à própria msg do bot SEMPRE é entregue, mesmo com privacy ON) — é o que o TR3 faz.
+🔴 **Prova por log (deploy do diagnóstico):** durante os 180s de espera do `/rquiz`, **ZERO**
+linhas `[MIRA] bridge msg ...` → o bot não recebe NADA → confirma bot↔bot, não é match nem
+config. `MIRA_USERNAME` default `"Mira"` (ponte ligada); `""` desliga.
 
-🔴 **Prova por log (produção, deploy do diagnóstico):** durante os 180s de espera do `/rquiz`,
-**ZERO** linhas `[MIRA] bridge msg ...` aparecem → o bot não recebe NADA do grupo-ponte →
-problema é ENTREGA (privacy), não match. `MIRA_USERNAME` default `"Mira"` no código (ponte
-ligada); `MIRA_USERNAME=""` desliga.
+✅ **ÚNICAS soluções reais (bridge bot↔bot é impossível):**
+1. **Userbot relay (fix correto, custo zero):** uma CONTA DE USUÁRIO (Telethon/Pyrogram) no
+   grupo-ponte — usuário PODE ler msg de bot. Ela manda o prompt à @Mira, lê a resposta e
+   alimenta o jogo (mesmo processo Railway → chama os ingestores direto, ou via SQLite/HTTP).
+   Precisa: `API_ID`+`API_HASH` (my.telegram.org, grátis) + session de login por telefone.
+2. **Só fallback:** `/rquiz`/palavras usam as listas fixas; sem IA dinâmica, zero infra nova.
+3. **Trocar a @Mira por uma IA rodando em conta de USUÁRIO** (aí o bot leria com privacy
+   OFF+admin+re-add) — mas a @Mira atual é bot público, não dá.
 
-🟢 **TR3 (repo `romastefale/TR3`) reinterpretado:** o TR3 faz relay + captura o **reply** no
-chat-alvo. Como replies à própria msg do bot são entregues MESMO com privacy ON, o TR3
-funciona pq a Mira dele **responde com reply_to** — não por nenhum modo especial. Caminho
-análogo p/ o Royal: privacy OFF + re-add, OU garantir reply_to da @Mira.
+⚠️ **TR3 (repo `romastefale/TR3`) — reinterpretar:** se o TR3 "funciona", é porque o lado que
+CAPTURA lá é um USERBOT (user lê bot), OU os dois lados não são ambos bots. Bot↔bot puro não
+funciona em lugar nenhum. Não copiar do TR3 a ideia de "bot lê bot".
 
 ✅ **Regra do dono (custo zero):** a IA roda do LADO da @Mira (bot externo que o dono
 mantém); o jogo só SOLICITA e INGERE → nenhuma IA paga dentro do jogo.
