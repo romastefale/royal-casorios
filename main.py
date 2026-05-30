@@ -66,13 +66,13 @@ from royal.mira import *  # noqa: F401,F403  re-export p/ testes (main.parse_wor
 from royal.handlers import (  # noqa: E402
     start, hub, perfil, avatar, classe, inventario, loja, economia, ranking,
     palavra, boss, casorios, privacidade, inline, missoes, eventos,
-    conquistas, cfg, admin, inteligencia, system,
+    conquistas, cfg, admin, inteligencia, quiz, system,
 )
 
 _FEATURE_ROUTERS = (
     start, hub, perfil, avatar, classe, inventario, loja, economia, ranking,
     palavra, boss, casorios, privacidade, inline, missoes, eventos,
-    conquistas, cfg, admin, inteligencia, system,
+    conquistas, cfg, admin, inteligencia, quiz, system,
 )
 for _feature in _FEATURE_ROUTERS:
     dp.include_router(_feature.router)

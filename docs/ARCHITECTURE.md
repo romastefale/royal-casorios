@@ -62,6 +62,16 @@
   `PALAVRA_NO_REPEAT_RECENT` (fallback nunca trava). Owner: `/royalmiratest` (off-menu). Config via
   env (`MIRA_USERNAME` vazio = off). Testes: `tests/test_mira.py` (`parse_words`, `pool_ingest`,
   anti-repeat) + `palavra_pool` em `test_tabelas_criticas_existem`.
+  **Objetivo 2 (quiz `/rquiz`, admin):** `royal/handlers/quiz.py`. Admin escolhe tema (arg ou
+  ForceReply) + 5/10 perguntas; janela de inscrição editada **in-place** (Entrar/Começar/Cancelar)
+  enquanto `fetch_quiz_questions(tema,count)` pede à @Mira (`build_quiz_prompt` + `parse_quiz_questions`
+  TOLERANTE: pergunta+≥2 opts+gabarito A-D, trunca 300/100). Roda **enquetes nativas** (`send_poll
+  type="quiz" is_anonymous=False open_period=30`); `@router.poll_answer` (auto-incluso no
+  `resolve_used_update_types` pois `is_anonymous=False`) pontua **só inscritos** (+1/acerto). Fim →
+  **Card top-5** `render_quiz_card`/`QuizCardEntry` (reusa a linguagem visual do pódio; card-first +
+  fallback texto). Estado **em memória** (`_sessions`/`_polls`, 1 quiz/grupo, efêmero — sem persistir
+  entre restarts) + watchdog 600s. **Quiz NÃO dá XP** (pontos só do placar → evita flood de level-up).
+  Testes: `tests/test_quiz.py` (`parse_quiz_questions`, `quiz_top`).
 - **🚪 Reentrada de membro:** quem já tem progresso e volta é recebido com a ficha (foto). Progresso
   nunca é apagado na saída (só `/royaldados`). Handler `on_member_rejoin`.
 - **🎉 Eventos sazonais — `/royalevento` (M09):** boost de XP global por data, sem DB

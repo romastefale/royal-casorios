@@ -16,6 +16,7 @@ Bot de Telegram de RPG retro-futurista para grupos. Construído com **aiogram 3.
 **Inteligência royal (custo zero) — invisível ao player:**
 - 🤖 **Ponte @Mira:** a IA roda no bot SEPARADO **@Mira** (do dono); o jogo só solicita/ingere conteúdo pela ponte — nenhuma IA paga dentro do jogo. Exige **Bot-to-Bot Mode** ligado no @BotFather.
 - 📚 **Palavras do dia:** 1×/dia o jogo pede uma leva de palavras à @Mira → banco dinâmico `palavra_pool` (junto da lista fixa, evitando repetir as últimas usadas). A "Palavra da Hora" fica mais variada sem mudar nada pro jogador. Owner testa com `/royalmiratest`.
+- 🧠 **Quiz Real — `/rquiz` (admin):** o admin abre um quiz no grupo (tema livre + 5 ou 10 perguntas geradas pela @Mira). Sai uma **janela de inscrição** (botão Entrar), roda em **enquetes nativas** do Telegram (1 correta, 30s cada) e no fim entrega um **Card top-5** com o placar. Pontuam só os inscritos que acertam; o quiz é efêmero (não dá XP, não persiste entre restarts). Indisponível se a ponte @Mira estiver off.
 
 **UX viva (Bot API 10):**
 - ⚡ **Bot reage ao seu comando** com `👀` / `✍` antes de responder — feedback instantâneo via `set_message_reaction` (helper `react_to()`)

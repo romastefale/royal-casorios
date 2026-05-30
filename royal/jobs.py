@@ -511,6 +511,7 @@ async def register_bot_commands():
         BotCommand(command="royalmissoes",      description="🗺️ Missões diárias"),
         BotCommand(command="royalevento",       description="🎉 Evento ativo"),
         BotCommand(command="royalconquistas",   description="🏅 Conquistas"),
+        BotCommand(command="rquiz",             description="🧠 (admin) Quiz com a Mira"),
         BotCommand(command="royalcasar",        description="💍 (admin) Forçar casório"),
         BotCommand(command="royalativar",       description="🔧 (admin) Ativar bot"),
         BotCommand(command="royaltutorial",     description="📖 Como jogar"),

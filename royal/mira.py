@@ -20,6 +20,7 @@ core (evita ciclo).
 """
 import asyncio
 import re
+from dataclasses import dataclass
 
 from royal.config import (IA_BRIDGE_CHAT_ID, MIRA_ENABLED, MIRA_PALAVRAS_COUNT,
                           MIRA_REQUEST_TIMEOUT_SEC, MIRA_USERNAME, logger)
@@ -183,3 +184,117 @@ async def fetch_and_store_palavras(count: int | None = None) -> int:
     logger.info("[MIRA] palavras do dia: %d recebidas, %d novas no pool",
                 len(words), n_new)
     return len(words)
+
+
+# =====================================================================
+# QUIZ — perguntas de múltipla escolha geradas pela @Mira (Objetivo 2)
+# =====================================================================
+
+@dataclass(frozen=True)
+class QuizQuestion:
+    """Uma pergunta de quiz pronta pra virar enquete nativa do Telegram.
+    `options` tem 2-4 alternativas; `correct` é o índice (0-based) da certa."""
+    question: str
+    options: tuple[str, ...]
+    correct: int
+
+
+# Linha de pergunta: "1) ...", "1. ...", "P: ...", "Pergunta 1 - ..."
+_QQ_LINE = re.compile(
+    r"^(?:p(?:ergunta)?\s*\d*\s*[:.\)\-]\s*|\d+\s*[:.\)\-]\s*)(.+)$",
+    re.IGNORECASE)
+# Alternativa: "A) ...", "a. ...", "(B) ...", "[c] ..."
+_QQ_OPT = re.compile(r"^[\(\[]?\s*([A-Da-d])\s*[\)\].:\-]\s*(.+)$")
+# Gabarito: "GABARITO: B", "Resposta - C", "Correta: a", "R) D"
+_QQ_GAB = re.compile(
+    r"^(?:gabarito|resposta|correta|correto|r)\s*[:.\)\-]?\s*[\(\[]?\s*([A-Da-d])\b",
+    re.IGNORECASE)
+
+
+def build_quiz_prompt(theme: str, count: int) -> str:
+    """Monta o pedido pra @Mira gerar `count` perguntas sobre `theme` num
+    formato estável (fácil de parsear). A @Mira é tolerada se desviar — o
+    parser abaixo aceita variações comuns."""
+    return (
+        f"QUIZ: gere {count} perguntas de múltipla escolha em português do "
+        f'Brasil sobre o tema "{theme}". Cada pergunta deve ter EXATAMENTE 4 '
+        f"alternativas e só UMA correta. Responda em texto puro, um bloco por "
+        f"pergunta, EXATAMENTE neste formato:\n"
+        f"1) <pergunta>\n"
+        f"A) <alternativa>\n"
+        f"B) <alternativa>\n"
+        f"C) <alternativa>\n"
+        f"D) <alternativa>\n"
+        f"GABARITO: <letra A-D>\n"
+        f"Separe os blocos com uma linha em branco. Sem markdown, sem "
+        f"comentários, sem texto fora do formato."
+    )
+
+
+def parse_quiz_questions(text: str, want: int = 10) -> list[QuizQuestion]:
+    """Extrai perguntas de quiz da resposta livre da @Mira. TOLERANTE ao
+    formato (numeração/letras/gabarito em variações). Só emite blocos
+    COMPLETOS: pergunta + ≥2 alternativas + gabarito válido apontando pra uma
+    alternativa existente. Trunca pros limites do Telegram (pergunta 300,
+    alternativa 100). Devolve no máximo `want` perguntas."""
+    if not text:
+        return []
+    out: list[QuizQuestion] = []
+    q_text: str | None = None
+    opts: list[str] = []
+    correct: int | None = None
+
+    def _flush() -> None:
+        nonlocal q_text, opts, correct
+        if (q_text and len(opts) >= 2 and correct is not None
+                and correct < len(opts) and correct < 4):
+            keep = [o[:100] for o in opts[:4]]
+            out.append(QuizQuestion(q_text[:300], tuple(keep), correct))
+        q_text, opts, correct = None, [], None
+
+    for raw in text.splitlines():
+        if len(out) >= want:
+            break
+        s = raw.strip()
+        if not s:
+            continue
+        mg = _QQ_GAB.match(s)
+        if mg and q_text is not None and opts:
+            correct = "abcd".index(mg.group(1).lower())
+            _flush()
+            continue
+        mo = _QQ_OPT.match(s)
+        if mo and q_text is not None:
+            opts.append(mo.group(2).strip())
+            continue
+        mq = _QQ_LINE.match(s)
+        if mq:
+            if q_text is not None:
+                _flush()
+            q_text = mq.group(1).strip()
+            opts = []
+            correct = None
+            continue
+        # Continuação do enunciado (linha solta antes das alternativas).
+        if q_text is not None and not opts:
+            q_text = (q_text + " " + s).strip()
+    _flush()
+    return out[:want]
+
+
+async def fetch_quiz_questions(theme: str, count: int) -> list[QuizQuestion]:
+    """Pede `count` perguntas à @Mira sobre `theme` e parseia. Retorna lista
+    (pode vir com MENOS que `count` se a @Mira mandar menos blocos válidos) ou
+    [] se a ponte está off / sem resposta / nada válido."""
+    if not MIRA_ENABLED:
+        return []
+    reply = await ask_mira(build_quiz_prompt(theme, count))
+    if not reply:
+        logger.warning("[MIRA] sem resposta para quiz tema=%r", theme)
+        return []
+    qs = parse_quiz_questions(reply, want=count)
+    if not qs:
+        logger.warning("[MIRA] quiz sem perguntas válidas: %r", reply[:200])
+    else:
+        logger.info("[MIRA] quiz tema=%r: %d perguntas parseadas", theme, len(qs))
+    return qs

@@ -220,6 +220,18 @@ Módulos: `royal/mira.py` (ponte: `ask_mira`/`on_mira_reply`/`parse_words`/`fetc
 - **Teste manual (owner, off-menu):** `/royalmiratest` força um pedido e reporta quantas vieram.
 - **Feature invisível ao player** (palavra só fica mais variada) → `/start`/`ROYAL_HELP`/
   `ROYAL_TUTORIAL_PARTS` auditados, **sem mudança**. Config 100% via env (vazio = off).
+- **Objetivo 2 — quiz `/rquiz` (admin):** `royal/handlers/quiz.py` (router **ANTES** de `system`).
+  Admin roda `/rquiz <tema>` (ou sem tema → ForceReply pede o tema) → escolhe 5/10 → **janela de
+  inscrição** editada in-place (botão Entrar/Começar/Cancelar; só inscritos pontuam) enquanto
+  `fetch_quiz_questions(tema,count)` pede as perguntas à @Mira (`build_quiz_prompt`/
+  `parse_quiz_questions` tolerante: exige pergunta+≥2 opts+gabarito A-D; trunca 300/100). Ao começar,
+  roda **enquetes nativas** (`send_poll type="quiz" is_anonymous=False open_period=30`); `@router.
+  poll_answer` (auto-incluso no `resolve_used_update_types`) soma +1 a cada acerto de inscrito. Fim →
+  **Card top-5** (`render_quiz_card`/`QuizCardEntry`, card-first + fallback texto). Estado **em
+  memória** (1 quiz/grupo, sem persistência entre restarts — efêmero) + watchdog auto-cancela a
+  janela após 600s. **Decisão:** quiz NÃO concede XP (pontos são só do placar do quiz → evita flood
+  de level-up). Sem novas env vars (reusa a ponte; `MIRA_USERNAME` vazio = off → comando avisa e sai).
+  Testes: `tests/test_quiz.py` (`parse_quiz_questions`, `quiz_top`).
 
 ## 🧩 Ordem de handlers & filtros de entrada (gotchas ativos)
 

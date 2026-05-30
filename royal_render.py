@@ -1380,6 +1380,143 @@ def render_ranking_card(season_label: str,
 
 
 # =====================================================================
+# QUIZ CARD — top-5 do quiz /rquiz em estilo arcade high-score (lista)
+# =====================================================================
+
+@dataclass(frozen=True)
+class QuizCardEntry:
+    rank: int
+    royal_id: str
+    name: str
+    points: int
+    avatar_slug: str | None = None
+
+
+def render_quiz_card(theme_label: str,
+                     entries: tuple[QuizCardEntry, ...]) -> bytes | None:
+    """Placar final do quiz: top-5 em linhas (reusa a linguagem visual do
+    pódio do ranking). Recebe tupla (hashável) pra cache."""
+    if not entries:
+        return None
+    cache_key = ("quiz", theme_label,
+                 tuple((e.rank, e.royal_id, e.name, e.points, e.avatar_slug)
+                       for e in entries[:5]))
+    cached = cache_get(cache_key)
+    if cached:
+        return cached
+    try:
+        pal = pick_palette(theme_label or "QUIZ")
+        img = Image.new("RGB", (CARD_SIZE, CARD_SIZE), BG_DEEP)
+        draw = ImageDraw.Draw(img)
+
+        # estatica de fundo
+        rng = random.Random(hash(theme_label) & 0xFFFF)
+        for _ in range(1200):
+            x = rng.randrange(CARD_SIZE)
+            y = rng.randrange(CARD_SIZE)
+            c = rng.choice([(20, 16, 22), (16, 14, 20), (28, 22, 30)])
+            pixel_rect(draw, (x, y, x + 3, y + 3), c)
+
+        OUT_PAD = 28
+        panel_box = (OUT_PAD, OUT_PAD, CARD_SIZE - OUT_PAD, CARD_SIZE - OUT_PAD)
+        pixel_rect(draw, panel_box, BG)
+        chunky_border(draw, panel_box, outer=BLACK, inner=GOLD_DIM, thick=8)
+
+        # Header
+        header_box = (OUT_PAD + 28, OUT_PAD + 28,
+                      CARD_SIZE - OUT_PAD - 28, OUT_PAD + 120)
+        pixel_rect(draw, header_box, PANEL)
+        pixel_rect(draw, (header_box[0], header_box[1],
+                          header_box[2], header_box[1] + 4), GOLD_DIM)
+        pixel_rect(draw, (header_box[0], header_box[3] - 4,
+                          header_box[2], header_box[3]), GOLD_DIM)
+        title_font = load_font(28, mono=True, bold=True)
+        theme_font = load_font(18, mono=True, bold=False)
+        draw.text((header_box[0] + 22, header_box[1] + 18),
+                  "ROYAL.QUIZ.SYS", font=title_font, fill=pal["header"])
+        theme_txt = f">> {ellipsize(theme_label.upper(), 22)}"
+        tw, _ = text_size(draw, theme_txt, theme_font)
+        draw.text((header_box[2] - 22 - tw, header_box[1] + 24),
+                  theme_txt, font=theme_font, fill=DIM)
+        draw.text((header_box[0] + 22, header_box[1] + 54),
+                  "TOP 5 // PLACAR FINAL", font=theme_font, fill=DIM)
+
+        medal_colors = {1: GOLD, 2: (180, 180, 180), 3: (180, 100, 60)}
+        rows = [e for e in entries if e.rank <= 5][:5]
+        row_top0 = OUT_PAD + 150
+        row_h = 150
+        row_gap = 14
+        left = OUT_PAD + 40
+        right = CARD_SIZE - OUT_PAD - 40
+
+        for i, e in enumerate(rows):
+            rt = row_top0 + i * (row_h + row_gap)
+            rb = rt + row_h
+            mc = medal_colors.get(e.rank, pal["header"])
+            pixel_rect(draw, (left, rt, right, rb), PANEL)
+            pixel_rect(draw, (left, rt, left + 8, rb), mc)  # faixa-medalha
+
+            # numero do rank
+            num_font = load_font(64, mono=True, bold=True)
+            num = str(e.rank)
+            nw, nh = text_size(draw, num, num_font)
+            draw.text((left + 26, rt + (row_h - nh) // 2 - 8),
+                      num, font=num_font, fill=mc)
+
+            # portrait do avatar
+            port_size = 110
+            resolved = royal_avatars.resolve_slug(e.avatar_slug, e.royal_id)
+            portrait = royal_avatars.load_avatar(resolved, port_size)
+            px = left + 120
+            py = rt + (row_h - port_size) // 2
+            if portrait is not None:
+                pixel_rect(draw, (px - 3, py - 3,
+                                  px + port_size + 3, py + port_size + 3), mc)
+                img.paste(portrait, (px, py), portrait)
+
+            # nome + royal_id
+            tx = px + port_size + 24
+            name_clean = ellipsize(e.name, 16).upper()
+            name_font = load_font(26, mono=True, bold=True)
+            draw_text_smart(draw, (tx, rt + 34), name_clean, name_font, INK)
+            id_font = load_font(16, mono=True, bold=False)
+            draw.text((tx, rt + 76), e.royal_id, font=id_font, fill=DIM)
+
+            # pontos (direita)
+            pts_font = load_font(34, mono=True, bold=True)
+            pts_txt = f"{format_br(e.points)} pts"
+            pw, ph = text_size(draw, pts_txt, pts_font)
+            draw.text((right - 24 - pw, rt + (row_h - ph) // 2),
+                      pts_txt, font=pts_font, fill=pal["xp"])
+
+        # Footer
+        foot_font = load_font(12, mono=True, bold=False)
+        foot_left = f"> N={len(entries)}"
+        foot_right = f"v0.1 // {pal['name']}_MODE"
+        draw.text((OUT_PAD + 60, CARD_SIZE - OUT_PAD - 50),
+                  foot_left, font=foot_font, fill=DIM)
+        fw, _ = text_size(draw, foot_right, foot_font)
+        draw.text((CARD_SIZE - OUT_PAD - 60 - fw, CARD_SIZE - OUT_PAD - 50),
+                  foot_right, font=foot_font, fill=pal["footer"])
+
+        img = img.convert("RGBA")
+        apply_scanlines(img, every=3, alpha=55)
+        vimg = img.convert("RGB")
+        apply_vignette(vimg, strength=160)
+        img = vimg.convert("RGBA")
+        apply_grain(img, intensity=18)
+        img = img.convert("RGB")
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=90, optimize=True)
+        payload = buf.getvalue()
+        cache_put(cache_key, payload)
+        return payload
+    except Exception:
+        logger.exception("ROYAL_QUIZ_CARD_RENDER_FAILED")
+        return None
+
+
+# =====================================================================
 # LEVEL-UP CARD — pop celebrativo, leve, sem cachear (sempre fresh)
 # =====================================================================
 
