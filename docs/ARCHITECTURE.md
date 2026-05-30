@@ -54,7 +54,9 @@
   (`ask_mira` manda `@Mira <pedido>` no grupo-ponte + `asyncio.Future`/`wait_for`; `on_mira_reply`
   resolve; `parse_words` tolerante a formato) + `royal/handlers/inteligencia.py` (captura `is_bot`
   no grupo-ponte, router **ANTES** de `system` pois `track` descarta bot) + `mira_palavras_job`
-  (`royal/jobs.py`). ⚠️ Exige **Bot-to-Bot Mode** LIGADO no @BotFather (ação do dono) senão o
+  (`royal/jobs.py`). `on_mira_reply` casa a @Mira por **`MIRA_USER_ID`** (critério principal,
+  robusto) ou pelo `MIRA_USERNAME` se o ID não estiver setado; `ask_mira` ainda usa o username p/
+  **endereçar** o pedido (`@username <prompt>`). ⚠️ Exige **Bot-to-Bot Mode** LIGADO no @BotFather (ação do dono) senão o
   Telegram não entrega as msgs da @Mira. **Objetivo 1 (palavras do dia):** 1×/dia
   (≥`MIRA_PALAVRAS_HOUR`) pede `MIRA_PALAVRAS_COUNT` palavras → **`palavra_pool`** (**Migration
   v15**, dedup normalizado, ignora `PALAVRAS`); dia persistido em `bot_meta['mira_palavras_day']`.

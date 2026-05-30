@@ -13,9 +13,11 @@ from royal_words import PALAVRAS
 
 
 class _FakeUser:
-    def __init__(self, is_bot=True, username=None):
+    def __init__(self, is_bot=True, username=None, uid=None):
         self.is_bot = is_bot
         self.username = username
+        # default = ID da @Mira → os testes existentes casam por ID sem mudar.
+        self.id = uid if uid is not None else mira.MIRA_USER_ID
 
 
 class _FakeChat:
@@ -24,9 +26,9 @@ class _FakeChat:
 
 
 class _FakeMsg:
-    def __init__(self, chat_id, *, is_bot=True, username=None, text="a, b, c",
-                 reply_to=None):
-        self.from_user = _FakeUser(is_bot, username)
+    def __init__(self, chat_id, *, is_bot=True, username=None, uid=None,
+                 text="a, b, c", reply_to=None):
+        self.from_user = _FakeUser(is_bot, username, uid)
         self.chat = _FakeChat(chat_id)
         self.text = text
         self.caption = None
@@ -144,6 +146,69 @@ def test_on_mira_reply_aceita_sem_reply_to_e_filtra_humano():
         assert not fut.done()
         # bot no chat-ponte, sem reply_to → resolve
         assert mira.on_mira_reply(_FakeMsg(bridge, text="gato, mesa")) is True
+        assert fut.result() == "gato, mesa"
+    finally:
+        mira._pending.pop(bridge, None)
+        loop.close()
+
+
+def test_on_mira_reply_filtra_por_user_id():
+    """Com MIRA_USER_ID setado, só a @Mira (ID fixo) resolve — outro bot no
+    mesmo grupo-ponte, mesmo com username parecido, é ignorado."""
+    assert mira.MIRA_USER_ID  # default = ID conhecido da @Mira
+    bridge = mira.IA_BRIDGE_CHAT_ID
+    loop = asyncio.new_event_loop()
+    try:
+        # outro bot (ID diferente) NÃO resolve
+        fut = loop.create_future()
+        mira._pending[bridge] = {"future": fut, "request_mid": 1}
+        assert mira.on_mira_reply(
+            _FakeMsg(bridge, uid=mira.MIRA_USER_ID + 1, text="x, y")) is False
+        assert not fut.done()
+        # a @Mira (ID certo) resolve
+        assert mira.on_mira_reply(
+            _FakeMsg(bridge, uid=mira.MIRA_USER_ID, text="gato, mesa")) is True
+        assert fut.result() == "gato, mesa"
+    finally:
+        mira._pending.pop(bridge, None)
+        loop.close()
+
+
+def test_on_mira_reply_fallback_username_quando_id_desligado(monkeypatch):
+    """MIRA_USER_ID=0 → match por @username (critério antigo). Username errado
+    é ignorado; o certo resolve."""
+    monkeypatch.setattr(mira, "MIRA_USER_ID", 0)
+    monkeypatch.setattr(mira, "MIRA_USERNAME", "mira")
+    bridge = mira.IA_BRIDGE_CHAT_ID
+    loop = asyncio.new_event_loop()
+    try:
+        fut = loop.create_future()
+        mira._pending[bridge] = {"future": fut, "request_mid": 1}
+        # username errado (mesmo com ID = o da @Mira) NÃO resolve, pois ID off
+        assert mira.on_mira_reply(
+            _FakeMsg(bridge, username="outrobot", text="x, y")) is False
+        assert not fut.done()
+        # username certo resolve
+        assert mira.on_mira_reply(
+            _FakeMsg(bridge, username="Mira", text="gato, mesa")) is True
+        assert fut.result() == "gato, mesa"
+    finally:
+        mira._pending.pop(bridge, None)
+        loop.close()
+
+
+def test_on_mira_reply_id_ausente_nao_quebra_cai_pro_username(monkeypatch):
+    """Msg sem from_user.id (objeto malformado) com MIRA_USER_ID setado NÃO
+    levanta AttributeError: cai pro @username quando configurado."""
+    monkeypatch.setattr(mira, "MIRA_USERNAME", "mira")
+    bridge = mira.IA_BRIDGE_CHAT_ID
+    loop = asyncio.new_event_loop()
+    try:
+        fut = loop.create_future()
+        mira._pending[bridge] = {"future": fut, "request_mid": 1}
+        msg = _FakeMsg(bridge, username="mira", text="gato, mesa")
+        msg.from_user.id = None  # simula id ausente
+        assert mira.on_mira_reply(msg) is True
         assert fut.result() == "gato, mesa"
     finally:
         mira._pending.pop(bridge, None)

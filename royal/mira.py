@@ -23,7 +23,8 @@ import re
 from dataclasses import dataclass
 
 from royal.config import (IA_BRIDGE_CHAT_ID, MIRA_ENABLED, MIRA_PALAVRAS_COUNT,
-                          MIRA_REQUEST_TIMEOUT_SEC, MIRA_USERNAME, logger)
+                          MIRA_REQUEST_TIMEOUT_SEC, MIRA_USER_ID, MIRA_USERNAME,
+                          logger)
 from royal.core import bot, normalize_word, pool_ingest_words, safe_send
 
 # 1 pedido por vez por grupo-ponte: bridge_chat_id -> {future, request_mid}
@@ -72,18 +73,25 @@ async def ask_mira(prompt: str, timeout: float | None = None) -> str | None:
 
 def on_mira_reply(message) -> bool:
     """Chamado pelo handler de captura quando chega uma msg de BOT no
-    grupo-ponte. Se for a @Mira (username confere quando configurado) e houver
-    pedido pendente, resolve o Future com o texto. Retorna True se consumiu.
-    NÃO cadastra a @Mira como jogador (o handler para a propagação aqui)."""
+    grupo-ponte. Se for a @Mira (casa por MIRA_USER_ID quando setado, senão por
+    username) e houver pedido pendente, resolve o Future com o texto. Retorna
+    True se consumiu. NÃO cadastra a @Mira como jogador (para a propagação)."""
     if IA_BRIDGE_CHAT_ID is None:
         return False
     if not message or not message.from_user or not message.from_user.is_bot:
         return False
     if message.chat is None or message.chat.id != IA_BRIDGE_CHAT_ID:
         return False
+    # Match da @Mira: ID fixo é o critério PRINCIPAL (robusto). Sem ID utilizável
+    # (não setado, ou ausente na msg) cai pro @username (que pode mudar/ocultar).
+    uid = getattr(message.from_user, "id", None)
     uname = message.from_user.username or ""
-    if MIRA_USERNAME and uname.lower() != MIRA_USERNAME.lower():
-        return False
+    if MIRA_USER_ID and uid is not None:
+        if uid != MIRA_USER_ID:
+            return False
+    elif MIRA_USERNAME:
+        if uname.lower() != MIRA_USERNAME.lower():
+            return False
     pend = _pending.get(IA_BRIDGE_CHAT_ID)
     if not pend or pend["future"].done():
         return False
