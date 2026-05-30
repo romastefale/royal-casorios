@@ -26,34 +26,37 @@ dia → banco dinâmico `palavra_pool`). Config: `MIRA_USERNAME`/`IA_BRIDGE_CHAT
 os prompts máquina→máquina contêm `<...>` (ex. template do quiz `<pergunta>`/`<alternativa>`) →
 sem isso o Telegram rejeita com `TelegramBadRequest: can't parse entities: Unsupported start tag`.
 
-⚠️ **Ser admin NÃO resolve bot-to-bot.** Regra OFICIAL do Telegram (Bots FAQ): um bot
-**não recebe** mensagens de OUTRO bot num grupo — *mesmo sendo admin e com privacy mode
-OFF*. Admin/privacy é irrelevante pra isso. O ÚNICO mecanismo é o **"Bot-to-Bot
-Communication Mode"** (Bot API **10.0**, lançado 7-mai-2026) ligado no **@BotFather
-(MiniApp)**.
+🟢 **CORREÇÃO DEFINITIVA (o dono confirmou): a @Mira é uma conta de USUÁRIO (userbot),
+NÃO um bot do @BotFather.** Isso vira o diagnóstico de cabeça: passamos sessões focados em
+"Bot-to-Bot Communication Mode" — que é o lever ERRADO. Bot-to-Bot Mode só importa quando os
+DOIS lados são bots. Como a @Mira é USER, o que gateia a entrega das msgs dela ao bot do jogo
+é o **PRIVACY MODE** (regra oficial Telegram, core.telegram.org Bots FAQ/Features).
 
-✅ **Bot-to-bot FUNCIONA em GRUPO** com o modo ligado: pra o jogo RECEBER as msgs da @Mira
-no grupo-ponte, o bot do JOGO (o receptor) precisa ter o **Bot-to-Bot Communication Mode
-LIGADO**. Sem isso, o Telegram não entrega → ponte muda → `/rquiz` dá timeout ("A geração
-falhou"). O catch-all `track` descarta `is_bot`, então a captura precisa de router ANTES de
-`system` (já feito — order `inteligencia, quiz, system`).
+⚠️ **Regra oficial Telegram (verificada por pesquisa, mai/2026):**
+- Bot com **privacy mode ON** (default) só recebe no grupo: comandos a ele, replies às
+  PRÓPRIAS msgs dele, service msgs, e msgs de chat privado. **NÃO recebe** msgs normais de
+  usuários.
+- Bot **admin** OU bot com **privacy mode OFF** recebe TODAS as msgs de usuários (menos msgs
+  de OUTROS bots — bot↔bot é proibido salvo Bot-to-Bot Mode).
+- ⚠️ **Mudar privacy/admin SÓ vale depois de REMOVER + RE-ADICIONAR o bot ao grupo existente**
+  (o grupo cacheia o estado antigo). Provável causa de continuar mudo mesmo "sendo admin": o
+  grupo virou supergrupo e o estado efetivo não atualizou → re-adicionar resolve.
 
-🔴 **Cadeia de falha do `/rquiz` (diagnóstico real via logs de produção):**
-1. `MIRA_USERNAME` agora tem **default `"Mira"`** no código (ponte LIGADA por padrão) → não
-   precisa mais setar no Railway. Setar `MIRA_USERNAME=""` (vazio explícito) desliga.
-2. Único passo externo restante: **Bot-to-Bot Mode** LIGADO no @BotFather pro bot do jogo —
-   se estiver OFF o pedido sai mas a resposta da @Mira nunca chega → **"A geração falhou"**.
-   → Fix é **config externa** (@BotFather), NÃO código. O código está correto.
+✅ **FIX (ação do dono, garantido pq a @Mira é user):** @BotFather → `/setprivacy` →
+@RoyalRPGbot → **Disable**; depois **remover e re-adicionar** o bot ao grupo-ponte (e manter
+como admin). Aí o bot passa a RECEBER as msgs da @Mira → captura funciona. Alternativa que
+dribla privacy sem mexer em nada: fazer a @Mira **REPLICAR (reply_to)** a msg do relay do bot
+(reply à própria msg do bot SEMPRE é entregue, mesmo com privacy ON) — é o que o TR3 faz.
 
-🟢 **TR3 (repo `romastefale/TR3`) é a PROVA, não a contradição:** o dono apontou o TR3
-("ele faz") como exemplo de bot que lê a Mira. Li `app/bot/tigraoresponde.py` +
-`app/main.py`: o TR3 só faz relay (`Mira, <pergunta>`) + captura o **reply** no chat-alvo,
-**sem checar `is_bot`** — não há mágica de código. O dono confirmou que a Mira do TR3 é um
-**BOT do @BotFather**. Logo, a ÚNICA razão de o TR3 funcionar é o **Bot-to-Bot Mode LIGADO
-no bot receptor do TR3**. Mesmo código, config diferente → o bot do Royal precisa do mesmo
-toggle. (Webhook vs polling do TR3 é irrelevante: o filtro bot↔bot é server-side, vale pros
-dois.) NÃO tentar "copiar o código do TR3" pra resolver — o que falta é config (@BotFather +
-`MIRA_USERNAME`).
+🔴 **Prova por log (produção, deploy do diagnóstico):** durante os 180s de espera do `/rquiz`,
+**ZERO** linhas `[MIRA] bridge msg ...` aparecem → o bot não recebe NADA do grupo-ponte →
+problema é ENTREGA (privacy), não match. `MIRA_USERNAME` default `"Mira"` no código (ponte
+ligada); `MIRA_USERNAME=""` desliga.
+
+🟢 **TR3 (repo `romastefale/TR3`) reinterpretado:** o TR3 faz relay + captura o **reply** no
+chat-alvo. Como replies à própria msg do bot são entregues MESMO com privacy ON, o TR3
+funciona pq a Mira dele **responde com reply_to** — não por nenhum modo especial. Caminho
+análogo p/ o Royal: privacy OFF + re-add, OU garantir reply_to da @Mira.
 
 ✅ **Regra do dono (custo zero):** a IA roda do LADO da @Mira (bot externo que o dono
 mantém); o jogo só SOLICITA e INGERE → nenhuma IA paga dentro do jogo.
@@ -64,12 +67,10 @@ mantém); o jogo só SOLICITA e INGERE → nenhuma IA paga dentro do jogo.
 auto-curam se sobrar envio pro id velho.
 
 🔬 **Diagnóstico de captura (relay já funciona mas `/rquiz` dá timeout):** se a @Mira RESPONDE
-visível no grupo-ponte mas o jogo loga `[MIRA] timeout`, o jogo não capturou. Três causas com
-o MESMO sintoma: (A) Bot-to-Bot Mode OFF no bot do JOGO → nem recebe a msg (fix = @BotFather,
-NÃO código); (B) `MIRA_USER_ID` ≠ id REAL da @Mira → match rejeita (fix = env); (C) @Mira
-responde como **userbot** (`is_bot=False`). **Regra durável:** o discriminador da @Mira é
-id/username, NUNCA `is_bot` (ela pode ser bot OU userbot) — a captura não deve filtrar por
-`is_bot`. **Como desambiguar:** ler logs `[MIRA] bridge msg ...` durante a espera — ausência
-total = (A); presença com id divergente = (B). A captura do grupo-ponte só deve CONSUMIR (parar
-propagação) quando casa a @Mira; caso contrário deixa passar (SkipHandler) p/ não engolir
-comandos do dono no grupo-ponte.
+visível no grupo-ponte mas o jogo loga `[MIRA] timeout`, o jogo não capturou. Desambiguar pelos
+logs `[MIRA] bridge msg ...` durante a espera: (A) **ZERO linhas** = o bot não RECEBE → é
+ENTREGA (privacy mode — ver fix acima: privacy OFF + re-add; a @Mira é USER); (B) linha COM
+`id=` divergente de `MIRA_USER_ID` = match rejeita → ajustar env `MIRA_USER_ID`. **Regra
+durável:** o discriminador da @Mira é id/username, NUNCA `is_bot` (ela vem `is_bot=False`); a
+captura não filtra `is_bot`. A captura do grupo-ponte só CONSOME (para propagação) quando casa
+a @Mira; senão deixa passar (SkipHandler) p/ não engolir comandos do dono no grupo-ponte.

@@ -205,13 +205,18 @@ O dono **não recebe mais o log inteiro na DM**. Operacional do que **não errar
 
 ## 🤖 Inteligência royal — ponte @Mira (custo zero)
 
-A **@Mira** é um bot **SEPARADO** do dono (a IA roda do lado dela): o jogo só **solicita** conteúdo
-pela ponte bot↔bot e **ingere** a resposta → **nenhuma IA paga dentro do jogo**. Alimenta as
-**palavras do dia** (pool dinâmico do mini-game) e o quiz **`/rquiz`**.
+A **@Mira** é uma **CONTA DE USUÁRIO** (userbot) **SEPARADA** do dono (a IA roda do lado dela): o
+jogo só **solicita** conteúdo pela ponte e **ingere** a resposta → **nenhuma IA paga dentro do
+jogo**. Alimenta as **palavras do dia** (pool dinâmico do mini-game) e o quiz **`/rquiz`**.
 
-- ⚠️ **Bot-to-Bot Mode (ação do dono):** o jogo só RECEBE as msgs da @Mira se o **"Bot-to-Bot
-  Communication Mode" estiver LIGADO no @BotFather**. Sem isso o Telegram **não entrega** → a ponte
-  fica muda (mas o jogo nunca quebra, só usa a lista fixa de palavras).
+- ⚠️ **A @Mira é USER, não bot → o que bloqueia a entrega é o PRIVACY MODE (ação do dono), NÃO o
+  "Bot-to-Bot Mode".** Regra oficial do Telegram: um bot só RECEBE msgs normais de **usuários** no
+  grupo se (a) **privacy mode DESLIGADO** (`/setprivacy` → Disable no @BotFather) **OU** (b) o bot for
+  **admin** do grupo — e, em ambos os casos, **a mudança só vale depois de REMOVER e RE-ADICIONAR o
+  bot ao grupo** (grupo já existente mantém o estado antigo). Diagnóstico confirmado por log: sem isso
+  NENHUMA `[MIRA] bridge msg` chega → `/rquiz` dá timeout (mas o jogo nunca quebra, usa a lista fixa).
+  ⚠️ **Bot-to-Bot Communication Mode é irrelevante aqui** — só valeria se a @Mira fosse outro *bot*
+  (bot↔bot é proibido pelo Telegram salvo esse modo); como ela é **user**, o lever certo é privacy/admin.
 - **Config 100% via env** (`MIRA_*`/`IA_BRIDGE_CHAT_ID`): **`MIRA_USERNAME` vazio = ponte off.**
 - **Quiz `/rquiz` (admin) DÁ XP** no fim: `award_xp_immediate(pts × QUIZ_XP_PER_POINT, reason="quiz")`
   em **lote** por jogador (1 concessão/pessoa → no máx 1 level-up cada → não floodar). Bônus de
