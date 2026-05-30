@@ -63,6 +63,23 @@ diferença TR3-funciona × Royal-não-funciona NÃO é o código, é o tipo de c
 no Royal a @mira (id `8377231659`) é BOT; no TR3 é user. Replicar o código não resolve enquanto
 a conta da @mira do Royal for bot.
 
+🔒 **REGRA OFICIAL DO TELEGRAM (verbatim, primary source, confirmada 3×) — não esquecer:**
+"bots will not be able to see messages from other bots **regardless of mode**". Privacy OFF
+NÃO resolve. Bot admin NÃO resolve. A exceção "reply à própria msg do bot" é SÓ p/ reply de
+**USUÁRIO** (consta na lista do que um bot em privacy mode recebe de PESSOAS) — **não** é
+carve-out do bloqueio bot↔bot. Bloqueio é platform-level (anti-loop). ⇒ Se a @mira é BOT
+(export do Royal: tem `botInfo`, ~1M users → é bot), o RoyalRPGbot NUNCA lerá ela, por nenhum
+código/config.
+
+⚠️ **CONTRADIÇÃO A RESOLVER:** o dono AFIRMA que a "Mira" do TR3 (que funciona) é a MESMA
+@mira id `8377231659`. Isso é FISICAMENTE IMPOSSÍVEL pela regra acima (bot↔bot bloqueado). O
+TR3 captura QUALQUER reply ao relay dele SEM checar identidade → só funciona se quem responde
+lá for um **USUÁRIO** (reply de user→bot passa). Logo a "Mira" do TR3 é quase certamente uma
+CONTA DE USUÁRIO (nome de exibição "Mira", IA rodando como userbot), e o dono confunde com a
+@mira-bot do Royal. **AÇÃO:** o dono precisa abrir o PERFIL de quem responde no grupo do TR3 e
+ver se é bot (etiqueta "bot") ou user ("visto por último"). Nunca recebemos export do lado TR3 —
+a igualdade de id é uma SUPOSIÇÃO do dono, não verificada.
+
 ✅ **Regra do dono (custo zero):** a IA roda do LADO da @Mira (bot externo que o dono
 mantém); o jogo só SOLICITA e INGERE → nenhuma IA paga dentro do jogo.
 
