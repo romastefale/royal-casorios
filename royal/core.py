@@ -5080,7 +5080,7 @@ async def run_backup(upload: bool = False, notify_owner: bool = False,
     return dest, size
 
 
-_HUB_DEDICATED_PREFIXES = ("r:inv:", "r:priv:", "r:dados:")
+_HUB_DEDICATED_PREFIXES = ("r:inv:", "r:priv:", "r:dados:", "r:quest:", "r:cfg:")
 
 
 def is_group_chat(message: Message) -> bool:

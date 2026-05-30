@@ -59,11 +59,14 @@ from royal.mira import *  # noqa: F401,F403  re-export p/ testes (main.parse_wor
 # disjunto: comandos/botoes/prefixos de callback unicos):
 #   1. `system` POR ULTIMO — o catch-all `track` (+ migracao/dice/posts de bot
 #      de musica) so deve vencer depois que os handlers especificos tentarem.
-#   2. `hub` ANTES de `cfg` e `missoes` — o filtro do `hub_cb` e
-#      `r:` & ~_HUB_DEDICATED_PREFIXES ("r:inv:","r:priv:","r:dados:"), que NAO
-#      exclui "r:cfg:"/"r:quest:", entao o hub_cb intercepta esses prefixos. No
-#      monolito o hub_cb era registrado antes de cfg_cb/quest_claim_cb — manter
-#      essa precedencia aqui (nao reordenar hub p/ depois de cfg/missoes).
+#   2. `hub_cb` e um catch-all `r:` & ~_HUB_DEDICATED_PREFIXES. Como o 1o router
+#      que casa VENCE e PARA a propagacao (sem SkipHandler), os prefixos com
+#      handler DEDICADO precisam estar em _HUB_DEDICATED_PREFIXES, senao o hub_cb
+#      os engole e o botao morre em silencio (`await cb.answer()` no fim do
+#      hub_cb, sem acao). Hoje a lista cobre "r:inv:","r:priv:","r:dados:",
+#      "r:quest:" (Resgatar de missao) e "r:cfg:" (toggles do /royalconfig).
+#      ⚠️ Ao criar um handler dedicado p/ um novo prefixo `r:...`, ADICIONE-O em
+#      _HUB_DEDICATED_PREFIXES (royal/core.py) ou o hub_cb o intercepta.
 from royal.handlers import (  # noqa: E402
     start, hub, perfil, avatar, classe, inventario, loja, economia, ranking,
     palavra, boss, casorios, privacidade, inline, missoes, eventos,

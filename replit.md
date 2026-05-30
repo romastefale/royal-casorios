@@ -245,6 +245,16 @@ conteúdo pela ponte e **ingere** a resposta → **nenhuma IA paga dentro do jog
 > excluem comandos. Handlers que precisam vir ANTES do `track`: `on_chat_migration`,
 > `lucky_emoji_handler` (`F.dice`), routers `inteligencia`/`quiz`.
 
+> ⚠️ **Catch-all de callback `r:` (mesma armadilha, em botões):** `hub_cb` casa
+> `F.data.startswith("r:") & ~F.data.startswith(_HUB_DEDICATED_PREFIXES)` e o router `hub` é incluído
+> ANTES de `missoes`/`cfg`. Como o 1º router que casa **vence e PARA** (sem `SkipHandler`), todo
+> prefixo `r:...` que tenha **handler dedicado** PRECISA estar em `_HUB_DEDICATED_PREFIXES`
+> (`royal/core.py`) — senão o `hub_cb` o engole e o botão **morre em silêncio** (cai no `await
+> cb.answer()` final, sem ação). Lista atual: `r:inv:`,`r:priv:`,`r:dados:`,`r:quest:` (Resgatar de
+> missão),`r:cfg:` (toggles `/royalconfig`). `r:chest:` (Abrir Baú) e os demais menus são tratados
+> DENTRO do próprio `hub_cb` (não precisam de exclusão). Teste-guarda:
+> `test_callbacks_dedicados_nao_sao_engolidos_pelo_hub_cb`.
+
 > 🤖 **Bots nunca viram jogadores:** `track` filtra `message.from_user.is_bot` na entrada (blinda
 > admin **anônimo** = `@GroupAnonymousBot` e posts de canal). Detalhe + limpeza one-shot do legado
 > (`cleanup_legacy_bot_players`) → `docs/ARCHITECTURE.md` (§ Infra).

@@ -337,3 +337,67 @@ def test_migrate_listas_cobrem_todas_as_tabelas_com_chat_id():
             com_chat_id.add(t)
     faltando = com_chat_id - coberto
     assert not faltando, f"tabelas com chat_id fora da migracao: {faltando}"
+
+
+def _route_callback(data):
+    """Feed a callback through o dispatcher REAL e devolve o nome do handler que
+    venceu (sem chamar a API: os handlers-alvo sao espionados)."""
+    from datetime import datetime
+    from aiogram.types import CallbackQuery, User, Chat, Message, Update
+
+    import royal.handlers.hub as hubmod
+    import royal.handlers.missoes as missmod
+    import royal.handlers.cfg as cfgmod
+
+    winner = {"name": None}
+    spies = {
+        id(hubmod.hub_cb): "hub_cb",
+        id(missmod.quest_claim_cb): "quest_claim_cb",
+        id(cfgmod.cfg_cb): "cfg_cb",
+    }
+    originals = []
+
+    def _make(name):
+        async def _spy(cb):
+            winner["name"] = name
+        return _spy
+
+    for r in main.dp.sub_routers:
+        for h in r.callback_query.handlers:
+            nm = spies.get(id(h.callback))
+            if nm:
+                originals.append((h, h.callback))
+                h.callback = _make(nm)
+    try:
+        user = User(id=42, is_bot=False, first_name="T")
+        chat = Chat(id=-1002556760909, type="supergroup")
+        msg = Message(message_id=10, date=datetime.now(), chat=chat,
+                      from_user=user, text="x")
+        cb = CallbackQuery(id="1", from_user=user, chat_instance="ci",
+                           message=msg, data=data)
+        # main.bot pode ser None no ambiente de teste (sem token real); o
+        # dispatcher so usa bot.id no log final, depois do handler ja ter rodado.
+        fake_bot = main.bot or types.SimpleNamespace(id=0)
+        asyncio.run(main.dp.feed_update(
+            fake_bot, Update(update_id=1, callback_query=cb)))
+    finally:
+        for h, orig in originals:
+            h.callback = orig
+    return winner["name"]
+
+
+def test_callbacks_dedicados_nao_sao_engolidos_pelo_hub_cb():
+    """Regressao: o catch-all hub_cb (`r:` & ~_HUB_DEDICATED_PREFIXES) e
+    incluido ANTES de missoes/cfg. Se "r:quest:"/"r:cfg:" nao estiverem na
+    allowlist de prefixos dedicados, o hub_cb vence e da `cb.answer()` mudo ->
+    o botao Resgatar (missao) e os toggles do /royalconfig morrem em silencio.
+    """
+    from royal.core import _HUB_DEDICATED_PREFIXES
+    assert "r:quest:" in _HUB_DEDICATED_PREFIXES
+    assert "r:cfg:" in _HUB_DEDICATED_PREFIXES
+    # Roteamento real: cada prefixo dedicado chega ao SEU handler...
+    assert _route_callback("r:quest:q1") == "quest_claim_cb"
+    assert _route_callback("r:cfg:hide_rank") == "cfg_cb"
+    # ...e o que e do hub continua no hub (bau de recompensa + menu perfil).
+    assert _route_callback("r:chest:5") == "hub_cb"
+    assert _route_callback("r:perfil") == "hub_cb"
