@@ -11,7 +11,8 @@ Três grupos Telegram com papéis distintos (informados pelo dono):
   PONTUA. Cuidado redobrado com estado/migração pra não perder progresso.
 - **Grupo de TESTE:** `-1004225775299` — poucas pessoas testam só pra caçar erro; NADA
   pontua aqui (deve ficar fora do scoring, tipo `TEST_CHAT_IDS`).
-- **Grupo PONTE IA (@Mira):** `-5204321141` — só o dono, o bot do jogo e a interface de
+- **Grupo PONTE IA (@Mira):** `-1003624946383` (supergrupo, prefixo -100; era `-5204321141`
+  grupo básico antes de virar supergrupo) — só o dono, o bot do jogo e a interface de
   IA "@Mira". Base do módulo novo **"inteligência royal"**.
 
 **@Mira / inteligência royal:** o jogo manda `@Mira <pedido>` no grupo-ponte; a @Mira
@@ -53,5 +54,7 @@ dois.) NÃO tentar "copiar o código do TR3" pra resolver — o que falta é con
 ✅ **Regra do dono (custo zero):** a IA roda do LADO da @Mira (bot externo que o dono
 mantém); o jogo só SOLICITA e INGERE → nenhuma IA paga dentro do jogo.
 
-⚠️ `-5204321141` não tem o prefixo `-100` dos supergrupos — provável grupo básico (legado).
-Se virar supergrupo, o chat_id muda (migração já tratada por `on_chat_migration`).
+⚠️ O grupo-ponte VIROU supergrupo: id atual `-1003624946383` (prefixo -100); o antigo
+`-5204321141` (grupo básico) ficou órfão. O bridge NÃO guarda dados de jogo, então a troca
+é só re-rota do `IA_BRIDGE_CHAT_ID` (sem `migrate_chat_data`); `on_chat_migration`/`safe_send`
+auto-curam se sobrar envio pro id velho.

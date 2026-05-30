@@ -1,4 +1,4 @@
-- [Grupos do Royal](grupos-royal.md) — chat IDs dos 3 grupos (real/pontua `-1002556760909`, teste `-1004225775299`, ponte-IA @Mira `-5204321141`); bot-to-bot FUNCIONA c/ Bot-to-Bot Mode + custo zero.
+- [Grupos do Royal](grupos-royal.md) — chat IDs dos 3 grupos (real/pontua `-1002556760909`, teste `-1004225775299`, ponte-IA @Mira `-1003624946383`); bot-to-bot FUNCIONA c/ Bot-to-Bot Mode + custo zero.
 - [Inventory consume guard](inventory-consume-guard.md) — "usar" button persists in-place; consume must decrement-with-guard (qty>0) BEFORE granting effect, else infinite XP/heal exploit.
 - [DM command active chat](dm-command-active-chat.md) — DM per-group commands must resolve get_dm_active_chat, not arbitrary `LIMIT 1`, or multi-group users hit the wrong group.
 - [Card name anti-tofu](card-name-antitofu.md) — `_layout_glyphs` em royal_render garante zero tofu em nomes (fonte→NFKC→descarte); não reverter, math-bold já renderiza.

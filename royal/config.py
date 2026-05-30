@@ -263,13 +263,14 @@ MIRA_USER_ID: int | None = (
 )
 
 
-# chat_id do grupo-ponte onde o jogo fala com a @Mira. Default = grupo básico
-# atual (sem -100; se virar supergrupo o id muda → on_chat_migration trata).
+# chat_id do grupo-ponte onde o jogo fala com a @Mira. Default = supergrupo
+# atual (prefixo -100). Se mudar de novo, o id muda → on_chat_migration/safe_send
+# se auto-curam (mas o bridge não guarda dados de jogo, então é só re-rota).
 _mira_bridge_raw = os.getenv("IA_BRIDGE_CHAT_ID", "").strip()
 
 
 IA_BRIDGE_CHAT_ID: int | None = (
-    int(_mira_bridge_raw) if _mira_bridge_raw.lstrip("-").isdigit() else -5204321141
+    int(_mira_bridge_raw) if _mira_bridge_raw.lstrip("-").isdigit() else -1003624946383
 )
 
 
