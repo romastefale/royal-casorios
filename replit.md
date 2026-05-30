@@ -66,6 +66,14 @@ direto) + reaponta `user_dm_settings.active_chat_id`. Sem FK/cascade/trigger →
 Confirma no grupo + DM do owner. Testes: `test_migrate_chat_data_preserva_progresso_e_e_idempotente`
 + `test_migrate_listas_cobrem_todas_as_tabelas_com_chat_id`.
 
+**Migração com bot OFFLINE (a msg de serviço se perde):** se o grupo virar supergrupo enquanto o bot
+está fora, `on_chat_migration` nunca dispara e o DB fica com o id ANTIGO. O 1º envio proativo (ex.:
+`announce_update`) ao id velho levanta `TelegramMigrateToChat` (atributo `exc.migrate_to_chat_id` traz
+o id novo) → **auto-cura:** o loop chama `migrate_chat_data(old,new)` e re-tenta o envio no supergrupo
+(com dedupe via `sent_targets` p/ não saudar 2× em boot misto). `TelegramMigrateToChat` está no
+`ERROR_CATALOG` como `chat_migrated` (`relevant=False` → **não** manda DM ao dono; é condição esperada,
+não bug).
+
 ---
 
 ## 📌 User preferences (regras do dono)

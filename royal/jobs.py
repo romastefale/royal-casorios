@@ -18,8 +18,9 @@ from cachetools import TTLCache
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.client.default import DefaultBotProperties
-from aiogram.exceptions import (TelegramBadRequest, TelegramNetworkError,
-                                 TelegramRetryAfter, TelegramServerError)
+from aiogram.exceptions import (TelegramBadRequest, TelegramMigrateToChat,
+                                 TelegramNetworkError, TelegramRetryAfter,
+                                 TelegramServerError)
 from aiogram.filters import (
     Command,
     CommandStart,
@@ -102,7 +103,7 @@ from aiogram import Router
 
 from royal import core
 from royal.config import (AUTO_HOURS, FLUSH_INTERVAL_SECONDS, LOG_DUMP_ENABLED, LOG_DUMP_INTERVAL_SEC, MIRA_ENABLED, MIRA_PALAVRAS_HOUR, MUSIC_BOT_ID, STASH_CHAT_ID, TEST_CHAT_IDS, logger)
-from royal.core import (BACKUP_ENABLED, BACKUP_HOUR, _compute_next_palavra_at, _identity_card_hash, activity_buffer, admin_cache, attempt_cooldowns, boss_attack_cooldowns, bot, bot_meta_get, bot_meta_set, check_season_change, cur, db, dp, dump_logs_to_gist, dump_logs_to_file, ensure_identity_card_async, expire_old_chests, finalize_expired_challenges, flush_buffers_once, get_active_challenge, is_chat_muted, local_now, pair_buffer, photo_cache, run_backup, schedule_next_palavra, send_couple, spawn_boss_if_due, spawn_chest, spawn_palavra, term_block, typewriter_animate, utc_iso, utc_now, render_update_card, UpdateGreetingData)
+from royal.core import (BACKUP_ENABLED, BACKUP_HOUR, _compute_next_palavra_at, _identity_card_hash, activity_buffer, admin_cache, attempt_cooldowns, boss_attack_cooldowns, bot, bot_meta_get, bot_meta_set, check_season_change, cur, db, dp, dump_logs_to_gist, dump_logs_to_file, ensure_identity_card_async, expire_old_chests, finalize_expired_challenges, flush_buffers_once, get_active_challenge, is_chat_muted, local_now, migrate_chat_data, pair_buffer, photo_cache, run_backup, schedule_next_palavra, send_couple, spawn_boss_if_due, spawn_chest, spawn_palavra, term_block, typewriter_animate, utc_iso, utc_now, render_update_card, UpdateGreetingData)
 
 async def log_dump_job() -> None:
     """Background: dump dos logs a cada LOG_DUMP_INTERVAL_SEC."""
@@ -803,11 +804,17 @@ async def _announce_update_greeting_impl() -> None:
         card = None
     eligible = 0
     sent_ok = 0
+    # Alvos ja saudados nesta rodada. Evita saudacao DUPLICADA no supergrupo
+    # quando, em boot misto, a lista traz tanto o id antigo quanto o novo
+    # (regra do dono: nao floodar).
+    sent_targets: set[int] = set()
     for chat_id in chats:
         if TEST_CHAT_IDS and chat_id in TEST_CHAT_IDS:
             continue
         if is_chat_muted(chat_id):
             continue
+        if chat_id in sent_targets:
+            continue  # ja saudado (supergrupo alcancado via migracao)
         eligible += 1
         msg = None
         try:
@@ -819,6 +826,43 @@ async def _announce_update_greeting_impl() -> None:
             else:
                 msg = await bot.send_message(chat_id, caption)
             sent_ok += 1
+            sent_targets.add(chat_id)
+        except TelegramMigrateToChat as exc:
+            # O grupo virou supergrupo enquanto o bot estava fora (a msg de
+            # servico de migracao nunca chegou ao on_chat_migration). Os dados
+            # ainda estao orfaos sob o id antigo: migra-os pro id novo e
+            # re-tenta o envio no supergrupo (auto-cura). Nao alerta o dono:
+            # e condicao esperada do Telegram, nao bug.
+            new_id = exc.migrate_to_chat_id
+            logger.warning(
+                "announce_update: chat %s migrou p/ supergrupo %s — migrando "
+                "dados e re-tentando", chat_id, new_id)
+            try:
+                migrate_chat_data(chat_id, new_id)
+            except Exception:
+                logger.exception(
+                    "announce_update: migrate_chat_data falhou %s -> %s",
+                    chat_id, new_id)
+            if new_id in sent_targets:
+                # Supergrupo ja saudado nesta rodada (entrada propria na lista):
+                # dados ja migrados acima, nao re-saudar (evita duplicata).
+                await asyncio.sleep(2.0)
+                continue
+            try:
+                if card:
+                    msg = await bot.send_photo(
+                        new_id,
+                        BufferedInputFile(card, filename="atualizacao.jpg"),
+                        caption=caption)
+                else:
+                    msg = await bot.send_message(new_id, caption)
+                sent_ok += 1
+                chat_id = new_id  # pin/log usam o id novo
+                sent_targets.add(new_id)
+            except Exception:
+                logger.exception(
+                    "announce_update: re-send no supergrupo falhou chat=%s",
+                    new_id)
         except Exception:
             logger.exception("announce_update: send falhou chat=%s", chat_id)
         # Fixa a mensagem no grupo (pin silencioso). Falha de permissao/etc

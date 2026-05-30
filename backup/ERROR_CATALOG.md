@@ -21,6 +21,7 @@ de exceção ou substring na msg/traceback) decide o veredito. Se nada casar: é
 | `callback_expired` | Callback clicado, `cb.answer()` tarde demais | "query is too old", "query id is invalid", "response timeout expired" | Benigno (usuário só não vê o spinner sumir). Só agir se a lentidão for crônica. |
 | `message_edit_noop` | Editar/apagar msg que mudou/sumiu | "message is not modified", "message to edit not found", "message to delete not found", "message_id_invalid" | Esperado no fluxo de edição in-place. Nada a corrigir. |
 | `user_unreachable` | Bot bloqueado / sem permissão / chat sumiu | `TelegramForbidden`; "bot was blocked by the user", "chat not found", "not enough rights" | Esperado. Não dá pra corrigir no código. |
+| `chat_migrated` | Grupo virou supergrupo (chat_id trocou) | `TelegramMigrateToChat`; "group chat was upgraded", "migrated to a supergroup" | Esperado. `on_chat_migration` migra os dados; envios proativos (ex.: `announce_update`) se auto-curam (migram + re-tentam no id novo). |
 | `network_transient` | Rede/servidor do Telegram instável | `TelegramNetworkError`, `TelegramServerError`, `TimeoutError`; "bad gateway", "service is unavailable" | O polling reconecta sozinho. Só agir se persistir. |
 
 ## 🔴 Relevantes — mandam DM pro dono

@@ -78,6 +78,17 @@ ERROR_CATALOG: list[dict] = [
                 "Nao da pra corrigir no codigo.",
     },
     {
+        "id": "chat_migrated",
+        "title": "Grupo virou supergrupo (chat_id trocou)",
+        "types": ("TelegramMigrateToChat",),
+        "subs": ("group chat was upgraded", "migrated to a supergroup"),
+        "relevant": False,
+        "hint": "O grupo foi promovido a supergrupo e trocou de chat_id. "
+                "Esperado: on_chat_migration migra os dados; e os envios "
+                "proativos (ex.: announce_update) se auto-curam (migram os "
+                "dados + re-tentam no id novo). Nada a corrigir.",
+    },
+    {
         "id": "network_transient",
         "title": "Rede/servidor do Telegram instavel",
         "types": ("TelegramNetworkError", "TelegramServerError",

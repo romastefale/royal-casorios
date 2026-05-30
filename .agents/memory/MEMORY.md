@@ -4,3 +4,4 @@
 - [Card name anti-tofu](card-name-antitofu.md) — `_layout_glyphs` em royal_render garante zero tofu em nomes (fonte→NFKC→descarte); não reverter, math-bold já renderiza.
 - [XP award chokepoints](xp-chokepoints.md) — todo XP passa por award_xp_immediate/award_xp_message; gating de participação global (ex. left_game) vai aí, não por call-site.
 - [One-shot announce concurrency](one-shot-announce-concurrency.md) — boot-announce flag-at-end pattern isn't concurrency-safe; a manual re-trigger needs an in-process running guard set before any await.
+- [Supergroup migration self-heal](supergroup-migration-selfheal.md) — proactive sends to a group that became a supergroup while offline raise TelegramMigrateToChat; catch → migrate_chat_data → retry to new id; cataloged as expected (no owner DM).
