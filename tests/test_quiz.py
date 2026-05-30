@@ -4,8 +4,12 @@ Cobrem o parser tolerante das perguntas vindas da @Mira (parse_quiz_questions)
 e o cálculo do top-N final (quiz_top). A ponte de rede (fetch_quiz_questions) e
 o fluxo de enquetes exigem runtime do aiogram/Telegram e não são exercitados.
 """
+import asyncio
+
 import main  # noqa: F401  (conftest aponta DATABASE_PATH p/ tmp antes do import)
+from aiogram.types import PollAnswer, User
 from royal.mira import QuizQuestion, parse_quiz_questions
+from royal.handlers import quiz as quizmod
 from royal.handlers.quiz import quiz_top
 
 
@@ -98,3 +102,59 @@ def test_quiz_top_ordena_e_desempata():
     assert top == [(20, 5), (10, 3), (30, 3)]  # pts desc, depois uid asc
     assert quiz_top({}, n=5) == []
     assert len(quiz_top(scores, n=2)) == 2
+
+
+def _answer(poll_id: str, uid: int, options: list[int]) -> PollAnswer:
+    return PollAnswer(
+        poll_id=poll_id,
+        user=User(id=uid, is_bot=False, first_name=f"U{uid}"),
+        option_ids=options,
+        option_persistent_ids=[str(o) for o in options],
+    )
+
+
+def _run_answer(pa: PollAnswer) -> None:
+    asyncio.run(quizmod.rq_poll_answer(pa))
+
+
+def test_poll_answer_idempotente_e_so_inscritos(monkeypatch):
+    chat_id, poll_id = -1000, "pollX"
+    sess = quizmod.QuizSession(
+        chat_id=chat_id, admin_id=1, theme="t", count=5, state="running")
+    sess.participants = {100, 200}
+    monkeypatch.setitem(quizmod._sessions, chat_id, sess)
+    monkeypatch.setitem(
+        quizmod._polls, poll_id,
+        {"chat_id": chat_id, "correct": 1, "answered": set()})
+
+    # Inscrito acerta → +1. Telegram reenvia o MESMO voto → continua 1.
+    _run_answer(_answer(poll_id, 100, [1]))
+    _run_answer(_answer(poll_id, 100, [1]))
+    assert sess.scores.get(100) == 1
+
+    # Inscrito erra → não pontua (mas fica marcado como respondido).
+    _run_answer(_answer(poll_id, 200, [0]))
+    assert sess.scores.get(200, 0) == 0
+    # Mesmo trocando depois p/ a correta, não reabre a pontuação da pergunta.
+    _run_answer(_answer(poll_id, 200, [1]))
+    assert sess.scores.get(200, 0) == 0
+
+    # Não-inscrito é ignorado.
+    _run_answer(_answer(poll_id, 999, [1]))
+    assert 999 not in sess.scores
+
+
+def test_poll_answer_ignora_quiz_nao_rodando(monkeypatch):
+    chat_id, poll_id = -2000, "pollY"
+    sess = quizmod.QuizSession(
+        chat_id=chat_id, admin_id=1, theme="t", count=5, state="done")
+    sess.participants = {100}
+    monkeypatch.setitem(quizmod._sessions, chat_id, sess)
+    monkeypatch.setitem(
+        quizmod._polls, poll_id,
+        {"chat_id": chat_id, "correct": 0, "answered": set()})
+    _run_answer(_answer(poll_id, 100, [0]))
+    assert sess.scores == {}
+    # poll_id desconhecido → no-op silencioso.
+    _run_answer(_answer("inexistente", 100, [0]))
+    assert sess.scores == {}

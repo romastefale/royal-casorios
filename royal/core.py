@@ -4300,6 +4300,15 @@ ROYAL_TUTORIAL_PARTS: list[tuple[str, str]] = [
         "</blockquote>"
 
         "<blockquote expandable>"
+        "<b>>> 🧠 QUIZ REAL</b>\n"
+        "Um <b>admin</b> abre um quiz com <code>/rquiz &lt;tema&gt;</code>: "
+        "a inteligência royal monta as perguntas e o grupo responde em "
+        "<b>enquetes</b>. Quem entrar na rodada e acertar mais leva o "
+        "<b>pódio (top-5)</b>.\n"
+        "<i>// é por diversão: o quiz não dá XP.</i>"
+        "</blockquote>"
+
+        "<blockquote expandable>"
         "<b>>> 💍 CASÓRIOS (SHIPPER)</b>\n"
         f"<b>{len(AUTO_HOURS)}× ao dia</b> o bot escolhe um par do "
         "grupo e abre votação ❤️/🤮. Quanto mais vocês interagem, "

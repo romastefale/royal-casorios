@@ -92,7 +92,7 @@ class QuizSession:
 
 
 _sessions: dict[int, QuizSession] = {}      # chat_id -> sessão ativa
-_polls: dict[str, dict] = {}                # poll_id -> {chat_id, correct}
+_polls: dict[str, dict] = {}                # poll_id -> {chat_id, correct, answered:set}
 _pending_theme: dict[int, dict] = {}        # chat_id -> {admin_id, mid}
 _pending_count: dict[int, dict] = {}        # chat_id -> {admin_id, theme}
 
@@ -386,7 +386,9 @@ async def _run_quiz(sess: QuizSession) -> None:
                 logger.exception("[QUIZ] send_poll falhou")
                 continue
             if msg.poll:
-                _polls[msg.poll.id] = {"chat_id": chat_id, "correct": q.correct}
+                _polls[msg.poll.id] = {
+                    "chat_id": chat_id, "correct": q.correct, "answered": set(),
+                }
             await asyncio.sleep(QUIZ_POLL_SECONDS + 2)
             if msg.poll:
                 _polls.pop(msg.poll.id, None)
@@ -417,6 +419,12 @@ async def rq_poll_answer(poll_answer: PollAnswer):
     # Default (documentado): só INSCRITOS pontuam.
     if uid not in sess.participants:
         return
+    # Idempotência por pergunta: o Telegram pode emitir vários `poll_answer`
+    # pro mesmo (poll, user) à medida que o voto muda — pontuar no MÁXIMO 1x.
+    answered = info["answered"]
+    if uid in answered:
+        return
+    answered.add(uid)
     if list(poll_answer.option_ids) == [info["correct"]]:
         sess.scores[uid] = sess.scores.get(uid, 0) + 1
 

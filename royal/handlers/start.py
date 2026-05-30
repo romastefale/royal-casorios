@@ -185,6 +185,7 @@ async def btn_como_funciona(message: Message):
         "💍 <b>CASORIOS</b> — 3x/dia, votação ❤️/🤮\n"
         "🎯 <b>PALAVRA</b> — 60min, primeiro a acertar leva XP+🪙\n"
         "🐉 <b>BOSS</b> — domingo 20h, todos atacam juntos\n"
+        "🧠 <b>QUIZ</b> — admin abre /rquiz, grupo responde em enquetes\n"
         "⭐ <b>XP</b> — ganho ao interagir, sobe nível, distribui atributos\n"
         "🏆 <b>TEMPORADAS</b> — seguem as estações do ano"
         "</blockquote>"
