@@ -4426,7 +4426,7 @@ ROYAL_TUTORIAL_PARTS: list[tuple[str, str]] = [
         "rodada e o grupo responde em <b>enquetes</b>. Entrou e acertou "
         "mais? Leva o <b>pódio (top-5)</b>.\n"
         "<i>// no fim fica só o pódio (as enquetes somem) e ele some "
-        "sozinho depois. É por diversão: o quiz não dá XP.</i>"
+        "sozinho depois. Cada acerto rende XP no fim.</i>"
         "</blockquote>"
 
         "<blockquote expandable>"
@@ -4604,7 +4604,7 @@ ROYAL_HELP = (
     "/royalboss — status do boss da semana\n"
     "/royalcasorios — ranking dos casais\n"
     "/rquiz &lt;tema&gt; — admin: quiz com a inteligência royal "
-    "(enquetes; top-5 no fim)</blockquote>\n"
+    "(enquetes; top-5 + XP no fim)</blockquote>\n"
     "<blockquote expandable>💍 <b>Shipper (grupo)</b>\n"
     "/royalencalhar — sair do shipper\n"
     "/royaldesencalhar — voltar pro shipper\n"

@@ -74,9 +74,11 @@
   **Limpeza pós-pódio** (`_cleanup_quiz_messages`): apaga as enquetes respondidas (`sess.poll_mids`) +
   a msg de lobby, deixando só o pódio; o pódio é apagado após `QUIZ_PODIUM_TTL` (900s) via
   `auto_delete_after`. Estado **em memória** (`_sessions`/`_polls`, 1 quiz/grupo, efêmero — sem
-  persistir entre restarts) + watchdog 600s. **Quiz NÃO dá XP** (pontos só do placar → evita flood de level-up). `/start`,
-  `ROYAL_HELP` e `ROYAL_TUTORIAL_PARTS` (4/6) mencionam `/rquiz`. Testes: `tests/test_quiz.py`
-  (`parse_quiz_questions`, `quiz_top`, idempotência do `poll_answer`).
+  persistir entre restarts) + watchdog 600s. **Quiz DÁ XP** no fim: `award_xp_immediate(pts ×
+  `QUIZ_XP_PER_POINT`=15, reason="quiz")` em **lote** por jogador em `_send_results` (1 concessão/pessoa
+  → no máx 1 anúncio de level-up cada → não floodar). Bônus de classe/casamento/evento aplicam dentro
+  do chokepoint. `/start`, `ROYAL_HELP` e `ROYAL_TUTORIAL_PARTS` (4/6) mencionam `/rquiz`. Testes:
+  `tests/test_quiz.py` (`parse_quiz_questions`, `quiz_top`, idempotência do `poll_answer`).
 - **🚪 Reentrada de membro:** quem já tem progresso e volta é recebido com a ficha (foto). Progresso
   nunca é apagado na saída (só `/royaldados`). Handler `on_member_rejoin`.
 - **🎉 Eventos sazonais — `/royalevento` (M09):** boost de XP global por data, sem DB
@@ -167,6 +169,20 @@ nelas** (marcadas como LEGADO/INERTE nos docstrings).
   (`UPDATE inventory SET qty=qty-1 WHERE ... AND qty>0`) e só concede o efeito (XP/heal) se
   `rowcount>0` — fecha o exploit de clicar o botão depois do item zerar e ganhar efeito de graça.
   Teste: `test_consume_consumable_atomico_evita_uso_duplicado`.
+- **🧩 Ordem de handlers & filtro de bots (gotcha ativo):** o catch-all `track`
+  (`@dp.message(F.chat.type.in_(...))`) roda ANTES de alguns `Command(...)`; em aiogram o 1º handler
+  que casa **vence e PARA a propagação** → comando registrado DEPOIS de um catch-all **nunca dispara
+  em grupo**. Fix: `track` exclui comandos via `~(F.text & F.text.startswith("/"))`. Comando novo →
+  registrar ANTES do bloco "ULTIMO @dp.message" **ou** garantir que os catch-alls excluem comandos.
+  Handlers que precisam vir ANTES do `track`: `on_chat_migration`, `lucky_emoji_handler` (`F.dice`),
+  e os routers `inteligencia`/`quiz` (antes de `system`). **Bots nunca viram jogadores:** `track`
+  filtra `message.from_user.is_bot` na entrada — blinda o pseudo-bot de admin **anônimo**
+  (`@GroupAnonymousBot`, `is_bot=True`) e posts de canal, que antes eram cadastrados na corte por
+  engano. Limpeza one-shot do legado: `cleanup_legacy_bot_players()` (flag
+  `boot_cleanup_bot_players_v1`) apaga os pseudo-bots conhecidos (`_LEGACY_BOT_USER_IDS` =
+  `{1087968824, 136817688, MUSIC_BOT_ID}`) de TODA coluna de ref de usuário (`_USER_REF_COLS`,
+  descoberta por PRAGMA) — transacional + idempotente. Testes:
+  `test_cleanup_remove_bots_legados_e_e_idempotente`.
 
 ---
 

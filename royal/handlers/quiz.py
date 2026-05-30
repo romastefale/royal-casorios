@@ -41,7 +41,7 @@ from aiogram.types import (
     PollAnswer,
 )
 
-from royal.config import MIRA_ENABLED, logger
+from royal.config import MIRA_ENABLED, QUIZ_XP_PER_POINT, logger
 from royal.core import (
     BTN_GO,
     BTN_NO,
@@ -51,6 +51,7 @@ from royal.core import (
     STYLE_OK,
     anonize,
     auto_delete_after,
+    award_xp_immediate,
     bot,
     cap1024,
     card_safe_name,
@@ -458,6 +459,13 @@ async def _send_results(sess: QuizSession) -> None:
         if m is not None:
             await auto_delete_after(m, QUIZ_PODIUM_TTL)
         return
+    # XP em LOTE no fim (regra do dono: 1 concessão por jogador → no máximo 1
+    # anúncio de level-up por pessoa, sem floodar). Todo acerto vira XP; bônus
+    # de classe/casamento/evento são aplicados dentro de award_xp_immediate.
+    for uid, pts in sess.scores.items():
+        if pts > 0:
+            award_xp_immediate(chat_id, uid, pts * QUIZ_XP_PER_POINT,
+                               reason="quiz")
     medals = ["🥇", "🥈", "🥉"] + ["🏅"] * 7
     entries: list[QuizCardEntry] = []
     lines: list[str] = []
@@ -474,7 +482,10 @@ async def _send_results(sess: QuizSession) -> None:
                     prow.get("avatar_slug"), rid)))
         lines.append(f"{medals[i - 1]} <b>{i}.</b> {html.escape(name)} "
                      f"<code>{rid}</code> — {pts} pts")
-    caption = term_block("QUIZ", "\n".join(lines[:10]),
+    body = "\n".join(lines[:10]) + (
+        f"\n\n<i>// +{QUIZ_XP_PER_POINT} XP por acerto "
+        f"(bônus de classe/casamento contam). Veja /royalperfil.</i>")
+    caption = term_block("QUIZ", body,
                          status="FIM", status_color="ACID",
                          stamp=sess.theme[:24])
     await safe_typing(chat_id, "upload_photo")

@@ -191,67 +191,38 @@ sozinho no 1º post pós-migração e os próximos posts já vão pro id novo. `
 
 ## 📨 Logs & alertas (NÃO floodar a DM do dono)
 
-O dono **não recebe mais o log inteiro na DM** a cada 5min. Agora:
-- `log_dump_job` grava snapshots do ring em **`backup/logs/`** (rotação `LOG_BACKUP_KEEP`);
-  `/royallog` faz o mesmo on-demand. Gist (`GH_TOKEN`) é opcional/complementar.
-- **Alerta inteligente** (`royal/alerts.py`, leaf `config ← alerts ← core`): um
-  `OwnerAlertHandler` no root logger classifica todo `ERROR`/`CRITICAL` (inclui as
-  exceções não tratadas que o aiogram loga) via `ERROR_CATALOG` e **só manda DM nos casos
-  relevantes** (bug de código, DB, import, boot). Transitórios do Telegram (RetryAfter,
-  "query is too old", "message is not modified", bot bloqueado, rede) **não** geram DM.
-  Dedupe por assinatura + `OWNER_ALERT_TTL_SEC`. Cada erro relevante vira arquivo em
-  `backup/alerts/`. O mapa legível dos casos: **`backup/ERROR_CATALOG.md`** (espelho do
-  `ERROR_CATALOG` em código — manter em sincronia ao adicionar caso).
-- `is_benign_telegram_error(exc)` (em `alerts`, re-exportado por `core`) é usado nos
-  `except` dos handlers (ex.: `hub_cb`) p/ **não logar benigno como ERROR**.
-- ⚠️ `backup/` é versionado só como estrutura + docs; `backup/logs/*.log` e
-  `backup/alerts/*.txt` são gitignorados (artefatos de runtime, não voltam pro git no
-  Railway). Repo é privado → PII em log nesses arquivos é aceitável.
+O dono **não recebe mais o log inteiro na DM**. Operacional do que **não errar**:
+- Logs vão p/ **`backup/logs/`** (`log_dump_job` + `/royallog` on-demand, rotação `LOG_BACKUP_KEEP`).
+  Gist (`GH_TOKEN`) é opcional/complementar.
+- **Alerta inteligente** (`royal/alerts.py`): só manda DM ao dono nos casos **relevantes** (bug de
+  código, DB, import, boot); transitórios do Telegram são silenciados. ⚠️ Ao adicionar um caso novo,
+  **mantenha `ERROR_CATALOG` (código) e `backup/ERROR_CATALOG.md` em sincronia.**
+- ⚠️ `backup/` é versionado só como estrutura + docs; `backup/logs/*.log` e `backup/alerts/*.txt` são
+  gitignorados (artefatos de runtime). Repo é privado → PII nesses arquivos é aceitável.
+
+> 📚 Detalhe (classificação, dedupe, `is_benign_telegram_error`) → `docs/ARCHITECTURE.md` (§ Infra F21).
 
 ## 🤖 Inteligência royal — ponte @Mira (custo zero)
 
-A **@Mira** é um bot **SEPARADO** que o dono mantém: a IA roda **do lado dela**. O jogo só
-**solicita** conteúdo pela ponte e **ingere** a resposta → **nenhuma IA paga dentro do jogo**.
-Módulos: `royal/mira.py` (ponte: `ask_mira`/`on_mira_reply`/`parse_words`/`fetch_and_store_palavras`)
-+ `royal/handlers/inteligencia.py` (captura) + `mira_palavras_job` (`royal/jobs.py`).
+A **@Mira** é um bot **SEPARADO** do dono (a IA roda do lado dela): o jogo só **solicita** conteúdo
+pela ponte bot↔bot e **ingere** a resposta → **nenhuma IA paga dentro do jogo**. Alimenta as
+**palavras do dia** (pool dinâmico do mini-game) e o quiz **`/rquiz`**.
 
-- ⚠️ **Bot-to-Bot Mode (ação do dono):** o jogo só RECEBE as msgs da @Mira se o
-  **"Bot-to-Bot Communication Mode" estiver LIGADO no @BotFather** pro bot do jogo. Sem isso o
-  Telegram **não entrega** → ponte fica muda (mas o jogo nunca quebra, só usa a lista fixa).
-- **Fluxo:** `ask_mira` manda `@{MIRA_USERNAME} <pedido>` no `IA_BRIDGE_CHAT_ID` e espera
-  (`asyncio.Future` + `wait_for`, `MIRA_REQUEST_TIMEOUT_SEC`); a captura (router **ANTES** de
-  `system`, pois `track` descarta `is_bot`) resolve o future. `parse_words` é **tolerante** ao
-  formato (vírgula/linha/numeração/frase com fallback de stopwords PT).
-- **Objetivo 1 — palavras do dia:** `mira_palavras_job` 1×/dia (≥`MIRA_PALAVRAS_HOUR`) pede
-  `MIRA_PALAVRAS_COUNT` palavras → grava no banco dinâmico **`palavra_pool`** (migration **v15**,
-  dedup por forma normalizada, ignora as que já estão em `PALAVRAS`). Persiste o dia em
-  `bot_meta['mira_palavras_day']` (não re-pede no mesmo dia, sobrevive a restart); falha → retry
-  (throttle 30min). `spawn_palavra` agora usa `pick_palavra_word(chat_id)` = `palavra_pool` ∪
-  `PALAVRAS` **menos** as últimas `PALAVRA_NO_REPEAT_RECENT` usadas no chat (fallback nunca trava).
-- **Teste manual (owner, off-menu):** `/royalmiratest` força um pedido e reporta quantas vieram.
-- **Feature invisível ao player** (palavra só fica mais variada) → `/start`/`ROYAL_HELP`/
-  `ROYAL_TUTORIAL_PARTS` auditados, **sem mudança**. Config 100% via env (vazio = off).
-- **Objetivo 2 — quiz `/rquiz` (admin):** `royal/handlers/quiz.py` (router **ANTES** de `system`).
-  Admin roda `/rquiz <tema>` (ou sem tema → ForceReply pede o tema) → escolhe 5/10 → **janela de
-  inscrição** editada in-place (botão Entrar/Começar/Cancelar; só inscritos pontuam) enquanto
-  `fetch_quiz_questions(tema,count)` pede as perguntas à @Mira (`build_quiz_prompt`/
-  `parse_quiz_questions` tolerante: exige pergunta+≥2 opts+gabarito A-D; trunca 300/100). Ao começar,
-  roda **enquetes nativas** (`send_poll type="quiz" is_anonymous=False open_period=30`); `@router.
-  poll_answer` (auto-incluso no `resolve_used_update_types`) soma +1 a cada acerto de inscrito.
-  ⚠️ **Idempotência por pergunta:** o Telegram pode emitir vários `poll_answer` pro mesmo
-  `(poll_id,user)` enquanto o voto muda → cada `_polls[poll_id]` guarda um `answered:set` e pontua no
-  MÁXIMO 1×/pergunta (não remover). Fim → **Card top-5** (`render_quiz_card`/`QuizCardEntry`,
-  card-first + fallback texto). **Limpeza pós-pódio (regra do dono, não floodar):**
-  `_cleanup_quiz_messages` apaga as enquetes respondidas (`sess.poll_mids`) + a msg de
-  lobby/início, deixando **só o pódio**; o pódio some sozinho após `QUIZ_PODIUM_TTL` (900s = 15min,
-  via `auto_delete_after`). Estado **em memória** (1 quiz/grupo, sem persistência entre restarts
-  — efêmero) + watchdog auto-cancela a janela após 600s. **Decisão:** quiz NÃO concede XP (pontos são
-  só do placar do quiz → evita flood de level-up). Sem novas env vars (reusa a ponte; `MIRA_USERNAME`
-  vazio = off → comando avisa e sai). `/start` ("Como funciona"), `ROYAL_HELP` e `ROYAL_TUTORIAL_PARTS`
-  (parte 4/6) mencionam o `/rquiz`. Testes: `tests/test_quiz.py` (`parse_quiz_questions`, `quiz_top`,
-  idempotência do `poll_answer`).
+- ⚠️ **Bot-to-Bot Mode (ação do dono):** o jogo só RECEBE as msgs da @Mira se o **"Bot-to-Bot
+  Communication Mode" estiver LIGADO no @BotFather**. Sem isso o Telegram **não entrega** → a ponte
+  fica muda (mas o jogo nunca quebra, só usa a lista fixa de palavras).
+- **Config 100% via env** (`MIRA_*`/`IA_BRIDGE_CHAT_ID`): **`MIRA_USERNAME` vazio = ponte off.**
+- **Quiz `/rquiz` (admin) DÁ XP** no fim: `award_xp_immediate(pts × QUIZ_XP_PER_POINT, reason="quiz")`
+  em **lote** por jogador (1 concessão/pessoa → no máx 1 level-up cada → não floodar). Bônus de
+  classe/casamento/evento contam (chokepoint central). `/start`/`ROYAL_HELP`/`ROYAL_TUTORIAL_PARTS`
+  (4/6) mencionam o comando.
+- **Testes manuais (owner, off-menu):** `/royalmiratest` (palavras) · `/rquiz <tema>` (quiz).
 
-## 🧩 Ordem de handlers & filtros de entrada (gotchas ativos)
+> 📚 Fluxo completo (palavras `palavra_pool`/v15, geração/parse do quiz, enquetes, idempotência do
+> `poll_answer`, limpeza pós-pódio) → [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) (§ Inteligência
+> royal + § Features). Testes: `tests/test_mira.py`, `tests/test_quiz.py`.
+
+## 🧩 Ordem de handlers (gotcha ativo)
 
 > ⚠️ **Ordem de handlers (regressão real já corrigida):** o catch-all `track`
 > (`@dp.message(F.chat.type.in_(...))`) roda ANTES de alguns `Command(...)`. Em aiogram o 1º handler
@@ -259,21 +230,11 @@ Módulos: `royal/mira.py` (ponte: `ask_mira`/`on_mira_reply`/`parse_words`/`fetc
 > em grupo**. Fix: `track` exclui comandos via `~(F.text & F.text.startswith("/"))`. Ao adicionar
 > comando novo, registre-o ANTES do bloco "ULTIMO @dp.message" **ou** garanta que os catch-alls
 > excluem comandos. Handlers que precisam vir ANTES do `track`: `on_chat_migration`,
-> `lucky_emoji_handler` (`F.dice`).
+> `lucky_emoji_handler` (`F.dice`), routers `inteligencia`/`quiz`.
 
-> 🤖 **Bots nunca viram jogadores:** `track` filtra `message.from_user.is_bot` logo na entrada.
-> Admins **anônimos** postam como `@GroupAnonymousBot` (`is_bot=True`) — antes eram cadastrados na
-> corte por engano. Posts de canal também caem aqui. Mensagens de outros bots não chegam (regra do
-> Telegram), mas o filtro blinda o pseudo-bot de admin anônimo.
-> - Anúncio one-shot da correção: `announce_no_bots_feature()` (flag `boot_announce_nobots_v1`).
-> - Limpeza one-shot do legado: `cleanup_legacy_bot_players()` (flag `boot_cleanup_bot_players_v1`,
->   chamada em `main()`) apaga os bots conhecidos já cadastrados antes do filtro em TODA coluna de ref
->   de usuário (`_USER_REF_COLS`: `user_id`, `user1`/`user2` em couples/pair_scores,
->   `from_user`/`to_user` em gifts, `winner_user_id` em challenges, `voter_id` em votes) — descoberta
->   por PRAGMA, robusta a schema novo. `_LEGACY_BOT_USER_IDS` = `{1087968824 @GroupAnonymousBot,
->   136817688 @Channel_Bot, MUSIC_BOT_ID}` (só esses pseudo-bots viravam jogador; nenhum humano tem
->   esses ids). Transacional + idempotente, silencioso (só loga).
-> - Testes: `test_cleanup_remove_bots_legados_e_e_idempotente`.
+> 🤖 **Bots nunca viram jogadores:** `track` filtra `message.from_user.is_bot` na entrada (blinda
+> admin **anônimo** = `@GroupAnonymousBot` e posts de canal). Detalhe + limpeza one-shot do legado
+> (`cleanup_legacy_bot_players`) → `docs/ARCHITECTURE.md` (§ Infra).
 
 ---
 

@@ -176,6 +176,7 @@ exigência cresce de forma constante.
 | 🎯 Tentou e errou | **+5** (consolação) | — |
 | 🎁 Baú Real (1º→5º) | **150 / 100 / 75 / 50 / 25** | — |
 | 🐉 Atacar o boss | **2 + dano causado** | 5 min |
+| 🧠 Quiz Real (por acerto) | **+15** | no fim do quiz |
 | 💍 Casamento formado | **+25** (os dois) | — |
 | ❤️ Votar num casamento | **+2** | — |
 | 📚 Tomo de Sabedoria (item) | **+100** | — |
@@ -378,8 +379,8 @@ do Telegram**.
 | 3️⃣ Placar | No fim, um **cartão Top-5** mostra quem mais acertou |
 | 🧹 Limpeza | As enquetes somem e **fica só o pódio** — que se apaga sozinho depois |
 
-> 🎈 O quiz é **por diversão**: não dá XP nem mexe no ranking da temporada. É um show à parte,
-> que não polui o grupo.
+> 🎈 No fim, **cada acerto vira XP** (somado de uma vez, sem floodar o grupo). O placar do quiz é
+> um show à parte que se limpa sozinho — só o pódio fica.
 
 <div align="center">
 <img src="attached_assets/casorios_preview/18_quiz_card.jpg" width="360" alt="Cartão do Quiz"/>
