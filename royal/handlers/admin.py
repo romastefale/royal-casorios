@@ -101,7 +101,7 @@ import hashlib
 from aiogram import Router
 
 from royal.config import (OWNER_USER_ID, STASH_CHAT_ID, _log_ring, logger)
-from royal.core import (BACKUP_DIR, BACKUP_RETENTION_DAYS, GROUP_ONLY_MSG, auto_delete_after, bot, cur, current_season_label, dp, dump_logs_to_gist, dump_logs_to_owner_dm, get_active_challenge, is_chat_muted, is_group, run_backup, safe_typing, set_chat_muted, spawn_palavra, term_block)
+from royal.core import (BACKUP_DIR, BACKUP_RETENTION_DAYS, GROUP_ONLY_MSG, auto_delete_after, bot, cur, current_season_label, dp, dump_logs_to_gist, dump_logs_to_file, get_active_challenge, is_chat_muted, is_group, run_backup, safe_typing, set_chat_muted, spawn_palavra, term_block)
 
 router = Router()
 
@@ -165,15 +165,17 @@ async def royal_backup(message: Message):
 @router.message(Command("royallog"))
 async def royal_log(message: Message):
     """Dump imediato dos logs. Owner-only, qualquer chat, off-menu.
-    Manda pro DM do owner como file + atualiza gist se GH_TOKEN setado."""
+    Grava o snapshot em backup/logs/ (NAO manda mais o log na DM) + atualiza
+    gist se GH_TOKEN setado. Alertas de erro relevante chegam por DM separada."""
     uid = message.from_user.id if message.from_user else 0
     if OWNER_USER_ID is None or uid != OWNER_USER_ID:
         return
-    dm_ok = await dump_logs_to_owner_dm()
+    path = dump_logs_to_file()
     gist_url = await dump_logs_to_gist()
     in_group = is_group(message)
+    fname = os.path.basename(path) if path else None
     lines = [
-        f">> dm: <b>{'enviado' if dm_ok else 'falhou/sem-dm'}</b>",
+        f">> arquivo: <b>{fname or 'vazio/falhou'}</b>",
         f">> gist: <b>{'ok' if gist_url else 'off (sem GH_TOKEN)'}</b>",
         f"// buffer: {len(_log_ring.buffer)} linhas",
     ]

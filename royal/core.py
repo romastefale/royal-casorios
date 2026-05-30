@@ -100,7 +100,9 @@ from royal_render import (
 import hashlib
 from aiogram import Router
 
-from royal.config import (ADMIN_CACHE_TTL_SECONDS, ATTR_START, AUTO_HOURS, BOSS_ATTACK_COOLDOWN_SEC, BOSS_SPAWN_HOUR, BOSS_SPAWN_WEEKDAY, BOT_TOKEN, CHEST_DELAY_MIN, CHEST_MAX_CLAIMS, CHEST_REWARDS, CHEST_TTL_MIN, COUPLE_XP_BUFF, DAILY_QUESTS, DB_PATH, GH_LOG_TOKEN, GOLD_BOSS_KILL_TOTAL, GOLD_PALAVRA_WIN, LOG_GIST_ID_KEY, LUCKY_DAILY_CAP, LUCKY_EMOJI, LUCKY_JACKPOT_GOLD, LUCKY_JACKPOT_XP, LUCKY_WIN_GOLD, LUCKY_WIN_XP, MIN_PAIR_SCORE, MUSIC_BOT_ID, OWNER_USER_ID, PALAVRA_ATTEMPT_COOLDOWN_SEC, PALAVRA_DURATIONS_MIN, PALAVRA_JITTER_SEC, PHOTO_CACHE_TTL_SECONDS, PTS_PER_LEVEL, REACTION_XP, REACTION_XP_DAILY_CAP, SEASONAL_EVENTS, STARTING_GOLD, STASH_CHAT_ID, TEST_CHAT_IDS, TZ_NAME, XP_BOSS_HIT, XP_COOLDOWN_MSG_SECONDS, XP_COOLDOWN_REPLY_SECONDS, XP_COUPLE_FORMED, XP_PALAVRA_CONSOLATION, XP_PALAVRA_MAX, XP_PALAVRA_MIN, XP_PALAVRA_WIN_BONUS, XP_PER_MESSAGE, XP_PER_REPLY, _log_ring, logger)
+from royal.config import (ADMIN_CACHE_TTL_SECONDS, ATTR_START, AUTO_HOURS, BOSS_ATTACK_COOLDOWN_SEC, BOSS_SPAWN_HOUR, BOSS_SPAWN_WEEKDAY, BOT_TOKEN, CHEST_DELAY_MIN, CHEST_MAX_CLAIMS, CHEST_REWARDS, CHEST_TTL_MIN, COUPLE_XP_BUFF, DAILY_QUESTS, DB_PATH, GH_LOG_TOKEN, GOLD_BOSS_KILL_TOTAL, GOLD_PALAVRA_WIN, LOG_GIST_ID_KEY, LUCKY_DAILY_CAP, LUCKY_EMOJI, LUCKY_JACKPOT_GOLD, LUCKY_JACKPOT_XP, LUCKY_WIN_GOLD, LUCKY_WIN_XP, MIN_PAIR_SCORE, MUSIC_BOT_ID, OWNER_USER_ID, PALAVRA_ATTEMPT_COOLDOWN_SEC, PALAVRA_DURATIONS_MIN, PALAVRA_JITTER_SEC, PHOTO_CACHE_TTL_SECONDS, PTS_PER_LEVEL, REACTION_XP, REACTION_XP_DAILY_CAP, SEASONAL_EVENTS, STARTING_GOLD, STASH_CHAT_ID, TEST_CHAT_IDS, TZ_NAME, XP_BOSS_HIT, XP_COOLDOWN_MSG_SECONDS, XP_COOLDOWN_REPLY_SECONDS, XP_COUPLE_FORMED, XP_PALAVRA_CONSOLATION, XP_PALAVRA_MAX, XP_PALAVRA_MIN, XP_PALAVRA_WIN_BONUS, XP_PER_MESSAGE, XP_PER_REPLY, LOG_BACKUP_DIR, LOG_BACKUP_KEEP, _log_ring, logger)
+
+from royal.alerts import is_benign_telegram_error, register_owner_alerts
 
 bot: Bot | None = (
     Bot(BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
@@ -2466,11 +2468,26 @@ async def ensure_identity_card_async(chat_id: int, user_id: int,
                 card = await asyncio.to_thread(render_identity_card, data)
                 if not card:
                     return current_fid
-                sent = await bot.send_photo(
-                    STASH_CHAT_ID,
-                    photo=BufferedInputFile(card, filename=f"id-{royal_id}.jpg"),
-                    disable_notification=True,
-                )
+                try:
+                    sent = await bot.send_photo(
+                        STASH_CHAT_ID,
+                        photo=BufferedInputFile(card, filename=f"id-{royal_id}.jpg"),
+                        disable_notification=True,
+                    )
+                except TelegramRetryAfter as e:
+                    # #2 flood control no STASH: em vez de cair no except
+                    # generico (era logado como ERROR e o refresh era pulado),
+                    # espera o retry_after e tenta 1x de novo. Cap de 30s.
+                    wait = min(e.retry_after, 30)
+                    logger.warning(
+                        "identity_card RetryAfter %ds rid=%s — aguardando %ds "
+                        "e tentando de novo", e.retry_after, royal_id, wait)
+                    await asyncio.sleep(wait + 0.5)
+                    sent = await bot.send_photo(
+                        STASH_CHAT_ID,
+                        photo=BufferedInputFile(card, filename=f"id-{royal_id}.jpg"),
+                        disable_notification=True,
+                    )
             if not sent or not sent.photo:
                 return current_fid
             new_fid = sent.photo[-1].file_id
@@ -2482,6 +2499,12 @@ async def ensure_identity_card_async(chat_id: int, user_id: int,
             logger.info("identity_card refreshed rid=%s uid=%d chat=%d",
                         royal_id, user_id, chat_id)
             return new_fid
+        except TelegramRetryAfter as e:
+            # 2a falha seguida de flood: transitorio, nao e bug. Warning (nao
+            # ERROR) p/ nao disparar alerta — o sweep tenta de novo depois.
+            logger.warning("identity_card flood persistente rid=%s (%ds) — "
+                           "pulando", royal_id, e.retry_after)
+            return current_fid
         except Exception:
             logger.exception("identity_card upload/render failed rid=%s", royal_id)
             return current_fid
@@ -4755,6 +4778,34 @@ async def dump_logs_to_gist() -> str | None:
     return None
 
 
+def dump_logs_to_file() -> str | None:
+    """Grava snapshot do _log_ring em `<LOG_BACKUP_DIR>/logs/royal-rpg-<ts>.log`
+    e aplica rotacao (mantem os LOG_BACKUP_KEEP mais recentes). Retorna o path
+    ou None. Substitui o antigo dump na DM do dono (que floodava a cada 5min)."""
+    content = _log_ring.snapshot()
+    if not content:
+        return None
+    logs_dir = os.path.join(LOG_BACKUP_DIR, "logs")
+    try:
+        os.makedirs(logs_dir, exist_ok=True)
+        ts = datetime.now(ZoneInfo(TZ_NAME)).strftime("%Y%m%d-%H%M%S")
+        path = os.path.join(logs_dir, f"royal-rpg-{ts}.log")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(content)
+        files = sorted(fn for fn in os.listdir(logs_dir)
+                       if fn.startswith("royal-rpg-") and fn.endswith(".log"))
+        excess = len(files) - LOG_BACKUP_KEEP
+        for fn in files[:max(0, excess)]:
+            try:
+                os.remove(os.path.join(logs_dir, fn))
+            except OSError:
+                pass
+        return path
+    except Exception:
+        logger.exception("[LOGS] dump_logs_to_file falhou")
+        return None
+
+
 BACKUP_DIR = os.path.join(DB_DIR, "backups")
 
 
@@ -5062,5 +5113,24 @@ def _quests_render(chat_id: int, uid: int) -> tuple[str, InlineKeyboardMarkup | 
                 for q in claimable]
         kb = InlineKeyboardMarkup(inline_keyboard=rows)
     return body, kb
+
+
+async def _send_owner_alert_dm(text: str) -> None:
+    """Envia a DM de alerta pro dono. Swallow TOTAL: nunca logar erro aqui
+    (geraria recursao no OwnerAlertHandler). parse_mode=None p/ o traceback
+    (com <, >, &) nao quebrar o parser de HTML."""
+    if not OWNER_USER_ID or bot is None:
+        return
+    try:
+        await bot.send_message(OWNER_USER_ID, text, parse_mode=None,
+                               disable_notification=False)
+    except Exception:
+        pass
+
+
+# Liga o sistema de alerta: anexa o OwnerAlertHandler no root logger. Captura
+# nossos logger.exception + as excecoes nao tratadas que o aiogram loga como
+# ERROR, classifica e so manda DM nos casos relevantes (ver royal/alerts.py).
+register_owner_alerts(_send_owner_alert_dm)
 
 

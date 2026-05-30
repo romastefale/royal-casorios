@@ -126,10 +126,14 @@ Confirma no grupo + DM do owner. Testes: `test_migrate_chat_data_preserva_progre
 | `OWNER_USER_ID` | rec. | — | Habilita comandos owner (`/royallog`, `/royalmudo`, `/royalpalavratest`). Sem isso, modo seguro (off). |
 | `TEST_CHAT_IDS` | — | — | Grupos de teste (fora do picker de DM e do fallback inline). Comma-separated. |
 | `STASH_CHAT_ID` | — | `-1003941532741` | Canal privado p/ upload silencioso (identity card + backups). |
-| `GH_TOKEN` | — | — | PAT GitHub (scope `gist`) p/ upload de logs a cada 5min. Sem ele, só DM do owner. |
-| `LOG_DUMP_INTERVAL_SEC` | — | `300` | Intervalo do auto-dump de logs. |
+| `GH_TOKEN` | — | — | PAT GitHub (scope `gist`) p/ upload de logs a cada 5min. Opcional (complementa os snapshots em `backup/logs/`). |
+| `LOG_DUMP_INTERVAL_SEC` | — | `300` | Intervalo do auto-dump de logs (snapshot em `backup/logs/`). |
 | `LOG_DUMP_ENABLED` | — | `1` | `0` desliga o auto-dump (mantém `/royallog` manual). |
 | `LOG_JSON` | — | `0` | `1` → stdout root em JSON. Ring buffer do `/royallog` sempre em texto. |
+| `LOG_BACKUP_DIR` | — | `backup` | Raiz dos snapshots de log + relatórios de alerta. **No Railway use `/data/backup`** (volume) p/ persistir. |
+| `LOG_BACKUP_KEEP` | — | `50` | Quantos snapshots de log manter em `backup/logs/` (rotação). |
+| `OWNER_ALERTS_ENABLED` | — | `1` | `0` desliga as **DMs de alerta** de erro relevante (os arquivos continuam). |
+| `OWNER_ALERT_TTL_SEC` | — | `1800` | Janela de dedupe por assinatura de erro (mesmo erro não re-alerta nela). |
 | `PORT` | — | — | Se setado, sobe health server HTTP (`GET /health`). |
 | `HEALTH_STALE_SEC` | — | `600` | `/health` → 503 se nenhuma update do Telegram nesse intervalo. |
 | `BACKUP_ENABLED` | — | `1` | `0` desliga backup diário. |
@@ -150,6 +154,25 @@ Confirma no grupo + DM do owner. Testes: `test_migrate_chat_data_preserva_progre
   **Manter o gate.**
 
 ---
+
+## 📨 Logs & alertas (NÃO floodar a DM do dono)
+
+O dono **não recebe mais o log inteiro na DM** a cada 5min. Agora:
+- `log_dump_job` grava snapshots do ring em **`backup/logs/`** (rotação `LOG_BACKUP_KEEP`);
+  `/royallog` faz o mesmo on-demand. Gist (`GH_TOKEN`) é opcional/complementar.
+- **Alerta inteligente** (`royal/alerts.py`, leaf `config ← alerts ← core`): um
+  `OwnerAlertHandler` no root logger classifica todo `ERROR`/`CRITICAL` (inclui as
+  exceções não tratadas que o aiogram loga) via `ERROR_CATALOG` e **só manda DM nos casos
+  relevantes** (bug de código, DB, import, boot). Transitórios do Telegram (RetryAfter,
+  "query is too old", "message is not modified", bot bloqueado, rede) **não** geram DM.
+  Dedupe por assinatura + `OWNER_ALERT_TTL_SEC`. Cada erro relevante vira arquivo em
+  `backup/alerts/`. O mapa legível dos casos: **`backup/ERROR_CATALOG.md`** (espelho do
+  `ERROR_CATALOG` em código — manter em sincronia ao adicionar caso).
+- `is_benign_telegram_error(exc)` (em `alerts`, re-exportado por `core`) é usado nos
+  `except` dos handlers (ex.: `hub_cb`) p/ **não logar benigno como ERROR**.
+- ⚠️ `backup/` é versionado só como estrutura + docs; `backup/logs/*.log` e
+  `backup/alerts/*.txt` são gitignorados (artefatos de runtime, não voltam pro git no
+  Railway). Repo é privado → PII em log nesses arquivos é aceitável.
 
 ## 🧩 Ordem de handlers & filtros de entrada (gotchas ativos)
 

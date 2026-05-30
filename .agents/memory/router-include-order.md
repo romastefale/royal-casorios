@@ -25,6 +25,6 @@ callback prefixes), so include order is irrelevant for them — EXCEPT two const
    that module's router included before/after hub consistently with the intended precedence. Do not
    reorder `hub` after `cfg`/`missoes`.
 
-The split was purely structural (verbatim code, zero behavior/DB change). Behavior equivalence was
-checked via: 401/401 top-level symbol parity vs the original, ruff `E9,F63,F7,F82` clean,
-`import main` OK with 20 routers, full test suite green.
+The split was purely structural (verbatim code, zero behavior/DB change). Treat the `royal/` package
+as behavior-equivalent to the original monolith: any divergence in router precedence is a bug, not an
+intended refactor.

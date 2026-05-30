@@ -217,6 +217,23 @@ GH_LOG_TOKEN = (os.getenv("GH_TOKEN", "").strip()
 LOG_GIST_ID_KEY = "log_dump_gist_id"
 
 
+# Raiz dos snapshots de log + relatorios de alerta. No Railway (container
+# efemero) aponte pro volume p/ persistir: LOG_BACKUP_DIR=/data/backup.
+LOG_BACKUP_DIR = os.getenv("LOG_BACKUP_DIR", "backup").strip() or "backup"
+
+
+# Quantos snapshots de log manter em backup/logs (rotacao).
+LOG_BACKUP_KEEP = int(os.getenv("LOG_BACKUP_KEEP", "50"))
+
+
+# Liga/desliga as DMs de alerta pro dono (os arquivos sao gravados de todo jeito).
+OWNER_ALERTS_ENABLED = os.getenv("OWNER_ALERTS_ENABLED", "1").strip() not in ("0", "false", "False")
+
+
+# Janela de dedupe por assinatura de erro (s): o mesmo erro nao re-alerta dentro dela.
+OWNER_ALERT_TTL_SEC = int(os.getenv("OWNER_ALERT_TTL_SEC", "1800"))
+
+
 DB_PATH = os.getenv("DATABASE_PATH", "./data/royal_casorios.sqlite3")
 
 

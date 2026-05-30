@@ -56,7 +56,8 @@
   `send_dice` 🎰** (`roll_dice_visual`, cosmético — não afeta recompensa). Único `send_dice`
   automático; vem do callback de claim.
 - **🔇 `/royalmudo` (owner):** grupo → toggle do chat; DM do owner → broadcast (silencia/religa
-  todos). **📜 `/royallog` (owner) + auto 5min:** ring buffer → DM `.log` + gist (se `GH_TOKEN`).
+  todos). **📜 `/royallog` (owner) + auto 5min:** ring buffer → **arquivo em `backup/logs/`**
+  (rotação `LOG_BACKUP_KEEP`) + gist (se `GH_TOKEN`). **Não manda mais o log na DM.**
 
 > ⚠️ **Cards card-first:** todos os handlers tentam `render_*` → `send_photo` e caem em fallback texto
 > se falhar. Emoji de título é stripado (`re.sub(r"^\W+","")`) antes do Pillow (senão tofu).
@@ -95,6 +96,15 @@ nelas** (marcadas como LEGADO/INERTE nos docstrings).
   owner. Conexão sqlite separada. One-time: double backup (flag `bot_meta['initial_double_backup']`).
 - **F11 · Migrations transacionais:** cada migration em `BEGIN…COMMIT`; falha → `ROLLBACK` + aborta
   boot (`user_version` só avança no sucesso). `MIGRATIONS` = lista `(versão, fn)` de v1 a **v14**.
+- **F21 · Log em arquivo + alerta inteligente** (`royal/alerts.py`, leaf `config ← alerts ← core`):
+  `log_dump_job`/`/royallog` gravam o ring em `backup/logs/` (rotação) em vez de DM. Um
+  `OwnerAlertHandler` no root logger classifica `ERROR`/`CRITICAL` via `ERROR_CATALOG` e **só manda
+  DM nos casos relevantes** (bug código/DB/import/boot); transitórios do Telegram (RetryAfter, "query
+  is too old", edit no-op, bot bloqueado, rede) são silenciados. Dedupe por assinatura +
+  `OWNER_ALERT_TTL_SEC`; cada relevante vira arquivo em `backup/alerts/`. `is_benign_telegram_error`
+  usado nos `except` (ex.: `hub_cb`) p/ não logar benigno como ERROR. Mapa: `backup/ERROR_CATALOG.md`.
+  **Fixes reais:** `send_couple` TZ (`ZoneInfo(TZ_NAME)`), `ensure_identity_card_async` trata
+  `TelegramRetryAfter` (retry 1×), `hub_cb` callback expirado não é mais ERROR.
 - **F13 · Health endpoint** (`/health`, só se `PORT`): DB ping + staleness + `user_version`.
 - **F14 · Graceful shutdown** (`@dp.shutdown`): flush buffers + fecha health + commit/close.
 - **Já feitos:** F03–F08, F12, F15–F20.

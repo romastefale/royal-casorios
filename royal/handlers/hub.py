@@ -101,7 +101,7 @@ import hashlib
 from aiogram import Router
 
 from royal.config import (BOSS_SPAWN_HOUR, logger)
-from royal.core import (CLASSES, EFFECT_PARTY, ITEMS, ROYAL_HELP, ROYAL_TUTORIAL_PARTS, _HUB_DEDICATED_PREFIXES, _apply_avatar, _avatar_reveal_payload, _tutorial_block, _tutorial_kb, assert_owner, boss_keyboard, bot, cap1024, classe_keyboard, cur, current_season_label, db, delete_msg_safe, display_name, dp, effect_kw, ensure_player, format_boss_text, format_challenge_text, get_active_boss, get_active_challenge, get_anon_name, get_name, get_or_create_player, get_player, handle_boss_attack, handle_chest_claim, hub_keyboard_main, hub_text, inv_keyboard, is_group_chat, loja_keyboard, rate_limited, react_to, refresh_user_identity, register_owner, resolve_owner_chat, safe_typing, send_profile_card, send_ranking, term_block, typewriter_animate, up_keyboard, with_close)
+from royal.core import (CLASSES, EFFECT_PARTY, ITEMS, ROYAL_HELP, ROYAL_TUTORIAL_PARTS, _HUB_DEDICATED_PREFIXES, _apply_avatar, _avatar_reveal_payload, _tutorial_block, _tutorial_kb, assert_owner, is_benign_telegram_error, boss_keyboard, bot, cap1024, classe_keyboard, cur, current_season_label, db, delete_msg_safe, display_name, dp, effect_kw, ensure_player, format_boss_text, format_challenge_text, get_active_boss, get_active_challenge, get_anon_name, get_name, get_or_create_player, get_player, handle_boss_attack, handle_chest_claim, hub_keyboard_main, hub_text, inv_keyboard, is_group_chat, loja_keyboard, rate_limited, react_to, refresh_user_identity, register_owner, resolve_owner_chat, safe_typing, send_profile_card, send_ranking, term_block, typewriter_animate, up_keyboard, with_close)
 
 router = Router()
 
@@ -623,7 +623,12 @@ async def hub_cb(cb: CallbackQuery):
             return
 
         await cb.answer()
-    except Exception:
+    except Exception as e:
+        # #3 callback expirado ("query is too old") + outros benignos do
+        # Telegram: NAO logar como ERROR (era ruido e disparava alerta a toa).
+        if is_benign_telegram_error(e):
+            logger.debug("hub_cb benigno data=%s: %s", cb.data, e)
+            return
         logger.exception("hub_cb failed for data=%s", cb.data)
         try:
             await cb.answer("Erro interno", show_alert=False)

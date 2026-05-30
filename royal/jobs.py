@@ -102,7 +102,7 @@ from aiogram import Router
 
 from royal import core
 from royal.config import (AUTO_HOURS, FLUSH_INTERVAL_SECONDS, LOG_DUMP_ENABLED, LOG_DUMP_INTERVAL_SEC, MUSIC_BOT_ID, STASH_CHAT_ID, TEST_CHAT_IDS, logger)
-from royal.core import (BACKUP_ENABLED, BACKUP_HOUR, _compute_next_palavra_at, _identity_card_hash, activity_buffer, admin_cache, attempt_cooldowns, boss_attack_cooldowns, bot, bot_meta_get, bot_meta_set, check_season_change, cur, db, dp, dump_logs_to_gist, dump_logs_to_owner_dm, ensure_identity_card_async, expire_old_chests, finalize_expired_challenges, flush_buffers_once, get_active_challenge, is_chat_muted, local_now, pair_buffer, photo_cache, run_backup, schedule_next_palavra, send_couple, spawn_boss_if_due, spawn_chest, spawn_palavra, term_block, typewriter_animate, utc_iso, utc_now)
+from royal.core import (BACKUP_ENABLED, BACKUP_HOUR, _compute_next_palavra_at, _identity_card_hash, activity_buffer, admin_cache, attempt_cooldowns, boss_attack_cooldowns, bot, bot_meta_get, bot_meta_set, check_season_change, cur, db, dp, dump_logs_to_gist, dump_logs_to_file, ensure_identity_card_async, expire_old_chests, finalize_expired_challenges, flush_buffers_once, get_active_challenge, is_chat_muted, local_now, pair_buffer, photo_cache, run_backup, schedule_next_palavra, send_couple, spawn_boss_if_due, spawn_chest, spawn_palavra, term_block, typewriter_animate, utc_iso, utc_now)
 
 async def log_dump_job() -> None:
     """Background: dump dos logs a cada LOG_DUMP_INTERVAL_SEC."""
@@ -112,11 +112,11 @@ async def log_dump_job() -> None:
     await asyncio.sleep(LOG_DUMP_INTERVAL_SEC)  # 1a janela espera intervalo
     while True:
         try:
-            dm_ok = await dump_logs_to_owner_dm()
+            path = dump_logs_to_file()
             gist_url = await dump_logs_to_gist()
-            if dm_ok or gist_url:
-                logger.info("[LOGS] tick dm=%s gist=%s",
-                            "ok" if dm_ok else "-",
+            if path or gist_url:
+                logger.info("[LOGS] tick file=%s gist=%s",
+                            "ok" if path else "-",
                             "ok" if gist_url else "-")
         except Exception:
             logger.exception("[LOGS] tick failed")

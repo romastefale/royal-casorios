@@ -28,3 +28,8 @@ venv/
 .idea/
 .vscode/
 recovered_files/
+
+# Artefatos de runtime do sistema de backup/alertas (a estrutura da pasta e os
+# .md/.gitkeep ficam versionados; os logs/relatorios gerados em runtime nao).
+backup/logs/*.log
+backup/alerts/*.txt

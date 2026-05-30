@@ -217,3 +217,83 @@ def test_todo_item_tem_sprite_no_card():
     faltando = [iid for iid, info in main.ITEMS.items()
                 if _strip_vs(info["emoji"]) not in rr.EMOJI_SPRITES]
     assert not faltando, f"itens sem sprite (dao tofu no card): {faltando}"
+
+
+# ---------------------------------------------------- sistema de alerta/erros
+# (royal/alerts.py: classifica erros e so manda DM pro dono nos relevantes)
+import logging
+
+from royal import alerts
+
+
+def _rec(msg, *, exc=None, level=logging.ERROR):
+    """Cria um LogRecord como o logging faria, com exc_info opcional."""
+    exc_info = None
+    if exc is not None:
+        try:
+            raise exc
+        except Exception:
+            import sys
+            exc_info = sys.exc_info()
+    return logging.LogRecord("royal-casorios", level, "mod.py", 42,
+                             msg, None, exc_info, func="some_fn")
+
+
+def test_is_benign_query_too_old_e_flood():
+    assert main.is_benign_telegram_error(Exception("query is too old and ..."))
+    assert main.is_benign_telegram_error(
+        Exception("Flood control exceeded. Retry in 3 seconds"))
+    assert main.is_benign_telegram_error(
+        Exception("message is not modified"))
+
+
+def test_is_benign_falso_para_bug_real():
+    assert not main.is_benign_telegram_error(NameError("name 'TZ' ..."))
+    assert not main.is_benign_telegram_error(KeyError("user_id"))
+
+
+def test_classify_benigno_nao_manda_dm():
+    # callback expirado / flood / edit no-op -> relevant=False
+    assert not alerts.classify_record(_rec("hub_cb failed", exc=Exception(
+        "Telegram says: query is too old")))["relevant"]
+    assert not alerts.classify_record(_rec(
+        "Flood control exceeded on SendPhoto"))["relevant"]
+
+
+def test_classify_bug_real_manda_dm():
+    info = alerts.classify_record(_rec("boom", exc=NameError("name 'TZ'")))
+    assert info["relevant"] is True
+    assert info["id"] == "code_bug"
+    # excecao com traceback fora do catalogo tambem e relevante
+    assert alerts.classify_record(_rec("x", exc=RuntimeError("???")))["relevant"]
+
+
+def test_classify_db_error_relevante():
+    info = alerts.classify_record(_rec("db", exc=Exception(
+        "OperationalError: no such column: foo")))
+    assert info["relevant"] is True
+    assert info["id"] == "db_error"
+
+
+def test_classify_error_sem_traceback_e_ruido():
+    # logger.error solto, sem trace e fora do catalogo -> nao manda DM
+    assert not alerts.classify_record(_rec("apenas um aviso solto"))["relevant"]
+
+
+def test_catalogo_tem_casos_benignos_e_relevantes():
+    ids = {e["id"] for e in alerts.ERROR_CATALOG}
+    assert {"flood_control", "callback_expired", "code_bug", "db_error"} <= ids
+
+
+def test_alerta_grava_arquivo_mesmo_com_dm_desligada(tmp_path, monkeypatch):
+    # contrato: OWNER_ALERTS_ENABLED=0 desliga so a DM; o arquivo continua.
+    monkeypatch.setattr(alerts, "OWNER_ALERTS_ENABLED", False)
+    sent = []
+    h = alerts.OwnerAlertHandler(
+        lambda txt: sent.append(txt),
+        alerts_dir=str(tmp_path / "alerts"), ttl_sec=1800)
+    h.emit(_rec("boom", exc=NameError("name 'TZ'")))
+    files = list((tmp_path / "alerts").glob("*.txt"))
+    assert len(files) == 1            # arquivo gerado
+    assert "code_bug" in files[0].name
+    assert sent == []                 # nenhuma DM agendada
