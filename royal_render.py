@@ -558,29 +558,29 @@ def draw_pixel_heart(draw, x, y, scale, color=HOT, empty=False):
 # e 'o' (highlight mais claro, opcional). Tamanho 10x10 unidades por
 # default. Renderizadas via draw_sprite() com pixel_rect (sem antialias).
 
-SPRITE_SWORD = [   # FORCA — espada vertical com guarda
+SPRITE_SWORD = [   # FORCA — espada na diagonal (lamina p/ cima-direita, guarda + cabo em baixo-esq)
+    ".......##.",
+    "......##..",
+    ".....##...",
     "....##....",
-    "....##....",
-    "....##....",
-    "....##....",
-    "....##....",
-    ".########.",
-    "....##....",
-    "....##....",
-    "....##....",
-    "...####...",
-]
-SPRITE_BOOT = [    # DESTREZA — bota lateral
-    "..........",
-    "..........",
-    "..####....",
+    "...##.....",
     "..#####...",
+    ".###......",
+    "###.......",
+    "##........",
+    "#.........",
+]
+SPRITE_BOOT = [    # DESTREZA — bota em L (cano vertical + pe pra direita)
+    "..###.....",
+    "..###.....",
+    "..###.....",
+    "..###.....",
+    "..###.....",
+    "..####....",
     "..######..",
     "..#######.",
-    "..########",
     ".#########",
-    "##########",
-    "##########",
+    ".#########",
 ]
 SPRITE_HEART = [   # VITAL — coracao cheio
     ".##..##...",
@@ -666,29 +666,29 @@ SPRITE_CROWN = [   # 👑 MONARCA / COROA — coroa de 3 pontas
     "..........",
     "..........",
 ]
-SPRITE_ROSE = [    # 🌹 CORTESÃ — rosa com caule e folha
+SPRITE_ROSE = [    # 🌹 CORTESÃ — flor com pétalas, caule e folha
     "..####....",
-    ".######...",
     ".#oooo#...",
-    ".#o#oo#...",
+    "#oo##oo#..",
+    "#o####o#..",
+    "#oo##oo#..",
     ".#oooo#...",
     "..####....",
-    "...##.....",
-    "...##.##..",
-    "..##.##...",
+    "...##.#...",
+    "...###....",
     "...##.....",
 ]
-SPRITE_WIZARD = [  # 🧙 BRUXO — chapéu de mago com estrela
+SPRITE_WIZARD = [  # 🧙 BRUXO — chapéu de mago (cone alto pontudo + aba larga + estrela)
+    "....#.....",
+    "....#.....",
     "....#.....",
     "...###....",
     "...#o#....",
-    "..#ooo#...",
-    "..#o#o#...",
-    ".#ooooo#..",
-    ".#o###o#..",
-    ".#ooooo#..",
-    "#########.",
-    "#########.",
+    "..#####...",
+    "..#####...",
+    ".#######..",
+    "##########",
+    "##########",
 ]
 SPRITE_SCROLL = [  # 📜 CRONISTA — pergaminho enrolado
     ".########.",
@@ -738,15 +738,15 @@ SPRITE_SHIELD = [  # 🛡️ ARMADURA — escudo
     "...#oo#...",
     "....##....",
 ]
-SPRITE_RING = [    # 💍 ANEL — anel com gema
+SPRITE_RING = [    # 💍 ANEL — gema (diamante) sobre aro circular vazado
     "....##....",
     "...#oo#...",
+    "..#oooo#..",
     "...#oo#...",
     "....##....",
     "..######..",
     ".##....##.",
-    "#o#....#o#",
-    "#o#....#o#",
+    "##......##",
     ".##....##.",
     "..####....",
 ]

@@ -5,4 +5,5 @@
 - [XP award chokepoints](xp-chokepoints.md) — todo XP passa por award_xp_immediate/award_xp_message; gating de participação global (ex. left_game) vai aí, não por call-site.
 - [Quiz /rquiz awards XP](quiz-xp-decision.md) — owner reversed "no XP" decision; quiz now grants XP batched once per player at podium (not per-answer) to keep the no-flood rule.
 - [One-shot announce concurrency](one-shot-announce-concurrency.md) — boot-announce flag-at-end pattern isn't concurrency-safe; a manual re-trigger needs an in-process running guard set before any await.
+- [Sprite icon legibility](sprite-icon-design.md) — card icons need shape-recognizable silhouettes: sword DIAGONAL (vertical = inverted cross), wizard tall cone, boot L-shape, ring hollow band; data-only fixes.
 - [Supergroup migration self-heal](supergroup-migration-selfheal.md) — proactive sends to a group that became a supergroup while offline raise TelegramMigrateToChat; catch → migrate_chat_data → retry to new id; cataloged as expected (no owner DM).
