@@ -40,6 +40,16 @@ falhou"). O catch-all `track` descarta `is_bot`, então a captura precisa de rou
    o pedido sai mas a resposta da @Mira nunca chega → **"A geração falhou"**.
    → Fix é **config externa** (Railway env + @BotFather), NÃO código. O código está correto.
 
+🟢 **TR3 (repo `romastefale/TR3`) é a PROVA, não a contradição:** o dono apontou o TR3
+("ele faz") como exemplo de bot que lê a Mira. Li `app/bot/tigraoresponde.py` +
+`app/main.py`: o TR3 só faz relay (`Mira, <pergunta>`) + captura o **reply** no chat-alvo,
+**sem checar `is_bot`** — não há mágica de código. O dono confirmou que a Mira do TR3 é um
+**BOT do @BotFather**. Logo, a ÚNICA razão de o TR3 funcionar é o **Bot-to-Bot Mode LIGADO
+no bot receptor do TR3**. Mesmo código, config diferente → o bot do Royal precisa do mesmo
+toggle. (Webhook vs polling do TR3 é irrelevante: o filtro bot↔bot é server-side, vale pros
+dois.) NÃO tentar "copiar o código do TR3" pra resolver — o que falta é config (@BotFather +
+`MIRA_USERNAME`).
+
 ✅ **Regra do dono (custo zero):** a IA roda do LADO da @Mira (bot externo que o dono
 mantém); o jogo só SOLICITA e INGERE → nenhuma IA paga dentro do jogo.
 
