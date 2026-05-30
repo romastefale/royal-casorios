@@ -1,19 +1,25 @@
 """Inteligência royal — ponte bot↔bot com a IA @Mira.
 
-A @Mira é um bot SEPARADO que o dono mantém: a IA (cara/paga ou não) roda do
+A @Mira é uma conta SEPARADA que o dono mantém: a IA (cara/paga ou não) roda do
 LADO DELA. O jogo (este bot) apenas SOLICITA conteúdo pela ponte e INGERE a
-resposta → custo zero, nenhuma IA paga dentro do jogo. Requer o "Bot-to-Bot
-Communication Mode" LIGADO no @BotFather (ação do dono) — sem isso o Telegram
-não entrega as mensagens da @Mira ao jogo.
+resposta → custo zero, nenhuma IA paga dentro do jogo.
 
 Objetivo 1: "palavras do dia" — 1x/dia o jogo pede N palavras à @Mira no
 grupo-ponte; a resposta é parseada e gravada no banco dinâmico (palavra_pool,
 em core.pool_ingest_words) que enriquece o mini-game Palavra da Hora.
 
-Protocolo (matriz de captura): ask_mira() manda "@Mira <pedido>" no grupo-ponte
-e cria um Future; o handler de captura (royal/handlers/inteligencia.py) chama
-on_mira_reply() quando chega a msg da @Mira e resolve o Future. parse_words()
-é TOLERANTE ao formato (vírgula / linha / numeração / frase).
+Protocolo (modelo TR3 — captura por REPLY, não por remetente): ask_mira() manda
+"@Mira <pedido>" no grupo-ponte, guarda o `message_id` do pedido e cria um
+Future; o handler de captura (royal/handlers/inteligencia.py) chama
+on_mira_reply() para CADA msg que chega no grupo-ponte e resolve o Future quando
+a msg é um REPLY ao nosso pedido — SEM checar quem enviou. parse_words() é
+TOLERANTE ao formato (vírgula / linha / numeração / frase).
+
+⚠️ Para a resposta chegar até o capture, o grupo-ponte está na ALLOWLIST da
+outer-middleware `_require_user_for_commands` (core.py): sem isso o drop de
+`is_bot` mataria a resposta da @Mira ANTES de qualquer router. (O "Bot-to-Bot
+Communication Mode" do @BotFather NÃO é o lever aqui — o que importa é o reply
+ao nosso pedido + a allowlist da middleware.)
 
 Grafo de deps: config ← core ← mira ← {jobs, handlers}. mira NÃO é importada por
 core (evita ciclo).
@@ -75,47 +81,35 @@ async def ask_mira(prompt: str, timeout: float | None = None) -> str | None:
 
 
 def on_mira_reply(message) -> bool:
-    """Chamado pelo handler de captura quando chega uma msg no grupo-ponte. Se
-    for a @Mira (casa por MIRA_USER_ID quando setado, senão por username) e
+    """Chamado pelo handler de captura quando chega uma msg no grupo-ponte.
+    Modelo TR3: **não considera QUEM enviou** — a única correlação é o reply ao
+    NOSSO pedido (`reply_to_message.message_id == request_mid`). Se bater e
     houver pedido pendente, resolve o Future com o texto. Retorna True se
-    consumiu. NÃO cadastra a @Mira como jogador (para a propagação).
+    consumiu. NÃO cadastra ninguém como jogador (o capture para a propagação).
 
-    NÃO exige is_bot: a @Mira pode responder como bot OU como userbot
-    (is_bot=False). O discriminador real é o id/username (abaixo)."""
+    Por quê sem checar id/username: no grupo-ponte dedicado, com 1 pedido por
+    vez, a resposta é sempre o reply ao nosso request — o autor é irrelevante.
+    Casar por reply é mais robusto (independe de id/privacy/tipo de conta)."""
     if IA_BRIDGE_CHAT_ID is None:
         return False
-    if not message or not message.from_user:
+    if not message:
         return False
     if message.chat is None or message.chat.id != IA_BRIDGE_CHAT_ID:
         return False
-    # Match da @Mira: ID fixo é o critério PRINCIPAL (robusto). Sem ID utilizável
-    # (não setado, ou ausente na msg) cai pro @username (que pode mudar/ocultar).
-    uid = getattr(message.from_user, "id", None)
-    uname = message.from_user.username or ""
-    if MIRA_USER_ID and uid is not None:
-        if uid != MIRA_USER_ID:
-            logger.info(
-                "[MIRA] remetente id=%s ≠ MIRA_USER_ID=%s — ignorado. Se este "
-                "for o id REAL da @Mira, ajuste MIRA_USER_ID.", uid, MIRA_USER_ID)
-            return False
-    elif MIRA_USERNAME:
-        if uname.lower() != MIRA_USERNAME.lower():
-            logger.info("[MIRA] username=%r ≠ MIRA_USERNAME=%r — ignorado.",
-                        uname, MIRA_USERNAME)
-            return False
     pend = _pending.get(IA_BRIDGE_CHAT_ID)
     if not pend or pend["future"].done():
         return False
-    # Correlação: se a @Mira respondeu CITANDO uma msg (reply_to), ela tem que
-    # ser o NOSSO pedido — assim uma msg solta dela (ou reply a outra coisa) não
-    # resolve o Future errado. Se ela não citar nada (só posta a resposta),
-    # aceitamos (fallback: no grupo-ponte dedicado, com 1 pedido por vez, a única
-    # msg dela enquanto há pedido pendente é a resposta).
+    # Correlação ÚNICA (TR3): a resposta tem que CITAR (reply_to) o nosso pedido.
+    # Fail-closed: sem o request_mid (anomalia — o send não devolveu message_id)
+    # não há como correlacionar com segurança → NÃO captura (deixa dar timeout)
+    # em vez de ingerir texto errado.
     req_mid = pend.get("request_mid")
+    if req_mid is None:
+        return False
     reply_to = getattr(message, "reply_to_message", None)
-    if reply_to is not None and req_mid is not None:
-        if getattr(reply_to, "message_id", None) != req_mid:
-            return False
+    reply_mid = getattr(reply_to, "message_id", None) if reply_to is not None else None
+    if reply_mid != req_mid:
+        return False
     text = (getattr(message, "text", None) or getattr(message, "caption", None) or "")
     if not text.strip():
         return False

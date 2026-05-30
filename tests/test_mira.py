@@ -129,89 +129,71 @@ def test_on_mira_reply_correlacao_por_reply_to():
         loop.close()
 
 
-def test_on_mira_reply_aceita_sem_reply_to_e_filtra_humano():
-    """Sem reply_to (a @Mira só posta a resposta) → aceita. Msg de outro
-    remetente (id ≠ @Mira, seja humano ou outro bot) ou de outro chat →
-    ignorada. O filtro é por id/username, NÃO por is_bot (a @Mira pode
-    responder como userbot)."""
+def test_on_mira_reply_exige_reply_ao_pedido_ignora_sem_reply():
+    """Modelo TR3: a correlação é o reply ao NOSSO pedido. Com request_mid
+    setado, uma msg SEM reply_to (ou de outro chat) NÃO resolve."""
     bridge = mira.IA_BRIDGE_CHAT_ID
     loop = asyncio.new_event_loop()
     try:
-        # outro remetente (id ≠ @Mira) não resolve — mesmo is_bot=False
         fut = loop.create_future()
         mira._pending[bridge] = {"future": fut, "request_mid": 1}
-        assert mira.on_mira_reply(
-            _FakeMsg(bridge, is_bot=False, uid=mira.MIRA_USER_ID + 1,
-                     text="oi")) is False
+        # sem reply_to (e temos request_mid) → não resolve
+        assert mira.on_mira_reply(_FakeMsg(bridge, text="oi")) is False
         assert not fut.done()
-        # outro chat não resolve
-        assert mira.on_mira_reply(_FakeMsg(bridge + 1, text="x, y")) is False
-        assert not fut.done()
-        # @Mira no chat-ponte, sem reply_to → resolve (mesmo como userbot)
+        # outro chat → não resolve
         assert mira.on_mira_reply(
-            _FakeMsg(bridge, is_bot=False, text="gato, mesa")) is True
+            _FakeMsg(bridge + 1, reply_to=_FakeReply(1), text="x, y")) is False
+        assert not fut.done()
+    finally:
+        mira._pending.pop(bridge, None)
+        loop.close()
+
+
+def test_on_mira_reply_ignora_remetente_qualquer_conta_resolve():
+    """Modelo TR3: NÃO importa quem enviou. Qualquer conta (bot, userbot,
+    humano) que dê reply ao nosso pedido resolve o Future."""
+    bridge = mira.IA_BRIDGE_CHAT_ID
+    loop = asyncio.new_event_loop()
+    try:
+        # conta "qualquer" (uid arbitrário, is_bot=False) replicando o pedido
+        fut = loop.create_future()
+        mira._pending[bridge] = {"future": fut, "request_mid": 42}
+        assert mira.on_mira_reply(
+            _FakeMsg(bridge, is_bot=False, uid=mira.MIRA_USER_ID + 9999,
+                     reply_to=_FakeReply(42), text="gato, mesa")) is True
         assert fut.result() == "gato, mesa"
     finally:
         mira._pending.pop(bridge, None)
         loop.close()
 
 
-def test_on_mira_reply_filtra_por_user_id():
-    """Com MIRA_USER_ID setado, só a @Mira (ID fixo) resolve — outro bot no
-    mesmo grupo-ponte, mesmo com username parecido, é ignorado."""
-    assert mira.MIRA_USER_ID  # default = ID conhecido da @Mira
+def test_on_mira_reply_sem_request_mid_fail_closed():
+    """Anomalia: pedido pendente SEM request_mid (o send não devolveu
+    message_id) → fail-closed: não captura nem com reply, deixa dar timeout em
+    vez de ingerir texto errado."""
     bridge = mira.IA_BRIDGE_CHAT_ID
     loop = asyncio.new_event_loop()
     try:
-        # outro bot (ID diferente) NÃO resolve
         fut = loop.create_future()
-        mira._pending[bridge] = {"future": fut, "request_mid": 1}
+        mira._pending[bridge] = {"future": fut, "request_mid": None}
         assert mira.on_mira_reply(
-            _FakeMsg(bridge, uid=mira.MIRA_USER_ID + 1, text="x, y")) is False
+            _FakeMsg(bridge, reply_to=_FakeReply(123), text="gato, mesa")) is False
         assert not fut.done()
-        # a @Mira (ID certo) resolve
-        assert mira.on_mira_reply(
-            _FakeMsg(bridge, uid=mira.MIRA_USER_ID, text="gato, mesa")) is True
-        assert fut.result() == "gato, mesa"
     finally:
         mira._pending.pop(bridge, None)
         loop.close()
 
 
-def test_on_mira_reply_fallback_username_quando_id_desligado(monkeypatch):
-    """MIRA_USER_ID=0 → match por @username (critério antigo). Username errado
-    é ignorado; o certo resolve."""
-    monkeypatch.setattr(mira, "MIRA_USER_ID", 0)
-    monkeypatch.setattr(mira, "MIRA_USERNAME", "mira")
+def test_on_mira_reply_sem_from_user_nao_quebra():
+    """Msg sem from_user (post de canal / anônimo) NÃO levanta erro: o match
+    é só por chat + reply ao pedido, sem tocar em from_user."""
     bridge = mira.IA_BRIDGE_CHAT_ID
     loop = asyncio.new_event_loop()
     try:
         fut = loop.create_future()
-        mira._pending[bridge] = {"future": fut, "request_mid": 1}
-        # username errado (mesmo com ID = o da @Mira) NÃO resolve, pois ID off
-        assert mira.on_mira_reply(
-            _FakeMsg(bridge, username="outrobot", text="x, y")) is False
-        assert not fut.done()
-        # username certo resolve
-        assert mira.on_mira_reply(
-            _FakeMsg(bridge, username="Mira", text="gato, mesa")) is True
-        assert fut.result() == "gato, mesa"
-    finally:
-        mira._pending.pop(bridge, None)
-        loop.close()
-
-
-def test_on_mira_reply_id_ausente_nao_quebra_cai_pro_username(monkeypatch):
-    """Msg sem from_user.id (objeto malformado) com MIRA_USER_ID setado NÃO
-    levanta AttributeError: cai pro @username quando configurado."""
-    monkeypatch.setattr(mira, "MIRA_USERNAME", "mira")
-    bridge = mira.IA_BRIDGE_CHAT_ID
-    loop = asyncio.new_event_loop()
-    try:
-        fut = loop.create_future()
-        mira._pending[bridge] = {"future": fut, "request_mid": 1}
-        msg = _FakeMsg(bridge, username="mira", text="gato, mesa")
-        msg.from_user.id = None  # simula id ausente
+        mira._pending[bridge] = {"future": fut, "request_mid": 7}
+        msg = _FakeMsg(bridge, reply_to=_FakeReply(7), text="gato, mesa")
+        msg.from_user = None  # sem remetente
         assert mira.on_mira_reply(msg) is True
         assert fut.result() == "gato, mesa"
     finally:

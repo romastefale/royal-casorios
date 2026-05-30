@@ -243,21 +243,22 @@ TZ_NAME = os.getenv("TZ", "America/Sao_Paulo")
 AUTO_HOURS = [int(x.strip()) for x in os.getenv("AUTO_HOURS", "9,15,21").split(",") if x.strip()]
 
 
-# === Inteligência royal — ponte bot↔bot com a IA @Mira ===
-# A @Mira é um bot SEPARADO que o dono mantém (a IA roda do lado dela; o jogo
-# só SOLICITA e INGERE conteúdo → custo zero, nenhuma IA paga no jogo). Requer
-# o "Bot-to-Bot Communication Mode" LIGADO no @BotFather p/ o bot do jogo —
-# sem isso o Telegram não entrega as mensagens da @Mira ao jogo.
+# === Inteligência royal — ponte com a IA @Mira ===
+# A @Mira é uma conta SEPARADA que o dono mantém (a IA roda do lado dela; o jogo
+# só SOLICITA e INGERE conteúdo → custo zero, nenhuma IA paga no jogo). A captura
+# da resposta é por REPLY ao nosso pedido (modelo TR3), e o grupo-ponte está na
+# allowlist da outer-middleware (core.py) p/ a resposta não ser dropada como
+# is_bot. (O "Bot-to-Bot Communication Mode" do @BotFather NÃO é o lever aqui.)
 # @username da @Mira (sem o @). Default = "Mira" (ponte LIGADA por padrão). Vazio
 # explícito (MIRA_USERNAME="") desliga a feature. Também é usado p/ ENDEREÇAR o
 # pedido no grupo-ponte (texto "@username <prompt>").
 MIRA_USERNAME = os.getenv("MIRA_USERNAME", "Mira").strip().lstrip("@")
 
 
-# user_id da @Mira (bot). Critério PRINCIPAL p/ casar a resposta dela (mais
-# robusto que o @username, que pode estar oculto/mudar). Default = ID conhecido
-# da @Mira; sobrescreva via env se trocar de bot. `0` desliga o match por ID (cai
-# pro @username); vazio/inválido = usa o ID default.
+# user_id da @Mira. Mantido por compatibilidade de env e diagnóstico (aparece no
+# log "[MIRA] bridge msg"), mas o match da resposta NÃO depende mais dele: a
+# correlação é por REPLY ao nosso pedido (modelo TR3, ver royal/mira.py). Default
+# = ID conhecido da @Mira; vazio/inválido = usa o ID default.
 _mira_uid_raw = os.getenv("MIRA_USER_ID", "").strip()
 MIRA_USER_ID: int | None = (
     int(_mira_uid_raw) if _mira_uid_raw.lstrip("-").isdigit() else 8377231659

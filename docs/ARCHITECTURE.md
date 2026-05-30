@@ -49,18 +49,25 @@
   `lucky_emoji_daily` (PK `chat_id,user_id,day`, em `_CHAT_MIGRATE_PK_TABLES`). Sincronizado em
   `/royaltutorial` + `ROYAL_HELP`. Testes: `test_lucky_reward_*` + `lucky_emoji_daily` em
   `test_tabelas_criticas_existem`.
-- **🤖 Inteligência royal — ponte @Mira (custo zero):** a **@Mira** é um bot SEPARADO do dono (a
+- **🤖 Inteligência royal — ponte @Mira (custo zero):** a **@Mira** é uma conta SEPARADA do dono (a
   IA roda do lado dela); o jogo só SOLICITA/INGERE → nenhuma IA paga no jogo. `royal/mira.py`
-  (`ask_mira` manda `@Mira <pedido>` no grupo-ponte + `asyncio.Future`/`wait_for`; `on_mira_reply`
-  resolve; `parse_words` tolerante a formato) + `royal/handlers/inteligencia.py` (captura `is_bot`
-  no grupo-ponte, router **ANTES** de `system` pois `track` descarta bot) + `mira_palavras_job`
-  (`royal/jobs.py`). `on_mira_reply` casa a @Mira por **`MIRA_USER_ID`** (critério principal,
-  robusto) ou pelo `MIRA_USERNAME` se o ID não estiver setado; `ask_mira` ainda usa o username p/
-  **endereçar** o pedido (`@username <prompt>`). ⚠️ **A @Mira é uma conta de USUÁRIO (userbot), não um
-  bot** → a entrega das msgs dela é gated pelo **Privacy Mode** do bot do jogo, NÃO pelo "Bot-to-Bot
-  Mode". Pra receber: privacy mode OFF (`/setprivacy` no @BotFather) **ou** bot admin do grupo — e em
-  ambos é preciso **re-adicionar** o bot ao grupo p/ valer. `capture_mira_message` NÃO filtra `is_bot`
-  (ela vem `is_bot=False`); o match é só por `MIRA_USER_ID`/username. **Objetivo 1 (palavras do dia):** 1×/dia
+  (`ask_mira` manda `@Mira <pedido>` no grupo-ponte, guarda o `message_id` do pedido +
+  `asyncio.Future`/`wait_for`; `on_mira_reply` resolve; `parse_words` tolerante a formato) +
+  `royal/handlers/inteligencia.py` (`capture_mira_message` casa **qualquer** msg no grupo-ponte,
+  router **ANTES** de `system` pois `track` descarta bot) + `mira_palavras_job` (`royal/jobs.py`).
+  **Captura modelo TR3 — por REPLY, NÃO por remetente:** `on_mira_reply` resolve o Future quando a
+  msg no grupo-ponte é um `reply_to` ao `message_id` do nosso pedido (`request_mid`), **sem checar
+  id/username/`is_bot`** (1 pedido por vez → determinístico). **Fail-closed:** sem `request_mid` não
+  captura. `MIRA_USER_ID` ficou só p/ diagnóstico/log; `ask_mira` usa o username p/ **endereçar** o
+  pedido (`@username <prompt>`). ⚠️ **Blocker real era CÓDIGO:** a resposta vem `is_bot=True` e a
+  outer-middleware `_require_user_for_commands` (`royal/core.py`) dropa todo `is_bot` ANTES dos
+  routers → a resposta morria antes do capture (zero `[MIRA] bridge msg`). **Fix:** o grupo-ponte
+  (`IA_BRIDGE_CHAT_ID`) está na **allowlist** dessa middleware (depois da allowlist de migração, antes
+  do drop `is_bot`). O "Bot-to-Bot Mode"/Privacy Mode do @BotFather **não** é o lever. ⚠️ Risco
+  aceito (sender-agnostic): qualquer conta no grupo-ponte que dê reply ao pedido satisfaz a captura →
+  **manter o grupo-ponte restrito**. Testes: `test_middleware_allowlist_grupo_ponte_passa_bot_da_mira`
+  (db_smoke) + `on_mira_reply` (reply-match, sender-agnostic, fail-closed) em `test_mira.py`.
+  **Objetivo 1 (palavras do dia):** 1×/dia
   (≥`MIRA_PALAVRAS_HOUR`) pede `MIRA_PALAVRAS_COUNT` palavras → **`palavra_pool`** (**Migration
   v15**, dedup normalizado, ignora `PALAVRAS`); dia persistido em `bot_meta['mira_palavras_day']`.
   `spawn_palavra` usa `pick_palavra_word` = `palavra_pool` ∪ `PALAVRAS` menos as últimas

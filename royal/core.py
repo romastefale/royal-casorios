@@ -102,7 +102,7 @@ from royal_render import (
 import hashlib
 from aiogram import Router
 
-from royal.config import (ADMIN_CACHE_TTL_SECONDS, ATTR_START, AUTO_HOURS, BOSS_ATTACK_COOLDOWN_SEC, BOSS_SPAWN_HOUR, BOSS_SPAWN_WEEKDAY, BOT_TOKEN, CHEST_DELAY_MIN, CHEST_MAX_CLAIMS, CHEST_REWARDS, CHEST_TTL_MIN, COUPLE_XP_BUFF, DAILY_QUESTS, DB_PATH, GH_LOG_TOKEN, GOLD_BOSS_KILL_TOTAL, GOLD_PALAVRA_WIN, LOG_GIST_ID_KEY, LUCKY_DAILY_CAP, LUCKY_EMOJI, LUCKY_JACKPOT_GOLD, LUCKY_JACKPOT_XP, LUCKY_WIN_GOLD, LUCKY_WIN_XP, MIN_PAIR_SCORE, MUSIC_BOT_ID, OWNER_USER_ID, PALAVRA_ATTEMPT_COOLDOWN_SEC, PALAVRA_DURATIONS_MIN, PALAVRA_JITTER_SEC, PALAVRA_NO_REPEAT_RECENT, PHOTO_CACHE_TTL_SECONDS, PTS_PER_LEVEL, REACTION_XP, REACTION_XP_DAILY_CAP, SEASONAL_EVENTS, STARTING_GOLD, STASH_CHAT_ID, TEST_CHAT_IDS, TZ_NAME, XP_BOSS_HIT, XP_COOLDOWN_MSG_SECONDS, XP_COOLDOWN_REPLY_SECONDS, XP_COUPLE_FORMED, XP_PALAVRA_CONSOLATION, XP_PALAVRA_MAX, XP_PALAVRA_MIN, XP_PALAVRA_WIN_BONUS, XP_PER_MESSAGE, XP_PER_REPLY, LOG_BACKUP_DIR, LOG_BACKUP_KEEP, _log_ring, logger)
+from royal.config import (ADMIN_CACHE_TTL_SECONDS, ATTR_START, AUTO_HOURS, BOSS_ATTACK_COOLDOWN_SEC, BOSS_SPAWN_HOUR, BOSS_SPAWN_WEEKDAY, BOT_TOKEN, CHEST_DELAY_MIN, CHEST_MAX_CLAIMS, CHEST_REWARDS, CHEST_TTL_MIN, COUPLE_XP_BUFF, DAILY_QUESTS, DB_PATH, GH_LOG_TOKEN, GOLD_BOSS_KILL_TOTAL, GOLD_PALAVRA_WIN, IA_BRIDGE_CHAT_ID, LOG_GIST_ID_KEY, LUCKY_DAILY_CAP, LUCKY_EMOJI, MIRA_ENABLED, LUCKY_JACKPOT_GOLD, LUCKY_JACKPOT_XP, LUCKY_WIN_GOLD, LUCKY_WIN_XP, MIN_PAIR_SCORE, MUSIC_BOT_ID, OWNER_USER_ID, PALAVRA_ATTEMPT_COOLDOWN_SEC, PALAVRA_DURATIONS_MIN, PALAVRA_JITTER_SEC, PALAVRA_NO_REPEAT_RECENT, PHOTO_CACHE_TTL_SECONDS, PTS_PER_LEVEL, REACTION_XP, REACTION_XP_DAILY_CAP, SEASONAL_EVENTS, STARTING_GOLD, STASH_CHAT_ID, TEST_CHAT_IDS, TZ_NAME, XP_BOSS_HIT, XP_COOLDOWN_MSG_SECONDS, XP_COOLDOWN_REPLY_SECONDS, XP_COUPLE_FORMED, XP_PALAVRA_CONSOLATION, XP_PALAVRA_MAX, XP_PALAVRA_MIN, XP_PALAVRA_WIN_BONUS, XP_PER_MESSAGE, XP_PER_REPLY, LOG_BACKUP_DIR, LOG_BACKUP_KEEP, _log_ring, logger)
 
 from royal.alerts import is_benign_telegram_error, register_owner_alerts
 
@@ -201,6 +201,17 @@ async def _require_user_for_commands(handler, message: Message, data):
         # delas p/ migrate_chat_data (senao orfana progresso).
         if getattr(message, "migrate_to_chat_id", None) is not None \
                 or getattr(message, "migrate_from_chat_id", None) is not None:
+            return await handler(message, data)
+        # Allowlist: grupo-ponte da @Mira. A resposta dela chega is_bot=True e
+        # PRECISA passar p/ o capture (royal/handlers/inteligencia.py), que casa
+        # o reply ao NOSSO pedido (modelo TR3, sem checar quem enviou). Sem isto
+        # o drop is_bot abaixo mataria a resposta ANTES do router → ponte nunca
+        # funciona. NUNCA vira jogador: o capture faz SkipHandler sem cadastrar e
+        # o catch-all `track` (downstream) tambem dropa is_bot.
+        _chat = getattr(message, "chat", None)
+        if MIRA_ENABLED and IA_BRIDGE_CHAT_ID is not None \
+                and _chat is not None \
+                and getattr(_chat, "id", None) == IA_BRIDGE_CHAT_ID:
             return await handler(message, data)
         fu = message.from_user
         text = getattr(message, "text", None) or ""

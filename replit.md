@@ -205,19 +205,26 @@ O dono **não recebe mais o log inteiro na DM**. Operacional do que **não errar
 
 ## 🤖 Inteligência royal — ponte @Mira (custo zero)
 
-A **@Mira** é uma **CONTA DE USUÁRIO** (userbot) **SEPARADA** do dono (a IA roda do lado dela): o
-jogo só **solicita** conteúdo pela ponte e **ingere** a resposta → **nenhuma IA paga dentro do
-jogo**. Alimenta as **palavras do dia** (pool dinâmico do mini-game) e o quiz **`/rquiz`**.
+A **@Mira** é uma **conta SEPARADA** do dono (a IA roda do lado dela): o jogo só **solicita**
+conteúdo pela ponte e **ingere** a resposta → **nenhuma IA paga dentro do jogo**. Alimenta as
+**palavras do dia** (pool dinâmico do mini-game) e o quiz **`/rquiz`**.
 
-- ⚠️ **A @Mira é USER, não bot → o que bloqueia a entrega é o PRIVACY MODE (ação do dono), NÃO o
-  "Bot-to-Bot Mode".** Regra oficial do Telegram: um bot só RECEBE msgs normais de **usuários** no
-  grupo se (a) **privacy mode DESLIGADO** (`/setprivacy` → Disable no @BotFather) **OU** (b) o bot for
-  **admin** do grupo — e, em ambos os casos, **a mudança só vale depois de REMOVER e RE-ADICIONAR o
-  bot ao grupo** (grupo já existente mantém o estado antigo). Diagnóstico confirmado por log: sem isso
-  NENHUMA `[MIRA] bridge msg` chega → `/rquiz` dá timeout (mas o jogo nunca quebra, usa a lista fixa).
-  ⚠️ **Bot-to-Bot Communication Mode é irrelevante aqui** — só valeria se a @Mira fosse outro *bot*
-  (bot↔bot é proibido pelo Telegram salvo esse modo); como ela é **user**, o lever certo é privacy/admin.
+- ⚠️ **Captura por REPLY ao nosso pedido (modelo TR3), SEM checar quem enviou.** `ask_mira` posta
+  `@Mira <pedido>` no grupo-ponte, guarda o `message_id` do pedido e cria um Future; `on_mira_reply`
+  resolve o Future quando chega no grupo-ponte uma msg cujo `reply_to_message.message_id` == o id do
+  nosso pedido — independente do remetente (id/username/`is_bot`). 1 pedido por vez por grupo-ponte →
+  correlação determinística. **Fail-closed:** sem o `request_mid` (anomalia) NÃO captura (deixa dar
+  timeout). ⚠️ Risco aceito: qualquer conta no grupo-ponte que dê reply ao pedido satisfaz a captura
+  → **manter o grupo-ponte restrito** (dono + @Mira).
+- ⚠️ **O blocker real era CÓDIGO, não config do Telegram:** a resposta da @Mira chega como
+  `is_bot=True` e a outer-middleware `_require_user_for_commands` (`royal/core.py`) **dropa todo
+  `is_bot` ANTES de qualquer router** → a resposta morria antes do capture (zero `[MIRA] bridge msg`).
+  **Fix:** o grupo-ponte (`IA_BRIDGE_CHAT_ID`) está na **allowlist** dessa middleware (depois da
+  allowlist de migração, antes do drop `is_bot`) → a msg passa p/ `capture_mira_message`. (O
+  "Bot-to-Bot Communication Mode" / privacy mode do @BotFather **não** é o lever aqui.) Testes:
+  `test_middleware_allowlist_grupo_ponte_passa_bot_da_mira` (db_smoke).
 - **Config 100% via env** (`MIRA_*`/`IA_BRIDGE_CHAT_ID`): **`MIRA_USERNAME` vazio = ponte off.**
+  `MIRA_USER_ID` ficou só p/ diagnóstico/log (o match NÃO depende mais dele).
 - **Quiz `/rquiz` (admin) DÁ XP** no fim: `award_xp_immediate(pts × QUIZ_XP_PER_POINT, reason="quiz")`
   em **lote** por jogador (1 concessão/pessoa → no máx 1 level-up cada → não floodar). Bônus de
   classe/casamento/evento contam (chokepoint central). `/start`/`ROYAL_HELP`/`ROYAL_TUTORIAL_PARTS`

@@ -1,12 +1,15 @@
 """Captura das respostas da @Mira no grupo-ponte (inteligência royal).
 
-A @Mira é OUTRO bot; suas mensagens são `is_bot=True`. O catch-all `track` (em
-system.py) DESCARTA mensagens de bot — por isso este router precisa ser incluído
-ANTES de `system` em main.py (o 1º handler que casa vence e PARA a propagação).
+A @Mira responde como `is_bot=True`. DOIS filtros descartariam isso antes daqui:
+(1) a outer-middleware `_require_user_for_commands` (core.py) dropa `is_bot` na
+ENTRADA — por isso o grupo-ponte está na ALLOWLIST dela; (2) o catch-all `track`
+(system.py) também dropa bot — por isso este router é incluído ANTES de `system`
+em main.py (o 1º handler que casa vence e PARA a propagação).
 
-Só casa no grupo-ponte (IA_BRIDGE_CHAT_ID) e só quando a ponte está ligada
-(_BRIDGE_ID=0 = off → o filtro nunca casa um chat real). NÃO cadastra a @Mira
-como jogador: apenas resolve o pedido pendente via mira.on_mira_reply().
+Modelo TR3: casa QUALQUER msg no grupo-ponte (IA_BRIDGE_CHAT_ID) e deixa
+on_mira_reply() decidir pelo REPLY ao nosso pedido — SEM checar quem enviou. Só
+ativo com a ponte ligada (_BRIDGE_ID=0 = off → o filtro nunca casa um chat real).
+NÃO cadastra ninguém como jogador: apenas resolve o pedido pendente.
 """
 from aiogram import F, Router
 from aiogram.dispatcher.event.bases import SkipHandler
@@ -23,13 +26,13 @@ _BRIDGE_ID = IA_BRIDGE_CHAT_ID if (MIRA_ENABLED and IA_BRIDGE_CHAT_ID is not Non
 
 @router.message(F.chat.id == _BRIDGE_ID)
 async def capture_mira_message(message: Message):
-    # Casa QUALQUER msg no grupo-ponte (não só is_bot): a @Mira pode responder
-    # como bot (is_bot=True) OU como userbot (is_bot=False). O match real fica
-    # por conta de on_mira_reply (id/username). Log de diagnóstico p/ enxergar o
-    # que chega (id/username/is_bot) — chave p/ saber se o Bot-to-Bot Mode está
-    # entregando e qual é o id REAL da @Mira.
+    # Casa QUALQUER msg no grupo-ponte (modelo TR3): o match real é o REPLY ao
+    # nosso pedido, feito em on_mira_reply — SEM checar quem enviou. Log de
+    # diagnóstico p/ enxergar o que chega (id/username/is_bot/reply_to) — chave
+    # p/ confirmar que a resposta está sendo ENTREGUE (passou a allowlist da
+    # middleware) e que o reply_to bate com o nosso pedido.
     #
-    # SÓ consome (para a propagação) quando on_mira_reply casa a @Mira. Senão,
+    # SÓ consome (para a propagação) quando on_mira_reply casa o reply. Senão,
     # raise SkipHandler → a msg segue p/ os handlers downstream (comandos do dono
     # no grupo-ponte, ex. /royallog, continuam funcionando).
     consumed = False
@@ -48,7 +51,7 @@ async def capture_mira_message(message: Message):
         consumed = on_mira_reply(message)
         if not consumed:
             logger.info("[MIRA] bridge msg NÃO consumida (sem pedido pendente "
-                        "ou remetente ≠ @Mira) → segue p/ downstream")
+                        "ou reply_to ≠ nosso pedido) → segue p/ downstream")
     except Exception:
         logger.exception("[MIRA] capture falhou")
     if not consumed:

@@ -21,12 +21,13 @@ def _run_msg_mw(message):
 
 
 def _fake_msg(*, is_bot=None, uid=1, text=None,
-              migrate_to=None, migrate_from=None):
+              migrate_to=None, migrate_from=None, chat_id=None):
     fu = None
     if is_bot is not None:
         fu = types.SimpleNamespace(is_bot=is_bot, id=uid)
+    chat = types.SimpleNamespace(id=chat_id) if chat_id is not None else None
     return types.SimpleNamespace(
-        from_user=fu, text=text,
+        from_user=fu, text=text, chat=chat,
         migrate_to_chat_id=migrate_to, migrate_from_chat_id=migrate_from)
 
 
@@ -40,6 +41,21 @@ def test_middleware_dropa_bot_mas_passa_humano():
     # ...mas o bot de musica mandando um COMANDO -> dropado (nao vira jogador)
     assert _run_msg_mw(_fake_msg(
         is_bot=True, uid=main.MUSIC_BOT_ID, text="/royalperfil")) is False
+
+
+def test_middleware_allowlist_grupo_ponte_passa_bot_da_mira():
+    """A resposta da @Mira chega como is_bot=True NO grupo-ponte. A middleware
+    precisa deixar passar (allowlist) p/ o capture rodar — senao o drop is_bot
+    mataria a resposta ANTES do router e a ponte nunca funcionaria."""
+    bridge = main.IA_BRIDGE_CHAT_ID
+    if not (main.MIRA_ENABLED and bridge is not None):
+        return  # ponte off neste ambiente -> nada a checar
+    # bot da @Mira no grupo-ponte -> PASSA (allowlist)
+    assert _run_msg_mw(
+        _fake_msg(is_bot=True, uid=8377231659, chat_id=bridge)) is True
+    # o MESMO bot em OUTRO chat -> dropado (allowlist e so do grupo-ponte)
+    assert _run_msg_mw(
+        _fake_msg(is_bot=True, uid=8377231659, chat_id=bridge + 1)) is False
 
 
 def test_callback_middleware_dropa_bot():
