@@ -13,6 +13,10 @@ Bot de Telegram de RPG retro-futurista para grupos. Construído com **aiogram 3.
 - 📝 **README e `/royalajuda` sincronizados** com todos os comandos atuais (presentes, missões, eventos, conquistas, config).
 - 🧹 Limpeza de dead code (imports/vars não usados) + correção de copy falsa no help ("slot extra de casório", nunca implementado).
 
+**Inteligência royal (custo zero) — invisível ao player:**
+- 🤖 **Ponte @Mira:** a IA roda no bot SEPARADO **@Mira** (do dono); o jogo só solicita/ingere conteúdo pela ponte — nenhuma IA paga dentro do jogo. Exige **Bot-to-Bot Mode** ligado no @BotFather.
+- 📚 **Palavras do dia:** 1×/dia o jogo pede uma leva de palavras à @Mira → banco dinâmico `palavra_pool` (junto da lista fixa, evitando repetir as últimas usadas). A "Palavra da Hora" fica mais variada sem mudar nada pro jogador. Owner testa com `/royalmiratest`.
+
 **UX viva (Bot API 10):**
 - ⚡ **Bot reage ao seu comando** com `👀` / `✍` antes de responder — feedback instantâneo via `set_message_reaction` (helper `react_to()`)
 - ⌨️ **"Digitando..."** simulado em renders pesados (`type_then_send`, `safe_typing`)

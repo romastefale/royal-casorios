@@ -100,10 +100,40 @@ from royal_render import (
 import hashlib
 from aiogram import Router
 
-from royal.config import (OWNER_USER_ID, STASH_CHAT_ID, _log_ring, logger)
+from royal.config import (MIRA_ENABLED, OWNER_USER_ID, STASH_CHAT_ID, _log_ring, logger)
 from royal.core import (BACKUP_DIR, BACKUP_RETENTION_DAYS, GROUP_ONLY_MSG, auto_delete_after, bot, cur, current_season_label, dp, dump_logs_to_gist, dump_logs_to_file, get_active_challenge, is_chat_muted, is_group, run_backup, safe_typing, set_chat_muted, spawn_palavra, term_block)
+from royal.mira import fetch_and_store_palavras
 
 router = Router()
+
+
+@router.message(Command("royalmiratest"))
+async def royal_mira_test(message: Message):
+    """Owner-only, off-menu, qualquer chat (use na DM): força um pedido de
+    'palavras do dia' à @Mira pela ponte e reporta quantas vieram. Testa a
+    ponte bot↔bot sem esperar o job diário."""
+    uid = message.from_user.id if message.from_user else 0
+    if OWNER_USER_ID is None or uid != OWNER_USER_ID:
+        return
+    if not MIRA_ENABLED:
+        await message.answer(term_block(
+            "MIRA", "!! ponte desligada — defina MIRA_USERNAME e IA_BRIDGE_CHAT_ID.",
+            status="OFF", status_color="AMBER"))
+        return
+    ack = await message.answer(term_block(
+        "MIRA", ">> pedindo as palavras do dia à @Mira…",
+        status="...", status_color="CYAN"))
+    got = await fetch_and_store_palavras()
+    if got > 0:
+        txt = (f">> recebidas/processadas: <b>{got}</b>\n"
+               f"// banco dinâmico de palavras atualizado.")
+        status, color = "OK", "ACID"
+    else:
+        txt = "!! a @Mira não respondeu (ou nada válido veio). Ver logs."
+        status, color = "FALHA", "HOT"
+    if ack:
+        await auto_delete_after(ack, delay=4.0)
+    await message.answer(term_block("MIRA", txt, status=status, status_color=color))
 
 @router.message(Command("royalpalavratest"))
 async def royal_palavra_test(message: Message):

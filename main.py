@@ -48,7 +48,9 @@ from royal.jobs import (  # noqa: F401
     announce_no_bots_feature,
     log_dump_job,
     backup_job,
+    mira_palavras_job,
 )
+from royal.mira import *  # noqa: F401,F403  re-export p/ testes (main.parse_words etc.)
 
 # Importa as features (cada uma expoe um aiogram Router) e registra na ordem.
 # Em aiogram o 1o router (na ordem de include) cujo handler casa VENCE e PARA a
@@ -64,13 +66,13 @@ from royal.jobs import (  # noqa: F401
 from royal.handlers import (  # noqa: E402
     start, hub, perfil, avatar, classe, inventario, loja, economia, ranking,
     palavra, boss, casorios, privacidade, inline, missoes, eventos,
-    conquistas, cfg, admin, system,
+    conquistas, cfg, admin, inteligencia, system,
 )
 
 _FEATURE_ROUTERS = (
     start, hub, perfil, avatar, classe, inventario, loja, economia, ranking,
     palavra, boss, casorios, privacidade, inline, missoes, eventos,
-    conquistas, cfg, admin, system,
+    conquistas, cfg, admin, inteligencia, system,
 )
 for _feature in _FEATURE_ROUTERS:
     dp.include_router(_feature.router)
@@ -92,6 +94,7 @@ async def main():
     asyncio.create_task(announce_no_bots_feature())
     asyncio.create_task(log_dump_job())
     asyncio.create_task(backup_job())  # F10: backup diario do DB
+    asyncio.create_task(mira_palavras_job())  # Inteligencia: palavras do dia (@Mira)
     # allowed_updates resolvido dos handlers registrados — inclui
     # automaticamente "message_reaction" (M06) pq ha @router.message_reaction.
     allowed = dp.resolve_used_update_types()

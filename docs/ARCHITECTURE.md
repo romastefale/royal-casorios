@@ -49,6 +49,19 @@
   `lucky_emoji_daily` (PK `chat_id,user_id,day`, em `_CHAT_MIGRATE_PK_TABLES`). Sincronizado em
   `/royaltutorial` + `ROYAL_HELP`. Testes: `test_lucky_reward_*` + `lucky_emoji_daily` em
   `test_tabelas_criticas_existem`.
+- **🤖 Inteligência royal — ponte @Mira (custo zero):** a **@Mira** é um bot SEPARADO do dono (a
+  IA roda do lado dela); o jogo só SOLICITA/INGERE → nenhuma IA paga no jogo. `royal/mira.py`
+  (`ask_mira` manda `@Mira <pedido>` no grupo-ponte + `asyncio.Future`/`wait_for`; `on_mira_reply`
+  resolve; `parse_words` tolerante a formato) + `royal/handlers/inteligencia.py` (captura `is_bot`
+  no grupo-ponte, router **ANTES** de `system` pois `track` descarta bot) + `mira_palavras_job`
+  (`royal/jobs.py`). ⚠️ Exige **Bot-to-Bot Mode** LIGADO no @BotFather (ação do dono) senão o
+  Telegram não entrega as msgs da @Mira. **Objetivo 1 (palavras do dia):** 1×/dia
+  (≥`MIRA_PALAVRAS_HOUR`) pede `MIRA_PALAVRAS_COUNT` palavras → **`palavra_pool`** (**Migration
+  v15**, dedup normalizado, ignora `PALAVRAS`); dia persistido em `bot_meta['mira_palavras_day']`.
+  `spawn_palavra` usa `pick_palavra_word` = `palavra_pool` ∪ `PALAVRAS` menos as últimas
+  `PALAVRA_NO_REPEAT_RECENT` (fallback nunca trava). Owner: `/royalmiratest` (off-menu). Config via
+  env (`MIRA_USERNAME` vazio = off). Testes: `tests/test_mira.py` (`parse_words`, `pool_ingest`,
+  anti-repeat) + `palavra_pool` em `test_tabelas_criticas_existem`.
 - **🚪 Reentrada de membro:** quem já tem progresso e volta é recebido com a ficha (foto). Progresso
   nunca é apagado na saída (só `/royaldados`). Handler `on_member_rejoin`.
 - **🎉 Eventos sazonais — `/royalevento` (M09):** boost de XP global por data, sem DB

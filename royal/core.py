@@ -99,7 +99,7 @@ from royal_render import (
 import hashlib
 from aiogram import Router
 
-from royal.config import (ADMIN_CACHE_TTL_SECONDS, ATTR_START, AUTO_HOURS, BOSS_ATTACK_COOLDOWN_SEC, BOSS_SPAWN_HOUR, BOSS_SPAWN_WEEKDAY, BOT_TOKEN, CHEST_DELAY_MIN, CHEST_MAX_CLAIMS, CHEST_REWARDS, CHEST_TTL_MIN, COUPLE_XP_BUFF, DAILY_QUESTS, DB_PATH, GH_LOG_TOKEN, GOLD_BOSS_KILL_TOTAL, GOLD_PALAVRA_WIN, LOG_GIST_ID_KEY, LUCKY_DAILY_CAP, LUCKY_EMOJI, LUCKY_JACKPOT_GOLD, LUCKY_JACKPOT_XP, LUCKY_WIN_GOLD, LUCKY_WIN_XP, MIN_PAIR_SCORE, MUSIC_BOT_ID, OWNER_USER_ID, PALAVRA_ATTEMPT_COOLDOWN_SEC, PALAVRA_DURATIONS_MIN, PALAVRA_JITTER_SEC, PHOTO_CACHE_TTL_SECONDS, PTS_PER_LEVEL, REACTION_XP, REACTION_XP_DAILY_CAP, SEASONAL_EVENTS, STARTING_GOLD, STASH_CHAT_ID, TEST_CHAT_IDS, TZ_NAME, XP_BOSS_HIT, XP_COOLDOWN_MSG_SECONDS, XP_COOLDOWN_REPLY_SECONDS, XP_COUPLE_FORMED, XP_PALAVRA_CONSOLATION, XP_PALAVRA_MAX, XP_PALAVRA_MIN, XP_PALAVRA_WIN_BONUS, XP_PER_MESSAGE, XP_PER_REPLY, LOG_BACKUP_DIR, LOG_BACKUP_KEEP, _log_ring, logger)
+from royal.config import (ADMIN_CACHE_TTL_SECONDS, ATTR_START, AUTO_HOURS, BOSS_ATTACK_COOLDOWN_SEC, BOSS_SPAWN_HOUR, BOSS_SPAWN_WEEKDAY, BOT_TOKEN, CHEST_DELAY_MIN, CHEST_MAX_CLAIMS, CHEST_REWARDS, CHEST_TTL_MIN, COUPLE_XP_BUFF, DAILY_QUESTS, DB_PATH, GH_LOG_TOKEN, GOLD_BOSS_KILL_TOTAL, GOLD_PALAVRA_WIN, LOG_GIST_ID_KEY, LUCKY_DAILY_CAP, LUCKY_EMOJI, LUCKY_JACKPOT_GOLD, LUCKY_JACKPOT_XP, LUCKY_WIN_GOLD, LUCKY_WIN_XP, MIN_PAIR_SCORE, MUSIC_BOT_ID, OWNER_USER_ID, PALAVRA_ATTEMPT_COOLDOWN_SEC, PALAVRA_DURATIONS_MIN, PALAVRA_JITTER_SEC, PALAVRA_NO_REPEAT_RECENT, PHOTO_CACHE_TTL_SECONDS, PTS_PER_LEVEL, REACTION_XP, REACTION_XP_DAILY_CAP, SEASONAL_EVENTS, STARTING_GOLD, STASH_CHAT_ID, TEST_CHAT_IDS, TZ_NAME, XP_BOSS_HIT, XP_COOLDOWN_MSG_SECONDS, XP_COOLDOWN_REPLY_SECONDS, XP_COUPLE_FORMED, XP_PALAVRA_CONSOLATION, XP_PALAVRA_MAX, XP_PALAVRA_MIN, XP_PALAVRA_WIN_BONUS, XP_PER_MESSAGE, XP_PER_REPLY, LOG_BACKUP_DIR, LOG_BACKUP_KEEP, _log_ring, logger)
 
 from royal.alerts import is_benign_telegram_error, register_owner_alerts
 
@@ -741,6 +741,25 @@ def migrate_to_v14(c: sqlite3.Cursor) -> None:
     )
 
 
+def migrate_to_v15(c: sqlite3.Cursor) -> None:
+    """Inteligência royal (Objetivo 1 — "palavras do dia" da @Mira): banco
+    dinâmico de palavras. word_norm é a chave de dedup (normalizada como em
+    normalize_word); word_raw guarda o original p/ o card. Convive com a lista
+    fixa royal_words.PALAVRAS (pick_palavra_word une as duas e evita repetir as
+    recentes)."""
+    c.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS palavra_pool (
+            word_norm TEXT PRIMARY KEY,
+            word_raw  TEXT NOT NULL,
+            source    TEXT,
+            added_at  TEXT NOT NULL,
+            day       TEXT
+        );
+        """
+    )
+
+
 def migrate_to_v6(c: sqlite3.Cursor) -> None:
     """Randomiza royal_ids existentes (RYL-0001, 0002... -> RYL-NNNN
     sortidos entre 1000-9999). Pool por chat = 9000, retry on collision.
@@ -796,6 +815,7 @@ MIGRATIONS = [
     (12, migrate_to_v12),
     (13, migrate_to_v13),
     (14, migrate_to_v14),
+    (15, migrate_to_v15),
 ]
 
 
@@ -3309,10 +3329,62 @@ def format_challenge_text(ch: dict, status: str = "open", winner_name: str = "")
                       stamp=type_label)
 
 
+def pool_ingest_words(words, source: str = "mira") -> int:
+    """Grava palavras no banco dinâmico (palavra_pool), dedupando por forma
+    normalizada e IGNORANDO as que já existem na lista fixa PALAVRAS. Retorna
+    quantas linhas NOVAS entraram. Idempotente (ON CONFLICT DO NOTHING) — pedir
+    as mesmas palavras de novo é no-op."""
+    if not words:
+        return 0
+    static_norm = {normalize_word(w) for w in PALAVRAS}
+    now = utc_iso()
+    day = local_now().date().isoformat()
+    inserted = 0
+    for raw in words:
+        raw = (raw or "").strip()
+        norm = normalize_word(raw)
+        if len(norm) < 3 or norm in static_norm:
+            continue
+        try:
+            cur.execute(
+                "INSERT INTO palavra_pool (word_norm, word_raw, source, added_at, day) "
+                "VALUES (?, ?, ?, ?, ?) ON CONFLICT(word_norm) DO NOTHING",
+                (norm, raw, source, now, day))
+            if cur.rowcount == 1:
+                inserted += 1
+        except Exception:
+            logger.exception("pool_ingest_words insert failed word=%r", raw)
+    db.commit()
+    return inserted
+
+
+def pick_palavra_word(chat_id: int) -> str:
+    """Escolhe a próxima palavra unindo o banco dinâmico (palavra_pool, vindo
+    da @Mira) com a lista fixa PALAVRAS e EVITANDO repetir as últimas
+    PALAVRA_NO_REPEAT_RECENT palavras usadas NESTE chat. Se o conjunto fresco
+    esgotar, libera as antigas (nunca trava). Fallback total = PALAVRAS."""
+    try:
+        rows = cur.execute(
+            "SELECT word FROM challenges WHERE chat_id=? ORDER BY id DESC LIMIT ?",
+            (chat_id, PALAVRA_NO_REPEAT_RECENT)).fetchall()
+        recent = {(r["word"] or "").strip() for r in rows if r["word"]}
+    except Exception:
+        recent = set()
+    candidates = list(PALAVRAS)
+    try:
+        prows = cur.execute("SELECT word_raw FROM palavra_pool").fetchall()
+        candidates.extend(p["word_raw"] for p in prows if p["word_raw"])
+    except Exception:
+        pass
+    fresh = [w for w in candidates if normalize_word(w) not in recent]
+    pool = fresh or candidates
+    return random.choice(pool) if pool else random.choice(PALAVRAS)
+
+
 async def spawn_palavra(chat_id: int) -> None:
     """Cria novo desafio (modo spoiler_img — palavra inteira em imagem com blur do Telegram)."""
     assert bot is not None
-    word_raw = random.choice(PALAVRAS)
+    word_raw = pick_palavra_word(chat_id)
     word = normalize_word(word_raw)
     challenge_type = "spoiler_img"
     display = ""

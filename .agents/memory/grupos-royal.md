@@ -14,17 +14,18 @@ Três grupos Telegram com papéis distintos (informados pelo dono):
 - **Grupo PONTE IA (@Mira):** `-5204321141` — só o dono, o bot do jogo e a interface de
   IA "@Mira". Base do módulo novo **"inteligência royal"**.
 
-**@Mira / inteligência royal (ainda em definição com o dono):** mensagens com prefixo
-`@mira` solicitam a IA; resposta vem como reply à msg original.
+**@Mira / inteligência royal:** o jogo manda `@Mira <pedido>` no grupo-ponte; a @Mira
+responde e o jogo captura/ingere a resposta. Implementado em `royal/mira.py` (ponte) +
+`royal/handlers/inteligencia.py` (captura) + `mira_palavras_job` (Objetivo 1: palavras do
+dia → banco dinâmico `palavra_pool`). Config: `MIRA_USERNAME`/`IA_BRIDGE_CHAT_ID`.
 
-⚠️ **Limitação do Telegram:** um bot NÃO recebe mensagens de OUTRO bot (mesmo sendo admin
-com privacy off). Então se a @Mira for um bot, o jogo NÃO consegue ler as mensagens dela
-via Telegram — só as do dono (humano). Isso contradiz a suposição "tudo ele pode ler mesmo
-que seja msg de bot". Confirmar arquitetura antes de implementar.
+✅ **Bot-to-bot FUNCIONA** (a antiga nota "bot não lê bot" estava errada): com o
+**"Bot-to-Bot Communication Mode" LIGADO no @BotFather** (ação do dono) o jogo RECEBE as
+mensagens da @Mira. Sem esse modo, o Telegram não entrega → ponte fica muda. O catch-all
+`track` descarta `is_bot`, então a captura precisa de router ANTES de `system` (já feito).
 
-⚠️ **Regra do dono (custo zero):** IA não pode usar serviço pago. Se o jogo for quem chama
-a IA pra responder como Mira, precisa de um backend de IA gratuito (ou a @Mira é um
-bot/serviço externo separado que o dono já mantém).
+✅ **Regra do dono (custo zero):** a IA roda do LADO da @Mira (bot externo que o dono
+mantém); o jogo só SOLICITA e INGERE → nenhuma IA paga dentro do jogo.
 
 ⚠️ `-5204321141` não tem o prefixo `-100` dos supergrupos — provável grupo básico (legado).
 Se virar supergrupo, o chat_id muda (migração já tratada por `on_chat_migration`).

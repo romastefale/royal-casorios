@@ -126,7 +126,8 @@ def test_tabelas_criticas_existem():
         "SELECT name FROM sqlite_master WHERE type='table'").fetchall()
     names = {r["name"] for r in rows}
     for t in ("players", "couples", "gifts", "achievements",
-              "quest_progress", "stars_purchases", "lucky_emoji_daily"):
+              "quest_progress", "stars_purchases", "lucky_emoji_daily",
+              "palavra_pool"):
         assert t in names, f"tabela {t} ausente"
 
 

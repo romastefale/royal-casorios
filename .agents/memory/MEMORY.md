@@ -1,1 +1,1 @@
-- [Grupos do Royal](grupos-royal.md) — chat IDs dos 3 grupos (real/pontua `-1002556760909`, teste `-1004225775299`, ponte-IA @Mira `-5204321141`); gotchas Telegram bot-to-bot + custo zero.
+- [Grupos do Royal](grupos-royal.md) — chat IDs dos 3 grupos (real/pontua `-1002556760909`, teste `-1004225775299`, ponte-IA @Mira `-5204321141`); bot-to-bot FUNCIONA c/ Bot-to-Bot Mode + custo zero.

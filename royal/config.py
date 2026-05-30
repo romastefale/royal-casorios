@@ -243,6 +243,45 @@ TZ_NAME = os.getenv("TZ", "America/Sao_Paulo")
 AUTO_HOURS = [int(x.strip()) for x in os.getenv("AUTO_HOURS", "9,15,21").split(",") if x.strip()]
 
 
+# === Inteligência royal — ponte bot↔bot com a IA @Mira ===
+# A @Mira é um bot SEPARADO que o dono mantém (a IA roda do lado dela; o jogo
+# só SOLICITA e INGERE conteúdo → custo zero, nenhuma IA paga no jogo). Requer
+# o "Bot-to-Bot Communication Mode" LIGADO no @BotFather p/ o bot do jogo —
+# sem isso o Telegram não entrega as mensagens da @Mira ao jogo.
+# @username da @Mira (sem o @). Vazio = ponte desligada (feature off).
+MIRA_USERNAME = os.getenv("MIRA_USERNAME", "").strip().lstrip("@")
+
+
+# chat_id do grupo-ponte onde o jogo fala com a @Mira. Default = grupo básico
+# atual (sem -100; se virar supergrupo o id muda → on_chat_migration trata).
+_mira_bridge_raw = os.getenv("IA_BRIDGE_CHAT_ID", "").strip()
+
+
+IA_BRIDGE_CHAT_ID: int | None = (
+    int(_mira_bridge_raw) if _mira_bridge_raw.lstrip("-").isdigit() else -5204321141
+)
+
+
+# Ponte ativa só se temos username + grupo-ponte.
+MIRA_ENABLED = bool(MIRA_USERNAME and IA_BRIDGE_CHAT_ID)
+
+
+# Hora local (0-23) do pedido diário de "palavras do dia" à @Mira.
+MIRA_PALAVRAS_HOUR = int(os.getenv("MIRA_PALAVRAS_HOUR", "6"))
+
+
+# Quantas palavras pedir por dia.
+MIRA_PALAVRAS_COUNT = int(os.getenv("MIRA_PALAVRAS_COUNT", "40"))
+
+
+# Quanto esperar (s) pela resposta da @Mira antes de desistir do pedido.
+MIRA_REQUEST_TIMEOUT_SEC = int(os.getenv("MIRA_REQUEST_TIMEOUT_SEC", "180"))
+
+
+# Quantas das últimas palavras usadas no grupo evitar repetir na escolha.
+PALAVRA_NO_REPEAT_RECENT = int(os.getenv("PALAVRA_NO_REPEAT_RECENT", "30"))
+
+
 RECENT_WINDOW_SECONDS = 180
 
 

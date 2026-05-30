@@ -156,6 +156,12 @@ Confirma no grupo + DM do owner. Testes: `test_migrate_chat_data_preserva_progre
 | `BACKUP_ENABLED` | — | `1` | `0` desliga backup diário. |
 | `BACKUP_HOUR` | — | `12` | Hora local do backup diário. |
 | `BACKUP_RETENTION_DAYS` | — | `7` | Dias de backup mantidos em `<DB_DIR>/backups/`. |
+| `MIRA_USERNAME` | — | — | @username da IA **@Mira** (sem `@`). **Vazio = ponte off.** Ver § Inteligência royal. |
+| `IA_BRIDGE_CHAT_ID` | — | `-5204321141` | chat_id do grupo-ponte jogo↔@Mira. |
+| `MIRA_PALAVRAS_HOUR` | — | `6` | Hora local do pedido diário de "palavras do dia". |
+| `MIRA_PALAVRAS_COUNT` | — | `40` | Quantas palavras pedir por dia. |
+| `MIRA_REQUEST_TIMEOUT_SEC` | — | `180` | Espera (s) pela resposta da @Mira antes de desistir. |
+| `PALAVRA_NO_REPEAT_RECENT` | — | `30` | Quantas das últimas palavras usadas no grupo evitar repetir. |
 
 ---
 
@@ -190,6 +196,30 @@ O dono **não recebe mais o log inteiro na DM** a cada 5min. Agora:
 - ⚠️ `backup/` é versionado só como estrutura + docs; `backup/logs/*.log` e
   `backup/alerts/*.txt` são gitignorados (artefatos de runtime, não voltam pro git no
   Railway). Repo é privado → PII em log nesses arquivos é aceitável.
+
+## 🤖 Inteligência royal — ponte @Mira (custo zero)
+
+A **@Mira** é um bot **SEPARADO** que o dono mantém: a IA roda **do lado dela**. O jogo só
+**solicita** conteúdo pela ponte e **ingere** a resposta → **nenhuma IA paga dentro do jogo**.
+Módulos: `royal/mira.py` (ponte: `ask_mira`/`on_mira_reply`/`parse_words`/`fetch_and_store_palavras`)
++ `royal/handlers/inteligencia.py` (captura) + `mira_palavras_job` (`royal/jobs.py`).
+
+- ⚠️ **Bot-to-Bot Mode (ação do dono):** o jogo só RECEBE as msgs da @Mira se o
+  **"Bot-to-Bot Communication Mode" estiver LIGADO no @BotFather** pro bot do jogo. Sem isso o
+  Telegram **não entrega** → ponte fica muda (mas o jogo nunca quebra, só usa a lista fixa).
+- **Fluxo:** `ask_mira` manda `@{MIRA_USERNAME} <pedido>` no `IA_BRIDGE_CHAT_ID` e espera
+  (`asyncio.Future` + `wait_for`, `MIRA_REQUEST_TIMEOUT_SEC`); a captura (router **ANTES** de
+  `system`, pois `track` descarta `is_bot`) resolve o future. `parse_words` é **tolerante** ao
+  formato (vírgula/linha/numeração/frase com fallback de stopwords PT).
+- **Objetivo 1 — palavras do dia:** `mira_palavras_job` 1×/dia (≥`MIRA_PALAVRAS_HOUR`) pede
+  `MIRA_PALAVRAS_COUNT` palavras → grava no banco dinâmico **`palavra_pool`** (migration **v15**,
+  dedup por forma normalizada, ignora as que já estão em `PALAVRAS`). Persiste o dia em
+  `bot_meta['mira_palavras_day']` (não re-pede no mesmo dia, sobrevive a restart); falha → retry
+  (throttle 30min). `spawn_palavra` agora usa `pick_palavra_word(chat_id)` = `palavra_pool` ∪
+  `PALAVRAS` **menos** as últimas `PALAVRA_NO_REPEAT_RECENT` usadas no chat (fallback nunca trava).
+- **Teste manual (owner, off-menu):** `/royalmiratest` força um pedido e reporta quantas vieram.
+- **Feature invisível ao player** (palavra só fica mais variada) → `/start`/`ROYAL_HELP`/
+  `ROYAL_TUTORIAL_PARTS` auditados, **sem mudança**. Config 100% via env (vazio = off).
 
 ## 🧩 Ordem de handlers & filtros de entrada (gotchas ativos)
 

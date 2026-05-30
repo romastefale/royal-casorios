@@ -101,7 +101,7 @@ import hashlib
 from aiogram import Router
 
 from royal import core
-from royal.config import (AUTO_HOURS, FLUSH_INTERVAL_SECONDS, LOG_DUMP_ENABLED, LOG_DUMP_INTERVAL_SEC, MUSIC_BOT_ID, STASH_CHAT_ID, TEST_CHAT_IDS, logger)
+from royal.config import (AUTO_HOURS, FLUSH_INTERVAL_SECONDS, LOG_DUMP_ENABLED, LOG_DUMP_INTERVAL_SEC, MIRA_ENABLED, MIRA_PALAVRAS_HOUR, MUSIC_BOT_ID, STASH_CHAT_ID, TEST_CHAT_IDS, logger)
 from royal.core import (BACKUP_ENABLED, BACKUP_HOUR, _compute_next_palavra_at, _identity_card_hash, activity_buffer, admin_cache, attempt_cooldowns, boss_attack_cooldowns, bot, bot_meta_get, bot_meta_set, check_season_change, cur, db, dp, dump_logs_to_gist, dump_logs_to_file, ensure_identity_card_async, expire_old_chests, finalize_expired_challenges, flush_buffers_once, get_active_challenge, is_chat_muted, local_now, pair_buffer, photo_cache, run_backup, schedule_next_palavra, send_couple, spawn_boss_if_due, spawn_chest, spawn_palavra, term_block, typewriter_animate, utc_iso, utc_now)
 
 async def log_dump_job() -> None:
@@ -452,6 +452,41 @@ async def _on_shutdown():
         logger.info("[SHUTDOWN] DB fechado limpo")
     except Exception:
         logger.exception("[SHUTDOWN] db.close falhou")
+
+
+async def mira_palavras_job():
+    """Inteligência royal (Objetivo 1): 1x/dia (a partir de MIRA_PALAVRAS_HOUR
+    local) pede as "palavras do dia" à @Mira pela ponte e grava no banco
+    dinâmico. Persiste o dia em bot_meta (sobrevive a restart → não re-pede no
+    mesmo dia). Se a @Mira não responder, NÃO marca o dia → retry no próximo
+    tick, com throttle de 30min p/ não nagar."""
+    from royal.mira import fetch_and_store_palavras
+    if not MIRA_ENABLED:
+        logger.info("[MIRA] ponte desligada (sem MIRA_USERNAME/IA_BRIDGE_CHAT_ID) "
+                    "— job de palavras do dia não roda")
+        return
+    last_attempt = 0.0
+    while True:
+        await asyncio.sleep(300)
+        try:
+            now_local = local_now()
+            day = now_local.date().isoformat()
+            if now_local.hour < MIRA_PALAVRAS_HOUR:
+                continue
+            if bot_meta_get("mira_palavras_day") == day:
+                continue
+            now_ts = utc_now().timestamp()
+            if now_ts - last_attempt < 1800:
+                continue  # throttle: no máx 1 tentativa / 30min em caso de falha
+            last_attempt = now_ts
+            got = await fetch_and_store_palavras()
+            if got > 0:
+                bot_meta_set("mira_palavras_day", day)
+                logger.info("[MIRA] palavras do dia OK (%s): %d palavras", day, got)
+            else:
+                logger.warning("[MIRA] palavras do dia falhou (%s) — retry depois", day)
+        except Exception:
+            logger.exception("[MIRA] mira_palavras_job tick falhou")
 
 
 async def register_bot_commands():
