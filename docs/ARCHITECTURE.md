@@ -24,10 +24,15 @@
   `GIFT_MIN=10`/`GIFT_MAX=5000`, anti-race (`UPDATE … WHERE gold>=?`), conquista `generoso`. Bloqueia
   alvo bot. **Migration v12:** `gifts`.
 - **🏅 Conquistas — `/royalconquistas` (M11):** 11 slugs em `ACHIEVEMENTS`. `unlock_achievement()`
-  idempotente (PK `chat_id,user_id,slug`) + DM `EFFECT_PARTY`. Card `render_conquistas_card`/
-  `ConquistasData` (GOLD), card-first + fallback texto. **Migration v12:** `achievements`.
-- **⚙️ Preferências — `/royalconfig` (M19):** flags em `user_dm_settings.prefs_json` (v12). Keys:
-  `silent_levelup` (suprime card de level-up na DM), `hide_rank`/`palavra_ping` (reservados).
+  idempotente (PK `chat_id,user_id,slug`); na unlock NOVA agenda `announce_achievement_group(chat_id,
+  user_id,slug)` que **anuncia NO GRUPO** marcando a pessoa via `mention()` (ping pelo link
+  `tg://user?id=…`). **Sem DM proativa** (o bot não manda mais nada na DM do membro); sem
+  `message_effect_id` (efeitos só valem em DM). Card `render_conquistas_card`/`ConquistasData` (GOLD),
+  card-first + fallback texto. **Migration v12:** `achievements`.
+- **⚙️ Preferências — `/royalconfig` (M19):** flags em `user_dm_settings.prefs_json` (v12). Key ativa:
+  `hide_rank` (esconde do ranking público). `silent_levelup`/`palavra_ping` foram **removidas** (eram
+  toggles de DM; o bot não faz mais DM proativa a membros). `get_user_prefs` faz merge só das keys em
+  `USER_PREFS_DEFAULTS`, então prefs_json antigo com keys removidas é ignorado (sem migration).
 - **🗺️ Quests diárias — `/royalmissoes` (M05):** 4 missões em `DAILY_QUESTS`, reset por dia.
   `quest_bump()` (cap atomic, só grupo), claim `r:quest:{id}`. Card `render_missoes_card`/`MissoesData`
   +`MissaoRow` (CYAN) com teclado de claim na FOTO. **Migration v13:** `quest_progress`.
@@ -185,9 +190,9 @@ segue como fallback. Caption diz "Toque no número" (antes "Responda com número
 
 **🆙 Level-up anunciado no grupo:** `announce_level_up_group(chat_id,user_id,new_lvl)` posta texto leve
 (`term_block` ACID, sem card) marcando via `mention()` (link `tg://user?id=…` → ping mesmo com nome
-anonimizado). Disparado em `_schedule_levelup_dm` por `loop.create_task(...)` ANTES do early-return da
-pref `silent_levelup` — o anúncio público é GLOBAL e independe dessa pref (que controla só o card de
-level-up na DM).
+anonimizado). Disparado em `_schedule_levelup_announce(chat_id,user_id,new_lvl)` por
+`loop.create_task(...)`. **O bot não manda mais card de level-up na DM** — o aviso é só no grupo (o ping
+vem do `mention()`). A antiga `notify_level_up_dm` e a pref `silent_levelup` foram removidas.
 
 ---
 

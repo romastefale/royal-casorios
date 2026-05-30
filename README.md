@@ -151,7 +151,7 @@ railway.json       # deploy config
 |---|---|
 | `/royalmissoes` | 4 missões diárias (msgs, Palavra, boss, reações) → resgata XP + 🪙 |
 | `/royalevento` | Mostra o boost de XP ativo (datas especiais + fim de semana) |
-| `/royalconfig` | Preferências (silenciar level-up, etc.) |
+| `/royalconfig` | Preferências (privacidade no ranking, etc.) |
 
 ### DM
 | Comando | Função |
@@ -429,7 +429,7 @@ Tudo via **Pillow puro** em `royal_render.py`. Sem headless browser.
 |---|---|---|
 | `render_profile_card(data, avatar_bytes)` | 1080×1080 | `/royalperfil` |
 | `render_ranking_card(season_label, entries)` | 1080×1080 | Pódio do `/royalranking` |
-| `render_levelup_card(royal_id, name, lvl, class_name)` | 1080×540 | DM de level-up |
+| `render_levelup_card(royal_id, name, lvl, class_name)` | 1080×540 | (legado, sem uso — level-up agora é só anúncio no grupo) |
 
 Render roda em `asyncio.to_thread(...)` para não travar o loop.
 

@@ -74,7 +74,6 @@ from royal_render import (
     render_evento_card,
     render_identity_card,
     render_inventario_card,
-    render_levelup_card,
     render_loja_card,
     render_loja_drop_card,
     render_meuscasorios_card,
@@ -853,7 +852,7 @@ ACHIEVEMENTS: dict[str, tuple[str, str]] = {
 
 def unlock_achievement(chat_id: int, user_id: int, slug: str) -> bool:
     """Insere conquista (idempotente). Retorna True se foi NOVA unlock.
-    Dispara notificacao DM fire-and-forget na unlock nova."""
+    Dispara anuncio no GRUPO (mencionando a pessoa) fire-and-forget na unlock nova."""
     spec = ACHIEVEMENTS.get(slug)
     if not spec:
         return False
@@ -873,35 +872,39 @@ def unlock_achievement(chat_id: int, user_id: int, slug: str) -> bool:
                     user_id, chat_id, slug)
         try:
             loop = asyncio.get_running_loop()
-            loop.create_task(_notify_achievement_dm(user_id, slug))
+            loop.create_task(announce_achievement_group(chat_id, user_id, slug))
         except RuntimeError:
             pass
     return is_new
 
 
-async def _notify_achievement_dm(user_id: int, slug: str) -> None:
-    """Notifica conquista na DM (silencioso se user bloqueou)."""
+async def announce_achievement_group(chat_id: int, user_id: int,
+                                     slug: str) -> None:
+    """Anuncia a conquista no GRUPO, mencionando quem desbloqueou. O ping vem
+    do link tg://user?id=… do mention(). Silencioso em erro (não derruba o
+    fluxo de XP). Não usa message_effect_id (efeitos só valem em DM)."""
     if bot is None:
         return
     spec = ACHIEVEMENTS.get(slug)
     if not spec:
         return
     title, desc = spec
-    body = (
-        f">> NOVA CONQUISTA DESBLOQUEADA\n"
-        f"// <b>{title}</b>\n"
-        f"// <i>{desc}</i>\n"
-        f"\n<i>Ver todas em /royalconquistas.</i>"
-    )
     try:
+        name = get_name(chat_id, user_id)
+        body = (
+            f">> {mention(user_id, name)} desbloqueou uma conquista! 🏅\n"
+            f"// <b>{title}</b>\n"
+            f"// <i>{desc}</i>\n"
+            f"\n<i>Ver todas em /royalconquistas.</i>"
+        )
         await bot.send_message(
-            user_id,
+            chat_id,
             term_block("CONQUISTA", body, status="UNLOCK",
                        status_color="GOLD"),
-            message_effect_id=EFFECT_PARTY,
         )
     except Exception:
-        pass
+        logger.exception("announce_achievement_group falhou chat=%s uid=%s",
+                         chat_id, user_id)
 
 
 def check_level_achievements(chat_id: int, user_id: int,
@@ -934,9 +937,7 @@ def check_palavra_achievements(chat_id: int, user_id: int) -> None:
 
 
 USER_PREFS_DEFAULTS: dict[str, bool] = {
-    "silent_levelup": False,   # nao mandar card de levelup na DM
     "hide_rank":      False,   # esconder do ranking publico
-    "palavra_ping":   True,    # receber DM aviso quando palavra spawn
 }
 
 
@@ -2698,7 +2699,7 @@ def award_xp_immediate(chat_id: int, user_id: int, amount: int, reason: str = ""
     logger.info("xp+%d uid=%d chat=%d reason=%s level %d→%d",
                 amount, user_id, chat_id, reason, old_lvl, new_lvl)
     if new_lvl > old_lvl:
-        _schedule_levelup_dm(chat_id, user_id, player, new_lvl)
+        _schedule_levelup_announce(chat_id, user_id, new_lvl)
         check_level_achievements(chat_id, user_id, new_lvl)
 
 
@@ -2743,7 +2744,7 @@ def award_xp_message(chat_id: int, user_id: int, is_reply: bool) -> None:
         (new_xp, real_amount, pts_gain, now.isoformat(), chat_id, user_id),
     )
     if new_lvl > old_lvl:
-        _schedule_levelup_dm(chat_id, user_id, player, new_lvl)
+        _schedule_levelup_announce(chat_id, user_id, new_lvl)
 
 
 async def announce_level_up_group(chat_id: int, user_id: int,
@@ -2772,67 +2773,16 @@ async def announce_level_up_group(chat_id: int, user_id: int,
                          chat_id, user_id)
 
 
-def _schedule_levelup_dm(chat_id: int, user_id: int,
-                          player: dict, new_lvl: int) -> None:
-    """Agenda envio de card de level-up na DM (não bloqueia).
-    M19: respeita pref silent_levelup do user.
-    Também dispara o anúncio público no grupo marcando a pessoa — esse é
-    feature global do reino e NÃO depende de silent_levelup (que controla
-    só o card na DM)."""
+def _schedule_levelup_announce(chat_id: int, user_id: int,
+                               new_lvl: int) -> None:
+    """Agenda o anúncio público de level-up no GRUPO (marca a pessoa). Não
+    bloqueia. O bot não manda mais card de level-up na DM — o ping vem do
+    link tg://user?id=… do mention() no grupo."""
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
         return
-    # Anúncio público no grupo (marca a pessoa) — antes do early-return da pref
     loop.create_task(announce_level_up_group(chat_id, user_id, new_lvl))
-    # M19: user pode silenciar card de levelup via /royalconfig
-    if get_user_prefs(user_id).get("silent_levelup"):
-        logger.info("[M19] levelup DM suprimido por pref uid=%s", user_id)
-        return
-    royal_id = player.get("royal_id") or ""
-    class_id = player.get("class_id")
-    name = anonize(get_name(chat_id, user_id), royal_id)
-    # Card PNG não renderiza fontes "fancy" Unicode → cai pro @username.
-    name = card_safe_name(chat_id, user_id, name, royal_id)
-    avatar_slug = royal_avatars.resolve_slug(
-        player.get("avatar_slug"), royal_id)
-    loop.create_task(notify_level_up_dm(
-        user_id, royal_id, name, new_lvl, class_id, avatar_slug))
-
-
-async def notify_level_up_dm(user_id: int, royal_id: str, name: str,
-                              new_level: int, class_id: str | None,
-                              avatar_slug: str | None = None) -> None:
-    """Tenta enviar card de level-up na DM. Silencioso se user bloqueou ou
-    nunca falou com o bot em privado."""
-    if bot is None or not royal_id:
-        return
-    try:
-        class_name = ""
-        if class_id and class_id in CLASSES:
-            class_name = CLASSES[class_id].get("name", "")
-        png = await asyncio.to_thread(
-            render_levelup_card, royal_id, name, new_level, class_name,
-            avatar_slug)
-        caption = term_block(
-            "LEVEL_UP",
-            f"<b>NÍVEL {new_level:02d} ATINGIDO</b>\n"
-            f"<i>+1 ponto de atributo. Use /royalup no grupo pra distribuir.</i>",
-            status="ALERTA", status_color="HOT",
-        )
-        if png:
-            await bot.send_photo(
-                user_id,
-                BufferedInputFile(png, filename="royal_levelup.jpg"),
-                caption=cap1024(caption),
-                message_effect_id=EFFECT_THUMBS_UP,
-            )
-        else:
-            await bot.send_message(user_id, caption,
-                                   message_effect_id=EFFECT_THUMBS_UP)
-    except Exception:
-        # user nunca abriu DM ou bloqueou — silencioso
-        pass
 
 
 async def get_user_photo_file_id(user_id: int) -> str | None:
@@ -4350,8 +4300,8 @@ ROYAL_TUTORIAL_PARTS: list[tuple[str, str]] = [
 
         "<blockquote expandable>"
         "<b>>> ⚙️ PREFERÊNCIAS &amp; 🔒 PRIVACIDADE</b>\n"
-        "• <code>/royalconfig</code> — silenciar avisos de level-up, "
-        "etc.\n"
+        "• <code>/royalconfig</code> — suas preferências "
+        "(privacidade no ranking).\n"
         "• <code>/royalprivacidade</code> — seus controles.\n"
         "• <code>/royaldados</code> — exportar ou apagar seus dados."
         "</blockquote>"
@@ -4431,7 +4381,7 @@ ROYAL_HELP = (
     "/royalpresentear @user 100 — manda florins pra outro nobre\n"
     "  <i>(ou: reply na mensagem + /royalpresentear 100)</i>\n"
     "/royalconquistas — vê quais medalhas você já desbloqueou\n"
-    "/royalconfig — preferências (silenciar level-up, etc.)\n"
+    "/royalconfig — preferências (privacidade no ranking, etc.)\n"
     "</blockquote>\n"
     "<blockquote expandable>🗺️ <b>Missões & Eventos</b>\n"
     "/royalmissoes — missões diárias (manda msgs, acerta PALAVRA, "
@@ -5075,9 +5025,7 @@ GIFT_MAX = 5000
 def _config_kb(prefs: dict) -> InlineKeyboardMarkup:
     rows = []
     labels = {
-        "silent_levelup": "🔕 Silenciar card de level-up (DM)",
         "hide_rank":      "👻 Esconder do ranking publico",
-        "palavra_ping":   "🔔 Receber ping de PALAVRA na DM",
     }
     for key, label in labels.items():
         state = "ON" if prefs.get(key) else "OFF"

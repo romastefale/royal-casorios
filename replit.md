@@ -83,6 +83,13 @@ Confirma no grupo + DM do owner. Testes: `test_migrate_chat_data_preserva_progre
   o ato, **editar/apagar a msg antiga** (`edit_message_text`/`edit_message_reply_markup`/
   `delete_message` ou `auto_delete_after` p/ acks efêmeros), nunca empilhar msg nova. Preferir
   **edição in-place da MESMA msg**. **Não floodar.**
+- **📣 O bot NÃO manda DM proativa a membros.** Avisos de progresso (level-up, conquista
+  desbloqueada) são postados **NO GRUPO mencionando a pessoa** (`mention()` → ping pelo link
+  `tg://user?id=…`), nunca na DM. Funções: `announce_level_up_group`/`announce_achievement_group`
+  (agendadas via `loop.create_task`). **Não usar `message_effect_id` no grupo** (efeitos só valem em
+  DM → `TelegramBadRequest`). A DM do bot fica só p/ o que o usuário inicia (ex.: deep-link de
+  privacidade) e p/ os alertas de erro do **dono**. `/royalconfig` não tem mais toggles de DM (sobrou
+  só `hide_rank`).
 
 **Sincronia obrigatória com o código** — ao mexer no bot, revisar/atualizar quando aplicável:
 `/start` (`start_cmd`), `/royalajuda` (`ROYAL_HELP`), `/royaltutorial` (`send_tutorial()` +
