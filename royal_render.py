@@ -717,8 +717,6 @@ class ProfileCardData:
     msg_count: int
     joined_str: str
     avatar_slug: str | None = None
-    skin_gold: bool = False
-    royal_plus: bool = False
 
 
 def _draw_label_value(draw, *, x, y, label, value,
@@ -760,7 +758,6 @@ def render_profile_card(data: ProfileCardData,
         data.palavras_won, data.casorios, data.gold,
         data.msg_count, data.joined_str,
         data.avatar_slug,
-        data.skin_gold, data.royal_plus,
         # Hash da foto: invalida cache se o player trocar a foto no Telegram
         hashlib.md5(avatar_bytes).hexdigest() if avatar_bytes else None,
     )
@@ -823,8 +820,8 @@ def render_profile_card(data: ProfileCardData,
         resolved_slug = royal_avatars.resolve_slug(
             data.avatar_slug, data.royal_id)
         portrait = royal_avatars.load_avatar(resolved_slug, inner_size)
-        # Moldura do quadro principal — GOLD vivo se skin dourada (M01)
-        frame_col = GOLD if data.skin_gold else GOLD_DIM
+        # Moldura do quadro principal
+        frame_col = GOLD_DIM
         pixel_rect(draw, (ax, ay, ax + avatar_size, ay + avatar_size), BLACK)
         pixel_rect(draw, (ax + 4, ay + 4,
                           ax + avatar_size - 4, ay + avatar_size - 4), frame_col)
@@ -853,42 +850,28 @@ def render_profile_card(data: ProfileCardData,
             except Exception:
                 logger.warning("face thumbnail failed", exc_info=True)
 
-        # tag "[ BRASAO ]" debaixo do avatar — "[ OURO ]" dourado se skin (M01)
+        # tag "[ BRASAO ]" debaixo do avatar
         tag_font = load_font(16, mono=True, bold=True)
-        tag = "[ * OURO * ]" if data.skin_gold else "[ BRASÃO ]"
+        tag = "[ BRASÃO ]"
         tw, _ = text_size(draw, tag, tag_font)
         draw.text((ax + (avatar_size - tw) // 2, ay + avatar_size + 14),
-                  tag, font=tag_font, fill=(GOLD if data.skin_gold else GOLD_DIM))
+                  tag, font=tag_font, fill=GOLD_DIM)
 
         # ===== Bloco direita: nome, classe, nivel =====
         info_x = ax + avatar_size + 48
         info_w = CARD_SIZE - OUT_PAD - 60 - info_x
 
-        # Nome (cortado se longo)
+        # Nome (cortado se longo) — encolhe ate caber na largura disponivel
         name_clean = ellipsize(data.name, 16).upper()
         name_size = 48 if len(name_clean) <= 10 else 38 if len(name_clean) <= 14 else 32
         name_font = load_font(name_size, mono=True, bold=True)
-
-        # Badge violeta Royal Plus (M04) — right-aligned na mesma linha do nome.
-        # Reserva a largura do badge e ENCOLHE o nome ate caber, garantindo que
-        # nome e badge nunca se sobreponham (medido com as fontes reais).
-        plus_txt = "[ PLUS+ ]" if data.royal_plus else None
-        plus_font = load_font(20, mono=True, bold=True) if plus_txt else None
-        plus_w = (text_size(draw, plus_txt, plus_font)[0] + 24) if plus_txt else 0
-        if plus_txt:
-            avail_name_w = info_w - plus_w
-            while (len(name_clean) > 1
-                   and text_size(draw, name_clean, name_font)[0] > avail_name_w):
-                name_clean = name_clean[:-2].rstrip() + "."
+        while (len(name_clean) > 1
+               and text_size(draw, name_clean, name_font)[0] > info_w):
+            name_clean = name_clean[:-2].rstrip() + "."
         draw_text_smart(draw, (info_x, ay - 4), name_clean, name_font, INK)
 
         # (sem underline — cortava letras com descender tipo @ no usuario)
         nw, nh = text_size(draw, name_clean, name_font)
-
-        if plus_txt:
-            pw, _ = text_size(draw, plus_txt, plus_font)
-            draw.text((info_x + info_w - pw, ay - 2),
-                      plus_txt, font=plus_font, fill=MAGENTA)
 
         # Classe em "tag"
         class_font = load_font(20, mono=True, bold=True)

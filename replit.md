@@ -64,8 +64,11 @@ Confirma no grupo + DM do owner. Testes: `test_migrate_chat_data_preserva_progre
 
 - **Versões fixas (não fazer downgrade):** Bot API **10** · aiogram **3.28.2**.
 - **💸 Custo zero — NUNCA usar funções/serviços pagos.** Só recursos gratuitos (nada de gateways
-  pagos, APIs com cobrança por uso, geração de mídia paga). Telegram Stars (XTR) é exceção: é
-  **receita** do bot (usuário paga), processada direto pelo Telegram.
+  pagos, APIs com cobrança por uso, geração de mídia paga).
+- **🚫 O bot NUNCA cobra nada do usuário.** O sistema Premium (loja Premium, pagamento via Telegram
+  Stars/XTR, assinatura Royal Plus e perks pagos) foi **removido por completo**. Não reintroduzir
+  cobrança de nenhum tipo — nem mesmo Telegram Stars. A única economia é interna: **florins 🪙**
+  (ganhos no jogo, gastos na loja in-game e em `/royalpresentear`).
 - **🎬 UX no grupo — animação interativa, sem poluir:** comandos de escolha (inline kb/menus) → após
   o ato, **editar/apagar a msg antiga** (`edit_message_text`/`edit_message_reply_markup`/
   `delete_message` ou `auto_delete_after` p/ acks efêmeros), nunca empilhar msg nova. Preferir
@@ -166,9 +169,11 @@ Confirma no grupo + DM do owner. Testes: `test_migrate_chat_data_preserva_progre
 - **Botões coloridos nativos EXISTEM** no Bot API 10 / aiogram 3.28.2 via campo `style`
   (`'success'`/`'danger'`/`'primary'`; **não há** `'warning'`/amarelo). Já em produção. Se um agente
   afirmar "não existe", está errado. → detalhe + convenções em `docs/ARCHITECTURE.md` (§ UI).
-- **Perks Premium BLOQUEADOS** (vendíveis mas sem efeito, pendência de produto): `prm_ressurrects`
-  (boss não tem morte do player) e **slot extra de casório** (não há limite de slot no código → a copy
-  do Royal Plus NÃO menciona slot extra). → `docs/ARCHITECTURE.md` (§ Premium).
+- **Premium REMOVIDO por completo** (loja Premium, pagamento Telegram Stars/XTR, assinatura Royal
+  Plus, perks pagos, `/royalpaldica`, skin dourada e badge violeta no card). O bot **nunca cobra
+  nada**. As colunas/tabela do DB (`xp_boost_until`, `prm_hints`, `prm_ressurrects`, `prm_skin_gold`,
+  `royal_plus_until`, `royal_plus_charge_id`, `stars_purchases`) ficaram **inertes** (migrations v10/v11
+  mantidas só pra não dropar dados — nenhum código lê/escreve nelas). Não reintroduzir cobrança.
 - **Cursor sqlite global `cur` é seguro** no design atual (asyncio single-thread, sem `await` entre
   `execute`/`fetch`). O rewrite p/ `aiosqlite` (214 call sites) **não foi feito** de propósito (alto
   risco). Não "consertar" isso sem alinhamento. → `docs/ARCHITECTURE.md` (§ Infra F01/F02).

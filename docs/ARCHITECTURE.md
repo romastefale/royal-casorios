@@ -55,31 +55,23 @@
 
 ---
 
-## 💎 Premium · Telegram Stars (M01 + M04 + M03)
+## 💎 Premium · REMOVIDO (o bot nunca cobra nada)
 
-Pagamento via **Telegram Stars (XTR)** — sem gateway externo, sem provider_token. Acesso: `/royalloja`
-→ **💎 Premium**.
+O sistema Premium foi **removido por completo**: loja Premium, pagamento via **Telegram Stars (XTR)**,
+assinatura **Royal Plus**, todos os perks pagos (Boost XP, Dica da Palavra `/royalpaldica`,
+Ressurreição no Boss, Skin Dourada), o badge violeta `[ PLUS+ ]` e a moldura/tag GOLD no profile card.
+**Não reintroduzir cobrança de nenhum tipo** — nem mesmo Telegram Stars. A única economia é interna:
+**florins 🪙** (ganhos no jogo, gastos na loja in-game Poção/Anel e em `/royalpresentear`).
 
-**Itens avulsos** (`PREMIUM_ITEMS`): ⚡ Boost +20% XP 24h (50⭐ → `xp_boost_until`) · 💡 Dica da
-Palavra (1⭐ → `prm_hints`) · 🔱 Ressurreição no Boss (10⭐ → `prm_ressurrects`) · 🥇 Skin Dourada
-(100⭐ → `prm_skin_gold`).
+**Removido do código:** handlers `pre_checkout_handler`/`successful_payment_handler`,
+`_grant_premium_perk`, `premium_xp_active`/`_royal_plus_active`/`_perk_until_active`,
+`PREMIUM_ITEMS`/`SUBSCRIPTIONS`, `premium_keyboard()`, callbacks `r:prem`/`r:xtr`/`r:sub`, comando
+`/royalpaldica`, o bônus +20% XP e os campos `skin_gold`/`royal_plus` do `ProfileCardData`.
 
-**Assinatura** (`SUBSCRIPTIONS`): 🌟 Royal Plus +20% XP + badge violeta (50⭐/mês → `royal_plus_until`,
-`royal_plus_charge_id`). `sendInvoice(subscription_period=2592000)` (30 dias, único valor aceito em
-XTR); renovação/cancelamento via Telegram, bot só observa.
-
-**Fluxo:** callback `r:xtr:{iid}`/`r:sub:royal_plus` → invoice → `pre_checkout_handler` (prefixos
-`prm|`/`sub|`) → `successful_payment_handler` grava em `stars_purchases` (idempotente por `charge_id`)
-+ `_grant_premium_perk()`. **Migrations:** v10 (cols premium + `stars_purchases`), v11 (cols Royal
-Plus). Dica paga: `/royalpaldica` (M03) consome `prm_hints`, revela 1 letra.
-
-**Estado real dos perks:**
-- ✅ XP boost / Royal Plus (`premium_xp_active` → `*1.20`), `prm_hints` (`/royalpaldica`),
-  `prm_skin_gold` (moldura GOLD + tag `[ * OURO * ]`), badge `[ PLUS+ ]` MAGENTA.
-- ⛔ **`prm_ressurrects` — BLOQUEADO:** o boss não tem mecânica de morte do player (HP/corações são
-  cosméticos). Item ainda vendível mas **sem efeito** (pendência de produto).
-- ⛔ **Slot extra de casório — BLOQUEADO:** não há limite de slot no código. **Por isso a copy do
-  Royal Plus NÃO menciona slot extra.**
+**DB inerte (NÃO dropado, sem perda de dados):** migrations **v10/v11** mantidas — colunas
+`xp_boost_until`, `prm_hints`, `prm_ressurrects`, `prm_skin_gold`, `royal_plus_until`,
+`royal_plus_charge_id` e a tabela `stars_purchases` continuam existindo mas **nenhum código lê/escreve
+nelas** (marcadas como LEGADO/INERTE nos docstrings).
 
 ---
 
@@ -152,7 +144,7 @@ EFFECT_*)` (sparkles/fire/heart em DM 1:1, Bot API 7.7).
 **❌ Botão Fechar (universal):** helpers `close_btn(owner_id=None)` + `with_close(kb, owner_id)`.
 Callback `r:close:{uid}` (cards) ou `r:close` puro (menus). Branch `action=="close"` no TOPO de
 `hub_cb`: com uid → checa `cb.from_user.id==uid`; sem uid → `assert_owner`; depois `delete_msg_safe`.
-Anexado em: menus owner-locked (up/classe/inv/loja/premium, via `close_btn()`) e cards/saídas pessoais
+Anexado em: menus owner-locked (up/classe/inv/loja, via `close_btn()`) e cards/saídas pessoais
 (perfil, ranking, conquistas, missões, evento, saldo, **hub `/royal`, `/royalajuda`+`/help` (ROYAL_HELP),
 `/royalcasorios`, `/royalativar`** — via `with_close(kb, uid)`). Apaga a própria msg
 (bot é admin no grupo). ⚠️ NÃO anexar em boas-vindas de reentrada (`send_profile_card` sem `close_uid`).
