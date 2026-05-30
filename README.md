@@ -2,7 +2,7 @@
 
 # 👑 RPG — Royal para Geeks
 
-### O reino que vive dentro do seu grupo de Telegram
+### O reino que vive dentro do grupo Royal Geeks
 
 *Um RPG social retro-futurista que transforma a conversa do dia a dia em XP, níveis,
 classes, casórios, raids contra chefões e disputas de quiz — tudo com **cartões 8-bit**
@@ -18,8 +18,8 @@ gerados pelo próprio jogo.*
 
 <br>
 
-> 🎮 **É um produto, não um setup.** O jogo roda sozinho no grupo: o bot observa as
-> interações e devolve eventos, cartões e rankings. Ninguém precisa saber jogar —
+> 🎮 **É um produto, não um setup.** O jogo roda sozinho no **grupo Royal Geeks**: o bot
+> observa as interações e devolve eventos, cartões e rankings. Ninguém precisa saber jogar —
 > só conversar.
 
 </div>
@@ -40,8 +40,9 @@ gerados pelo próprio jogo.*
 
 ## 1. O que é
 
-O **Royal para Geeks** é um bot de RPG **para grupos de Telegram**. Ele acompanha o que
-acontece no chat e transforma isso num jogo de progressão contínua:
+O **Royal para Geeks** é um bot de RPG feito sob medida para **um único grupo de Telegram — o
+grupo Royal Geeks**. Não é um produto genérico para "qualquer grupo": ele vive e roda só nesse
+reino. Ele acompanha o que acontece no chat e transforma isso num jogo de progressão contínua:
 
 - 🗣️ **Cada mensagem vira XP.** Quem participa, sobe de nível.
 - 🎭 **Cada jogador tem uma ficha:** classe, atributos, HP, inventário e um **Royal ID** público.
