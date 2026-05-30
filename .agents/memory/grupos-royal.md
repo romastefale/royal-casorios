@@ -62,3 +62,14 @@ mantém); o jogo só SOLICITA e INGERE → nenhuma IA paga dentro do jogo.
 `-5204321141` (grupo básico) ficou órfão. O bridge NÃO guarda dados de jogo, então a troca
 é só re-rota do `IA_BRIDGE_CHAT_ID` (sem `migrate_chat_data`); `on_chat_migration`/`safe_send`
 auto-curam se sobrar envio pro id velho.
+
+🔬 **Diagnóstico de captura (relay já funciona mas `/rquiz` dá timeout):** se a @Mira RESPONDE
+visível no grupo-ponte mas o jogo loga `[MIRA] timeout`, o jogo não capturou. Três causas com
+o MESMO sintoma: (A) Bot-to-Bot Mode OFF no bot do JOGO → nem recebe a msg (fix = @BotFather,
+NÃO código); (B) `MIRA_USER_ID` ≠ id REAL da @Mira → match rejeita (fix = env); (C) @Mira
+responde como **userbot** (`is_bot=False`). **Regra durável:** o discriminador da @Mira é
+id/username, NUNCA `is_bot` (ela pode ser bot OU userbot) — a captura não deve filtrar por
+`is_bot`. **Como desambiguar:** ler logs `[MIRA] bridge msg ...` durante a espera — ausência
+total = (A); presença com id divergente = (B). A captura do grupo-ponte só deve CONSUMIR (parar
+propagação) quando casa a @Mira; caso contrário deixa passar (SkipHandler) p/ não engolir
+comandos do dono no grupo-ponte.

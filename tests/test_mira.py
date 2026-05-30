@@ -130,22 +130,26 @@ def test_on_mira_reply_correlacao_por_reply_to():
 
 
 def test_on_mira_reply_aceita_sem_reply_to_e_filtra_humano():
-    """Sem reply_to (a @Mira só posta a resposta) → aceita. Msg de humano
-    (is_bot=False) ou de outro chat → ignorada."""
+    """Sem reply_to (a @Mira só posta a resposta) → aceita. Msg de outro
+    remetente (id ≠ @Mira, seja humano ou outro bot) ou de outro chat →
+    ignorada. O filtro é por id/username, NÃO por is_bot (a @Mira pode
+    responder como userbot)."""
     bridge = mira.IA_BRIDGE_CHAT_ID
     loop = asyncio.new_event_loop()
     try:
-        # humano não resolve
+        # outro remetente (id ≠ @Mira) não resolve — mesmo is_bot=False
         fut = loop.create_future()
         mira._pending[bridge] = {"future": fut, "request_mid": 1}
         assert mira.on_mira_reply(
-            _FakeMsg(bridge, is_bot=False, text="oi")) is False
+            _FakeMsg(bridge, is_bot=False, uid=mira.MIRA_USER_ID + 1,
+                     text="oi")) is False
         assert not fut.done()
         # outro chat não resolve
         assert mira.on_mira_reply(_FakeMsg(bridge + 1, text="x, y")) is False
         assert not fut.done()
-        # bot no chat-ponte, sem reply_to → resolve
-        assert mira.on_mira_reply(_FakeMsg(bridge, text="gato, mesa")) is True
+        # @Mira no chat-ponte, sem reply_to → resolve (mesmo como userbot)
+        assert mira.on_mira_reply(
+            _FakeMsg(bridge, is_bot=False, text="gato, mesa")) is True
         assert fut.result() == "gato, mesa"
     finally:
         mira._pending.pop(bridge, None)

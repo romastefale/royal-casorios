@@ -75,13 +75,16 @@ async def ask_mira(prompt: str, timeout: float | None = None) -> str | None:
 
 
 def on_mira_reply(message) -> bool:
-    """Chamado pelo handler de captura quando chega uma msg de BOT no
-    grupo-ponte. Se for a @Mira (casa por MIRA_USER_ID quando setado, senão por
-    username) e houver pedido pendente, resolve o Future com o texto. Retorna
-    True se consumiu. NÃO cadastra a @Mira como jogador (para a propagação)."""
+    """Chamado pelo handler de captura quando chega uma msg no grupo-ponte. Se
+    for a @Mira (casa por MIRA_USER_ID quando setado, senão por username) e
+    houver pedido pendente, resolve o Future com o texto. Retorna True se
+    consumiu. NÃO cadastra a @Mira como jogador (para a propagação).
+
+    NÃO exige is_bot: a @Mira pode responder como bot OU como userbot
+    (is_bot=False). O discriminador real é o id/username (abaixo)."""
     if IA_BRIDGE_CHAT_ID is None:
         return False
-    if not message or not message.from_user or not message.from_user.is_bot:
+    if not message or not message.from_user:
         return False
     if message.chat is None or message.chat.id != IA_BRIDGE_CHAT_ID:
         return False
@@ -91,9 +94,14 @@ def on_mira_reply(message) -> bool:
     uname = message.from_user.username or ""
     if MIRA_USER_ID and uid is not None:
         if uid != MIRA_USER_ID:
+            logger.info(
+                "[MIRA] remetente id=%s ≠ MIRA_USER_ID=%s — ignorado. Se este "
+                "for o id REAL da @Mira, ajuste MIRA_USER_ID.", uid, MIRA_USER_ID)
             return False
     elif MIRA_USERNAME:
         if uname.lower() != MIRA_USERNAME.lower():
+            logger.info("[MIRA] username=%r ≠ MIRA_USERNAME=%r — ignorado.",
+                        uname, MIRA_USERNAME)
             return False
     pend = _pending.get(IA_BRIDGE_CHAT_ID)
     if not pend or pend["future"].done():
