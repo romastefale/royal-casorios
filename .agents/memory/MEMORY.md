@@ -1,0 +1,1 @@
+- [Persistent callback owner-locks](persistent-callback-locks.md) — menus inline que persistem (auto_delete=0) precisam do uid embutido no callback; _msg_owners TTL (15min) expira e libera o menu alheio.

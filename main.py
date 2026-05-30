@@ -4814,19 +4814,47 @@ ROYAL_TUTORIAL_PARTS: list[tuple[str, str]] = [
 ]
 
 
-async def send_tutorial(message: Message) -> None:
-    """Envia o tutorial completo em partes (cada parte = 1 mensagem),
-    respeitando o limite de 4096 chars do Telegram. Usado por /start,
-    /royaltutorial, /royalajuda e /help."""
-    season = current_season_label()
+def _tutorial_block(idx: int) -> str:
+    """Renderiza a parte `idx` do tutorial como term_block (carimbo da
+    temporada só na última parte)."""
     last = len(ROYAL_TUTORIAL_PARTS) - 1
-    for i, (title, body) in enumerate(ROYAL_TUTORIAL_PARTS):
-        await message.answer(term_block(
-            title, body, status="ONBOARDING", status_color="CYAN",
-            stamp=season if i == last else None,
-        ))
-        if i != last:
-            await asyncio.sleep(0.25)
+    title, body = ROYAL_TUTORIAL_PARTS[idx]
+    return term_block(
+        title, body, status="ONBOARDING", status_color="CYAN",
+        stamp=current_season_label() if idx == last else None,
+    )
+
+
+def _tutorial_kb(idx: int, owner_id: int) -> InlineKeyboardMarkup:
+    """Navegação ◀ Anterior / Próximo ▶ + ❌ Fechar para o tutorial
+    in-place (uma única mensagem editável, sem floodar o grupo)."""
+    last = len(ROYAL_TUTORIAL_PARTS) - 1
+    nav: list[InlineKeyboardButton] = []
+    # uid embutido no callback → lock durável (não depende do TTL de _msg_owners,
+    # que expira em 15min; menus persistentes precisam disso).
+    if idx > 0:
+        nav.append(ikb(f"{BTN_BACK} Anterior",
+                       callback_data=f"r:tut:{idx - 1}:{owner_id}"))
+    if idx < last:
+        nav.append(ikb(f"Próximo {BTN_GO}",
+                       callback_data=f"r:tut:{idx + 1}:{owner_id}"))
+    rows: list[list[InlineKeyboardButton]] = []
+    if nav:
+        rows.append(nav)
+    rows.append([close_btn(owner_id)])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+async def send_tutorial(message: Message) -> None:
+    """Envia o tutorial como UMA mensagem navegável (◀/▶ + ❌ Fechar),
+    respeitando o limite de 4096 chars por parte. Usado por /start,
+    /royaltutorial, /royalajuda e /help. Antes empilhava 6 mensagens;
+    agora edita in-place (regra de UX do dono: não floodar)."""
+    uid = message.from_user.id if message.from_user else 0
+    sent = await message.answer(
+        _tutorial_block(0), reply_markup=_tutorial_kb(0, uid))
+    # Trava a navegação pro dono; auto_delete=0 → persiste até Fechar.
+    register_owner(sent, uid, auto_delete_secs=0.0)
 
 
 @dp.message(CommandStart())
@@ -4907,7 +4935,9 @@ async def royal_hub(message: Message):
     await safe_typing(message.chat.id)
     extra = (effect_kw(message.chat.type, EFFECT_PARTY)
              if is_new else {})
-    await message.answer(hub_text(), reply_markup=hub_keyboard_main(),
+    hub_uid = message.from_user.id if message.from_user else None
+    await message.answer(hub_text(),
+                         reply_markup=with_close(hub_keyboard_main(), hub_uid),
                          **extra)
     # Nudge pos-cadastro: lembra o nobre de escolher classe. Roda
     # tambem pra players ja existentes que ainda nao escolheram.
@@ -5008,14 +5038,18 @@ ROYAL_HELP = (
 @dp.message(Command("royalajuda"))
 async def royal_ajuda(message: Message):
     # Tutorial primeiro (ensina), depois manual de comandos (referência)
+    await safe_typing(message.chat.id)
     await send_tutorial(message)
-    await message.answer(ROYAL_HELP)
+    uid = message.from_user.id if message.from_user else None
+    await message.answer(ROYAL_HELP, reply_markup=with_close(None, uid))
 
 
 @dp.message(Command("help"))
 async def help_cmd(message: Message):
+    await safe_typing(message.chat.id)
     await send_tutorial(message)
-    await message.answer(ROYAL_HELP)
+    uid = message.from_user.id if message.from_user else None
+    await message.answer(ROYAL_HELP, reply_markup=with_close(None, uid))
 
 
 @dp.message(Command("royaltutorial"))
@@ -5083,6 +5117,75 @@ async def royal_perfil(message: Message):
 # === /royalavatar ===
 
 AVATAR_MOSAIC_MARKER = "AVATAR.SYS"
+
+
+def _avatar_kb(owner_id: int) -> InlineKeyboardMarkup:
+    """Grid de botões 1..36 (6 por linha) + ❌ Fechar — escolha por toque,
+    sem precisar responder com número (regra de UX: mais fácil e limpo)."""
+    n = len(royal_avatars.SLUGS)
+    rows: list[list[InlineKeyboardButton]] = []
+    row: list[InlineKeyboardButton] = []
+    # uid embutido → lock durável (mosaico persiste; TTL de _msg_owners não basta).
+    for i in range(1, n + 1):
+        row.append(ikb(f"{i:02d}", callback_data=f"r:av:{i}:{owner_id}"))
+        if len(row) == 6:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    rows.append([close_btn(owner_id)])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _apply_avatar(owner_chat: int, uid: int, n: int) -> tuple[str, object]:
+    """Aplica a escolha de avatar nº `n`. Fonte única usada tanto pelos
+    botões (callback) quanto pelo fallback de reply numérico.
+    Retorna (status, payload):
+      'ok'        -> payload = slug aplicado
+      'locked'    -> payload = slug atual (já escolheu nesta temporada)
+      'noprofile' -> payload = None
+      'badnum'    -> payload = None"""
+    slug = royal_avatars.slug_at(n)
+    if slug is None:
+        return ("badnum", None)
+    p = get_player(owner_chat, uid)
+    if not p:
+        return ("noprofile", None)
+    season = current_season_label()
+    if p.get("avatar_slug") and p.get("avatar_season") == season:
+        return ("locked", p["avatar_slug"])
+    cur.execute(
+        "UPDATE players SET avatar_slug=?, avatar_season=? "
+        "WHERE chat_id=? AND user_id=?",
+        (slug, season, owner_chat, uid))
+    db.commit()
+    return ("ok", slug)
+
+
+def _avatar_reveal_payload(owner_chat: int, uid: int, slug,
+                           n: int) -> tuple[bytes | None, str]:
+    """Monta (png, caption) da revelação do avatar escolhido. png=None
+    cai no fallback texto."""
+    p = get_player(owner_chat, uid) or {}
+    royal_id = p.get("royal_id") or ""
+    season = current_season_label()
+    name = royal_avatars.display_name(slug)
+    caption = term_block(
+        AVATAR_MOSAIC_MARKER,
+        (f"<b>✅ Avatar atualizado: #{n:02d} {name}</b>\n"
+         f"<i>Esta escolha vale por toda a temporada {season}.</i>\n"
+         f"// Use /royalperfil para ver o novo card."),
+        status="OK", status_color="ACID", stamp=royal_id,
+    )
+    fp = os.path.join(os.path.dirname(__file__),
+                      "assets", "avatars", f"{slug}.png")
+    png: bytes | None = None
+    try:
+        with open(fp, "rb") as f:
+            png = f.read()
+    except Exception:
+        png = None
+    return png, caption
 
 
 class AvatarReplyFilter(Filter):
@@ -5161,15 +5264,18 @@ async def royal_avatar_cmd(message: Message):
         AVATAR_MOSAIC_MARKER,
         (f"<b>👑 ESCOLHA SEU AVATAR</b>\n"
          f"{atual_label}\n\n"
-         f"<b>&gt;&gt; Responda esta mensagem com um numero de 1 a 36.</b>\n"
+         f"<b>&gt;&gt; Toque no número do seu avatar (1 a 36).</b>\n"
          f"⚠️ A escolha vale por toda a temporada (so podera trocar na proxima)."),
         status="ESCOLHA", status_color="ACID",
         stamp=season,
     )
-    await message.answer_photo(
+    sent = await message.answer_photo(
         BufferedInputFile(png, filename="royal_avatares_mosaico.png"),
         caption=cap1024(caption),
+        reply_markup=_avatar_kb(message.from_user.id),
     )
+    # Trava os botões pro dono; auto_delete=0 → persiste até escolher/Fechar.
+    register_owner(sent, message.from_user.id, auto_delete_secs=0.0)
 
 
 @dp.message(AvatarReplyFilter())
@@ -5177,9 +5283,6 @@ async def handle_avatar_reply(message: Message):
     if not message.from_user:
         return
     n = int((message.text or "").strip())
-    slug = royal_avatars.slug_at(n)
-    if slug is None:
-        return  # filtro ja validou range, defensivo
 
     # Resolve chat-dono
     if is_group(message):
@@ -5189,15 +5292,13 @@ async def handle_avatar_reply(message: Message):
         if owner_chat is None:
             return
 
-    p = get_player(owner_chat, message.from_user.id)
-    if not p:
+    status, payload = _apply_avatar(owner_chat, message.from_user.id, n)
+    if status == "noprofile":
         ack = await message.reply("😶 Voce ainda nao tem perfil no Reino.")
         await auto_delete_after(ack, delay=8.0)
         return
-
-    season = current_season_label()
-    if p.get("avatar_slug") and p.get("avatar_season") == season:
-        cur_slug = p["avatar_slug"]
+    if status == "locked":
+        cur_slug = payload
         ack = await message.reply(
             f"❌ Voce ja escolheu seu avatar nesta temporada "
             f"(#{royal_avatars.number_of(cur_slug):02d} "
@@ -5206,36 +5307,19 @@ async def handle_avatar_reply(message: Message):
         )
         await auto_delete_after(ack, delay=12.0)
         return
+    if status != "ok":
+        return  # badnum — filtro ja validou range, defensivo
 
-    cur.execute(
-        "UPDATE players SET avatar_slug=?, avatar_season=? "
-        "WHERE chat_id=? AND user_id=?",
-        (slug, season, owner_chat, message.from_user.id),
-    )
-    db.commit()
-    # Invalida o card cacheado (proximo /royalperfil re-renderiza com o novo avatar)
-
-    name = royal_avatars.display_name(slug)
-    royal_id = p.get("royal_id") or ""
-    caption = term_block(
-        AVATAR_MOSAIC_MARKER,
-        (f"<b>✅ Avatar atualizado: #{n:02d} {name}</b>\n"
-         f"<i>Esta escolha vale por toda a temporada {season}.</i>\n"
-         f"// Use /royalperfil para ver o novo card."),
-        status="OK", status_color="ACID",
-        stamp=royal_id,
-    )
-    fp = os.path.join(os.path.dirname(__file__),
-                      "assets", "avatars", f"{slug}.png")
-    try:
-        with open(fp, "rb") as f:
-            png = f.read()
+    slug = payload
+    png, caption = _avatar_reveal_payload(
+        owner_chat, message.from_user.id, slug, n)
+    if png:
         await message.reply_photo(
             BufferedInputFile(png, filename=f"avatar-{slug}.png"),
             caption=cap1024(caption),
             **effect_kw(message.chat.type, EFFECT_PARTY),
         )
-    except Exception:
+    else:
         await message.reply(
             caption, **effect_kw(message.chat.type, EFFECT_PARTY))
 
@@ -6240,8 +6324,18 @@ async def royal_priv(message: Message):
     if not message.from_user:
         return
     if is_group(message):
+        kb = None
+        try:
+            me = await bot.me()
+            if me and me.username:
+                kb = InlineKeyboardMarkup(inline_keyboard=[[ikb(
+                    "🔒 Abrir na DM", style=STYLE_INFO,
+                    url=f"https://t.me/{me.username}?start=priv")]])
+        except Exception:
+            kb = None
         await message.answer(
-            "🔒 Use /royalprivacidade no chat privado comigo para configurar suas opções.")
+            "🔒 Use /royalprivacidade no chat privado comigo para "
+            "configurar suas opções.", reply_markup=kb)
         return
     cur.execute("SELECT chat_id FROM players WHERE user_id=? LIMIT 1", (message.from_user.id,))
     row = cur.fetchone()
@@ -6477,9 +6571,11 @@ async def royal_ativar(message: Message):
         f"{term_pre(rows)}"
         "<i>Que comecem os feitos, nobre.</i>"
     )
+    ativar_uid = message.from_user.id if message.from_user else None
     await message.answer(term_block(
         "ROYAL", body, status="ONLINE",
         stamp=current_season_label()),
+        reply_markup=with_close(None, ativar_uid),
         **effect_kw(message.chat.type, EFFECT_PARTY))
 
 
@@ -6648,6 +6744,7 @@ async def royal_meus(message: Message):
 @dp.message(Command("royalcasorios", "divorcios"))
 async def royal_casorios(message: Message):
     chat_id = message.chat.id
+    cas_uid = message.from_user.id if message.from_user else None
     if message.from_user:
         await react_to(message.chat.id, message.message_id, "👀")
     cur.execute(
@@ -6660,7 +6757,8 @@ async def royal_casorios(message: Message):
         await message.answer(term_block(
             "CASORIOS",
             "<i>Ainda não existem casórios suficientes pra ranking.</i>",
-            status="VAZIO", status_color="AMBER"))
+            status="VAZIO", status_color="AMBER"),
+            reply_markup=with_close(None, cas_uid))
         return
     # === CARD VISUAL (card-first com text fallback) ===
     try:
@@ -6695,6 +6793,7 @@ async def royal_casorios(message: Message):
                 BufferedInputFile(png, filename="royal_casorios.jpg"),
                 caption=cap1024(caption),
                 parse_mode="HTML",
+                reply_markup=with_close(None, cas_uid),
             )
             return
     except Exception:
@@ -6710,7 +6809,8 @@ async def royal_casorios(message: Message):
             f"<code>{row['total']}x</code>")
     await message.answer(term_block(
         "CASORIOS", "\n".join(lines),
-        status="RANKING", stamp=current_season_label()))
+        status="RANKING", stamp=current_season_label()),
+        reply_markup=with_close(None, cas_uid))
 
 
 # === Botoes do menu privado ===
@@ -6819,9 +6919,94 @@ async def hub_cb(cb: CallbackQuery):
             pass
         return
 
+    # Tutorial navegável (◀/▶) — edita a MESMA msg, sem floodar.
+    if action == "tut":
+        try:
+            idx = int(parts[2])
+        except (IndexError, ValueError):
+            await cb.answer()
+            return
+        # uid embutido (parts[3]) → lock durável; assert_owner como reforço.
+        owner_id = (int(parts[3]) if len(parts) > 3
+                    and parts[3].lstrip("-").isdigit() else None)
+        if owner_id is not None:
+            if cb.from_user.id != owner_id:
+                await cb.answer("❌ Esse tutorial não é seu.",
+                                show_alert=False)
+                return
+        elif not await assert_owner(cb):
+            return
+        idx = max(0, min(idx, len(ROYAL_TUTORIAL_PARTS) - 1))
+        try:
+            await cb.message.edit_text(
+                _tutorial_block(idx),
+                reply_markup=_tutorial_kb(idx, cb.from_user.id))
+        except Exception:
+            pass
+        await cb.answer()
+        return
+
     # chat_id efetivo: em grupo, o proprio chat; em DM, o reino mais ativo do user
     fallback = cb.message.chat.id if is_group_chat(cb.message) else None
     chat_id = resolve_owner_chat(cb.from_user.id, fallback)
+
+    # Escolha de avatar por botão (grid 1..36) — fonte única _apply_avatar.
+    if action == "av":
+        try:
+            n = int(parts[2])
+        except (IndexError, ValueError):
+            await cb.answer()
+            return
+        # uid embutido (parts[3]) → lock durável; assert_owner como reforço.
+        owner_id = (int(parts[3]) if len(parts) > 3
+                    and parts[3].lstrip("-").isdigit() else None)
+        if owner_id is not None:
+            if cb.from_user.id != owner_id:
+                await cb.answer("❌ Esse menu não é seu.", show_alert=False)
+                return
+        elif not await assert_owner(cb):
+            return
+        if chat_id is None:
+            await cb.answer("😶 Você ainda não tem perfil no Reino.",
+                            show_alert=True)
+            return
+        status, payload = _apply_avatar(chat_id, cb.from_user.id, n)
+        if status == "noprofile":
+            await cb.answer("😶 Você ainda não tem perfil no Reino.",
+                            show_alert=True)
+            return
+        if status == "locked":
+            cur_slug = payload
+            await cb.answer(
+                f"❌ Você já escolheu seu avatar nesta temporada "
+                f"(#{royal_avatars.number_of(cur_slug):02d} "
+                f"{royal_avatars.display_name(cur_slug)}).",
+                show_alert=True)
+            return
+        if status != "ok":
+            await cb.answer()
+            return
+        slug = payload
+        name = royal_avatars.display_name(slug)
+        await cb.answer(f"Avatar #{n:02d} {name} ✓")
+        # Acao terminal: apaga o mosaico (poluicao zero) e revela o avatar.
+        await delete_msg_safe(cb.message)
+        png, caption = _avatar_reveal_payload(chat_id, cb.from_user.id,
+                                              slug, n)
+        try:
+            if png and bot is not None:
+                await bot.send_photo(
+                    cb.message.chat.id,
+                    BufferedInputFile(png, filename=f"avatar-{slug}.png"),
+                    caption=cap1024(caption),
+                    **effect_kw(cb.message.chat.type, EFFECT_PARTY))
+            elif bot is not None:
+                await bot.send_message(
+                    cb.message.chat.id, caption,
+                    **effect_kw(cb.message.chat.type, EFFECT_PARTY))
+        except Exception:
+            logger.exception("avatar reveal (cb) falhou")
+        return
 
     # Acoes que requerem contexto de chat Royal:
     needs_chat = {"rank", "pal", "boss", "loja", "cas", "up", "cls", "buy",

@@ -188,3 +188,41 @@ def test_lucky_constantes_coerentes():
     assert main.LUCKY_JACKPOT_GOLD > main.LUCKY_WIN_GOLD
     assert main.LUCKY_DAILY_CAP >= 1
     assert main.LUCKY_EMOJI == "🎰"
+
+
+def _flat_buttons(kb):
+    return [b for row in kb.inline_keyboard for b in row]
+
+
+def test_tutorial_kb_lock_duravel_uid_embutido():
+    # Menus persistentes (auto_delete_secs=0) NAO podem depender do TTL de
+    # _msg_owners: o uid do dono tem que estar embutido em TODO callback de
+    # navegacao (r:tut:{idx}:{uid}) e no Fechar (r:close:{uid}), senao apos o
+    # TTL expirar qualquer um operaria o tutorial alheio.
+    uid = 4242
+    last = len(main.ROYAL_TUTORIAL_PARTS) - 1
+    for idx in (0, max(0, last // 2), last):
+        kb = main._tutorial_kb(idx, uid)
+        nav = [b for b in _flat_buttons(kb)
+               if b.callback_data and b.callback_data.startswith("r:tut:")]
+        # ha ao menos um botao de navegacao em cada extremo (exceto deck de 1)
+        for b in nav:
+            assert b.callback_data.endswith(f":{uid}"), b.callback_data
+            assert len(b.callback_data.split(":")) == 4
+        closes = [b for b in _flat_buttons(kb)
+                  if b.callback_data == f"r:close:{uid}"]
+        assert closes, "tutorial sem botao Fechar owner-locked"
+
+
+def test_avatar_kb_lock_duravel_uid_embutido():
+    uid = 777
+    kb = main._avatar_kb(uid)
+    grid = [b for b in _flat_buttons(kb)
+            if b.callback_data and b.callback_data.startswith("r:av:")]
+    assert len(grid) == len(main.royal_avatars.SLUGS)
+    for b in grid:
+        assert b.callback_data.endswith(f":{uid}"), b.callback_data
+        assert len(b.callback_data.split(":")) == 4
+    closes = [b for b in _flat_buttons(kb)
+              if b.callback_data == f"r:close:{uid}"]
+    assert closes, "mosaico de avatar sem botao Fechar owner-locked"

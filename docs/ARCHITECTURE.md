@@ -152,9 +152,23 @@ EFFECT_*)` (sparkles/fire/heart em DM 1:1, Bot API 7.7).
 **❌ Botão Fechar (universal):** helpers `close_btn(owner_id=None)` + `with_close(kb, owner_id)`.
 Callback `r:close:{uid}` (cards) ou `r:close` puro (menus). Branch `action=="close"` no TOPO de
 `hub_cb`: com uid → checa `cb.from_user.id==uid`; sem uid → `assert_owner`; depois `delete_msg_safe`.
-Anexado em: menus owner-locked (up/classe/inv/loja/premium, via `close_btn()`) e cards pessoais
-(perfil, ranking, conquistas, missões, evento, saldo — via `with_close(kb, uid)`). Apaga a própria msg
+Anexado em: menus owner-locked (up/classe/inv/loja/premium, via `close_btn()`) e cards/saídas pessoais
+(perfil, ranking, conquistas, missões, evento, saldo, **hub `/royal`, `/royalajuda`+`/help` (ROYAL_HELP),
+`/royalcasorios`, `/royalativar`** — via `with_close(kb, uid)`). Apaga a própria msg
 (bot é admin no grupo). ⚠️ NÃO anexar em boas-vindas de reentrada (`send_profile_card` sem `close_uid`).
+
+**📖 Tutorial navegável (não floodar):** `send_tutorial()` manda **1 mensagem editável** com
+`◀ Anterior / Próximo ▶` + Fechar (`_tutorial_block(idx)` + `_tutorial_kb(idx, uid)`; callback
+`r:tut:{idx}:{uid}` edita in-place). Antes empilhava 6 msgs. Usado por `/start`,
+`/royaltutorial`, `/royalajuda`, `/help`. As **6 partes** seguem em `ROYAL_TUTORIAL_PARTS` (≤4096 chars).
+
+**👑 Avatar por botões:** `/royalavatar` mostra o mosaico com **grid 1..36** (`_avatar_kb(uid)`, 6/linha)
++ Fechar, owner-locked. Callback `r:av:{n}:{uid}` aplica via `_apply_avatar()` (fonte única; status
+`ok/locked/noprofile/badnum`) e revela com `_avatar_reveal_payload()`. O **reply numérico** (`AvatarReplyFilter`)
+segue como fallback. Caption diz "Toque no número" (antes "Responda com número").
+
+**🔒 Deep-link p/ DM:** `/royalprivacidade` no grupo oferece botão `url=t.me/<bot>?start=priv`
+(via `bot.me()`), facilitando ir pra DM em vez de só instruir por texto.
 
 **🆙 Level-up anunciado no grupo:** `announce_level_up_group(chat_id,user_id,new_lvl)` posta texto leve
 (`term_block` ACID, sem card) marcando via `mention()` (link `tg://user?id=…` → ping mesmo com nome
