@@ -311,8 +311,8 @@ async def _render_lobby(sess: QuizSession) -> None:
              style=STYLE_NO)],
     ])
     try:
-        await bot.edit_message_text(text, sess.chat_id, sess.lobby_mid,
-                                    reply_markup=kb)
+        await bot.edit_message_text(text, chat_id=sess.chat_id,
+                                    message_id=sess.lobby_mid, reply_markup=kb)
     except TelegramBadRequest as e:
         if "message is not modified" not in str(e).lower():
             logger.warning("[QUIZ] edit lobby falhou: %s", e)
@@ -349,7 +349,7 @@ async def _lobby_watchdog(sess: QuizSession) -> None:
         try:
             await bot.edit_message_text(
                 "⌛ Quiz expirado (ninguém começou a tempo).",
-                sess.chat_id, sess.lobby_mid)
+                chat_id=sess.chat_id, message_id=sess.lobby_mid)
         except Exception:
             pass
 
@@ -367,7 +367,7 @@ async def _run_quiz(sess: QuizSession) -> None:
                     f"🧠 <b>Quiz Real</b> — tema: <b>{html.escape(sess.theme)}"
                     f"</b>\n🎬 Começou! {len(sess.participants)} jogadores · "
                     f"{len(sess.questions)} perguntas.",
-                    chat_id, sess.lobby_mid)
+                    chat_id=chat_id, message_id=sess.lobby_mid)
             except Exception:
                 pass
         total = len(sess.questions)
