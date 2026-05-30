@@ -255,6 +255,17 @@ acentos ácidos), **cor por player** (cada `royal_id` recebe paleta consistente)
   como texto só se não houver sprite. Cobertos: classes (`SPRITE_CROWN ROSE WIZARD SCROLL KEY` +
   `SWORD`) e itens (`POTION RING SHIELD` + `BOOT SWORD BOOK CROWN`). ⚠️ Emoji em **menu/texto** do
   Telegram (ex. 🐉 em BotCommand) renderiza nativo — não precisa de sprite. Ao adicionar classe/item
-  novo, adicione o sprite + entrada em `EMOJI_SPRITES` senão volta o tofu no card.
+  novo, adicione o sprite + entrada em `EMOJI_SPRITES` (travado no CI por
+  `tests/test_render.py::test_todo_emoji_de_{classe,item}_tem_sprite`).
+- **Anti-tofu em NOMES (display name do Telegram nos cards) — `_layout_glyphs`.** Nome é texto livre
+  do usuário (math-bold 𝕽, fullwidth Ｋｉｎｇ, cirílico, emoji, CJK). `draw_text_smart`/`text_size_smart`
+  usam o MESMO `_layout_glyphs(text, primary, fallbacks)` (largura casa com o desenho), que resolve
+  cada glifo em camadas: (1) fonte que cobre (primary > Noto Sans/Math/Symbols/Symbols2) → math-bold
+  e cirílico renderizam nativos; (2) sem cobertura → `unicodedata.normalize("NFKC", ch)` cai na forma
+  ASCII coberta (conserta **fullwidth** ＡＢＣ→ABC, enclosed ①, etc.); (3) ainda sem cobertura (emoji
+  colorido, CJK — exigiriam fontes enormes, fora do custo-zero) → glifo **descartado** (some, NUNCA
+  caixinha de tofu; o `royal_id` sempre acompanha o nome no card). `card_safe_name()` (em `royal/core.py`,
+  troca nome fancy por @username/ANON) continua existindo como camada extra em alguns paths, mas a
+  garantia anti-tofu agora é universal na camada de render. Testes: `tests/test_render.py`.
 - **Pós-processamento de cards (sempre):** `apply_scanlines(every=3, alpha=55)` →
   `apply_vignette(strength=160)` → `apply_grain(intensity=18)`.

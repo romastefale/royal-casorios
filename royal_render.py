@@ -13,6 +13,7 @@ import logging
 import random
 import threading
 import time
+import unicodedata
 from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
@@ -238,15 +239,46 @@ def _fallback_fonts_for(size: int) -> list:
     return [_fb_font(p, size) for p in FALLBACK_FONT_PATHS]
 
 
-def _resolve_glyph_font(char: str, primary, fallbacks: list):
-    """Primary se cobrir, senao 1o fallback que cobre. Em ultimo caso volta
-    pra primary (renderiza tofu mas nao crasha)."""
+def _font_for_char(char: str, primary, fallbacks: list):
+    """Primary se cobrir, senao 1o fallback que cobre. None se nenhum cobre."""
     if _font_has_char(primary, char):
         return primary
     for f in fallbacks:
         if f is not None and _font_has_char(f, char):
             return f
-    return primary
+    return None
+
+
+def _resolve_glyph_font(char: str, primary, fallbacks: list):
+    """Compat: fonte que cobre o char, ou primary em ultimo caso."""
+    return _font_for_char(char, primary, fallbacks) or primary
+
+
+def _layout_glyphs(text: str, primary, fallbacks: list) -> list:
+    """Quebra `text` em ops de desenho [(char, font), ...], escolhendo a fonte
+    que cobre cada glifo. Anti-tofu em camadas (mesma logica usada pra desenhar
+    E pra medir, entao largura sempre casa com o desenho):
+      1) fonte (primary > fallbacks Noto) que tenha o glifo real;
+      2) se nenhum cobrir, NFKC-normaliza o char — resolve estilizacoes de
+         compatibilidade (fullwidth ＡＢＣ, enclosed ①, letterlike ℝ) caindo na
+         forma ASCII coberta pelas fontes;
+      3) se AINDA nao houver cobertura (emoji colorido, CJK sem fonte), o char
+         eh DESCARTADO — melhor sumir do que desenhar caixinha de tofu (o
+         royal_id sempre acompanha o nome no card, entao nunca fica anonimo)."""
+    ops: list = []
+    for ch in text:
+        f = _font_for_char(ch, primary, fallbacks)
+        if f is not None:
+            ops.append((ch, f))
+            continue
+        norm = unicodedata.normalize("NFKC", ch)
+        if norm != ch:
+            sub = [(c, _font_for_char(c, primary, fallbacks)) for c in norm]
+            if all(sf is not None for _, sf in sub):
+                ops.extend(sub)
+                continue
+        # genuinamente sem cobertura -> descarta (sem tofu)
+    return ops
 
 
 def _char_advance(draw, ch: str, font) -> float:
@@ -267,8 +299,7 @@ def draw_text_smart(draw, xy, text: str, font, fill) -> None:
         return
     x, y = xy
     fb = _fallback_fonts_for(font.size)
-    for ch in text:
-        f = _resolve_glyph_font(ch, font, fb)
+    for ch, f in _layout_glyphs(text, font, fb):
         draw.text((round(x), y), ch, font=f, fill=fill)
         x += _char_advance(draw, ch, f)
 
@@ -282,8 +313,7 @@ def text_size_smart(draw: ImageDraw.ImageDraw, text: str, primary) -> tuple[int,
     fb = _fallback_fonts_for(primary.size)
     total_w = 0.0
     max_h = 0
-    for ch in text:
-        f = _resolve_glyph_font(ch, primary, fb)
+    for ch, f in _layout_glyphs(text, primary, fb):
         total_w += _char_advance(draw, ch, f)
         bbox = draw.textbbox((0, 0), ch, font=f)
         h = bbox[3] - bbox[1]
