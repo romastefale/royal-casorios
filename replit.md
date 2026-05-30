@@ -90,7 +90,20 @@ Confirma no grupo + DM do owner. Testes: `test_migrate_chat_data_preserva_progre
 ---
 
 ## 📁 Estrutura de arquivos
-- `main.py` — código principal do bot.
+- `main.py` — **entrypoint/facade** (preservado p/ `python main.py` do Railway). Re-exporta tudo de
+  `royal/` (testes fazem `import main; main.<símbolo>`), inclui os Routers das features na ordem
+  correta e define `main()`. **Ordem de include (CRÍTICO):** `system` POR ÚLTIMO (catch-all `track`)
+  e `hub` ANTES de `cfg`/`missoes` (o `hub_cb` casa `r:cfg:`/`r:quest:` — ver comentário no arquivo).
+- `royal/` — pacote modular do bot (era o monólito `main.py`; split **puramente estrutural**, código
+  verbatim, zero mudança de comportamento/DB):
+  - `royal/config.py` — env vars + constantes de configuração (folha do grafo, sem deps internas).
+  - `royal/core.py` — `bot`/`dp`, middlewares, schema/migrations, helpers, constantes não-config
+    (CLASSES/ITEMS/ROYAL_HELP/ROYAL_TUTORIAL_PARTS etc.). Importa só `config`.
+  - `royal/jobs.py` — tarefas de fundo (auto-casório, log dump, backup, `_on_shutdown`). Importa `core`.
+  - `royal/handlers/` — 1 módulo por feature, cada um expõe um `router` aiogram (handlers via
+    `@router.…`): admin, avatar, boss, casorios, cfg, classe, conquistas, economia, eventos, hub,
+    inline, inventario, loja, missoes, palavra, perfil, privacidade, ranking, start, system.
+    Importam `config`/`core`. Grafo acíclico: `config ← core ← {jobs, handlers} ← main`.
 - `royal_render.py` — gerador de cards 1080×1080 (Pillow puro, sem Chromium).
 - `royal_words.py` — palavras e charadas do mini-game.
 - `requirements.txt` (runtime: `aiogram`, `Pillow`, `aiohttp`) · `requirements-dev.txt` (SÓ dev/CI:

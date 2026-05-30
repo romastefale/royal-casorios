@@ -2,8 +2,19 @@
 
 > Referência de detalhe (features, perks, infra, UI, identidade visual). O **mapa operacional** +
 > regras do dono + gotchas que não se pode errar ficam em [`replit.md`](../replit.md). A lógica fina
-> mora no código (`main.py`, `royal_render.py`); aqui só o que ajuda a navegar sem reintroduzir
-> regressões. Verificado contra o código (migrations até **v14**).
+> mora no código: pacote **`royal/`** (`config` → `core` → `{jobs, handlers/*}`), com `main.py` de
+> facade/entrypoint que inclui os Routers; cards em `royal_render.py`. Aqui só o que ajuda a navegar
+> sem reintroduzir regressões. Verificado contra o código (migrations até **v14**).
+
+> 🧩 **Layout modular (`royal/`):** o bot era um monólito `main.py` (~8,9k linhas); foi quebrado num
+> pacote por feature num refactor **puramente estrutural** (código verbatim, sem mudança de
+> comportamento/DB/migrations). Cada feature em `royal/handlers/<feature>.py` expõe um `router`
+> aiogram (`@router.message`/`@router.callback_query`/…), todos incluídos em `main.py`. `config.py`
+> (constantes/env) é folha; `core.py` (`bot`/`dp`/middlewares/schema/helpers) importa só config;
+> `jobs.py` e os handlers importam core. Grafo **acíclico**; `main.py` re-exporta tudo p/ os testes
+> (`import main`). **Detalhe de menção a `main.py` abaixo:** símbolos/constantes/helpers citados como
+> "em `main.py`" agora vivem nos módulos de `royal/` (o `main.py` só re-exporta) — a localização
+> lógica é a mesma, o caminho físico mudou.
 
 ---
 
