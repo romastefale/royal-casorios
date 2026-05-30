@@ -15,19 +15,19 @@ rodar/configurar workflow aqui).
 
 ## 🚀 Deploy & push (CRÍTICO)
 
-> ⚠️ **BRANCH DE TRABALHO ATUAL = `rrpg` (experimental).** Por decisão do dono, todo push agora vai
-> pra **`rrpg`** (NÃO dispara deploy de produção). A `royalRPG` (produção/Railway) só recebe push
-> quando o dono pedir **explicitamente** "promover/produção". Default = `main:rrpg`.
+> ⚠️ **BRANCH DE TRABALHO ATUAL = `royalRPG` (produção/Railway).** Por decisão do dono, todo push agora
+> vai pra **`royalRPG`** → **dispara deploy de produção**. Default = `main:royalRPG`. (A `rrpg` é só
+> experimental, usada quando o dono pedir explicitamente p/ testar fora de produção.)
 
 **Deploy (produção):** Railway (`railway.json`), escuta a branch **`royalRPG`**.
 
-**Push de trabalho (sempre `GITHUB_TOKEN`, NUNCA `GH_TOKEN`):**
-```bash
-git push "https://x-access-token:${GITHUB_TOKEN}@github.com/romastefale/royal-casorios.git" main:rrpg
-```
-**Push de produção (SÓ quando o dono pedir explicitamente p/ promover):**
+**Push (padrão = produção; sempre `GITHUB_TOKEN`, NUNCA `GH_TOKEN`):**
 ```bash
 git push "https://x-access-token:${GITHUB_TOKEN}@github.com/romastefale/royal-casorios.git" main:royalRPG
+```
+**Push experimental (SÓ quando o dono pedir explicitamente p/ testar fora de produção):**
+```bash
+git push "https://x-access-token:${GITHUB_TOKEN}@github.com/romastefale/royal-casorios.git" main:rrpg
 ```
 - `GITHUB_TOKEN` é auto-provisionado pelo Replit. `GH_TOKEN` **não existe** como secret aqui (é só
   env var de runtime do Railway, p/ gist).
@@ -80,8 +80,9 @@ sozinho no 1º post pós-migração e os próximos posts já vão pro id novo. `
 
 ## 📌 User preferences (regras do dono)
 
-- **🌿 Trabalho atual SÓ na branch `rrpg` (experimental).** Push default = `main:rrpg`. A `royalRPG`
-  (produção/Railway) só recebe push quando o dono pedir explicitamente p/ promover. Ver § Deploy & push.
+- **🌿 Trabalho atual na branch `royalRPG` (produção/Railway).** Push default = `main:royalRPG` →
+  **dispara deploy de produção**. A `rrpg` (experimental) só recebe push quando o dono pedir
+  explicitamente p/ testar fora de produção. Push só com pedido explícito. Ver § Deploy & push.
 - **Versões fixas (não fazer downgrade):** Bot API **10** · aiogram **3.28.2**.
 - **💸 Custo zero — NUNCA usar funções/serviços pagos.** Só recursos gratuitos (nada de gateways
   pagos, APIs com cobrança por uso, geração de mídia paga).
