@@ -22,6 +22,10 @@ gerados pelo próprio jogo.*
 > observa as interações e devolve eventos, cartões e rankings. Ninguém precisa saber jogar —
 > só conversar.
 
+<br>
+
+📄 **Versão web (telegra.ph):** [**RPG: Royal para Geeks**](https://telegra.ph/RPG-Royal-para-Geeks-05-30)
+
 </div>
 
 ---
