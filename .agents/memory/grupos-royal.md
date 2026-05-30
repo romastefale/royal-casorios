@@ -22,6 +22,10 @@ dia → banco dinâmico `palavra_pool`). Config: `MIRA_USERNAME`/`IA_BRIDGE_CHAT
 
 📌 **NOTA DO DONO (nunca esquecer):** o bot do JOGO é **ADMIN** do grupo-ponte onde está com a @Mira.
 
+⚠️ **O relay pra @Mira (`ask_mira`) DEVE ir com `parse_mode=None`.** O default do bot é HTML e
+os prompts máquina→máquina contêm `<...>` (ex. template do quiz `<pergunta>`/`<alternativa>`) →
+sem isso o Telegram rejeita com `TelegramBadRequest: can't parse entities: Unsupported start tag`.
+
 ⚠️ **Ser admin NÃO resolve bot-to-bot.** Regra OFICIAL do Telegram (Bots FAQ): um bot
 **não recebe** mensagens de OUTRO bot num grupo — *mesmo sendo admin e com privacy mode
 OFF*. Admin/privacy é irrelevante pra isso. O ÚNICO mecanismo é o **"Bot-to-Bot

@@ -47,7 +47,10 @@ async def ask_mira(prompt: str, timeout: float | None = None) -> str | None:
     fut: asyncio.Future = loop.create_future()
     text = f"@{MIRA_USERNAME} {prompt}".strip()
     try:
-        msg = await safe_send(IA_BRIDGE_CHAT_ID, text)
+        # parse_mode=None: o prompt é máquina→máquina e pode conter '<...>'
+        # (ex. template do quiz "<pergunta>"); sem isso o default HTML do bot
+        # tenta parsear como tag → TelegramBadRequest "can't parse entities".
+        msg = await safe_send(IA_BRIDGE_CHAT_ID, text, parse_mode=None)
     except Exception:
         logger.exception("[MIRA] falha ao enviar pedido")
         return None
