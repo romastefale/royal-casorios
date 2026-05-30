@@ -101,7 +101,7 @@ import hashlib
 from aiogram import Router
 
 from royal.config import (logger)
-from royal.core import (ITEMS, assert_owner, award_xp_immediate, bot, cap1024, cur, db, dp, ensure_player, format_br, get_anon_name, get_player, inv_keyboard, react_to, register_owner, resolve_dm_chat, safe_typing, term_block)
+from royal.core import (ITEMS, assert_owner, award_xp_immediate, bot, cap1024, consume_consumable, cur, db, dp, ensure_player, format_br, get_anon_name, get_player, inv_keyboard, react_to, register_owner, resolve_dm_chat, safe_typing, term_block)
 
 router = Router()
 
@@ -239,22 +239,19 @@ async def inv_cb(cb: CallbackQuery):
             return
         effect = item.get("effect")
         if effect == "xp100":
+            # consome ANTES de conceder: o guard atomico fecha o exploit de
+            # clicar o botao persistente depois do item zerar (ver
+            # consume_consumable em core).
+            if not consume_consumable(chat_id, uid, iid):
+                await cb.answer("Você não tem mais esse item.", show_alert=False)
+                return
             award_xp_immediate(chat_id, uid, 100, reason="tomo")
-            cur.execute(
-                "UPDATE inventory SET qty=qty-1 WHERE chat_id=? AND user_id=? AND item_id=?",
-                (chat_id, uid, iid))
-            cur.execute("DELETE FROM inventory WHERE chat_id=? AND user_id=? AND item_id=? AND qty<=0",
-                        (chat_id, uid, iid))
-            db.commit()
             await cb.answer("+100 XP ✓")
             return
         if effect == "heal":
-            cur.execute(
-                "UPDATE inventory SET qty=qty-1 WHERE chat_id=? AND user_id=? AND item_id=?",
-                (chat_id, uid, iid))
-            cur.execute("DELETE FROM inventory WHERE chat_id=? AND user_id=? AND item_id=? AND qty<=0",
-                        (chat_id, uid, iid))
-            db.commit()
+            if not consume_consumable(chat_id, uid, iid):
+                await cb.answer("Você não tem mais esse item.", show_alert=False)
+                return
             await cb.answer("HP restaurado ✓")
             return
         await cb.answer()

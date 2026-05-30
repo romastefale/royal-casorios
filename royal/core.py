@@ -2177,6 +2177,29 @@ def next_royal_id(chat_id: int) -> str:
     raise RuntimeError(f"next_royal_id: pool exhausted for chat {chat_id}")
 
 
+def consume_consumable(chat_id: int, user_id: int, item_id: str) -> bool:
+    """Consome 1 unidade de um item consumivel de forma ATOMICA. Retorna True
+    se consumiu (havia qty>0), False caso contrario (jogador nao tem o item).
+
+    O guard `WHERE qty>0` + checagem de rowcount ANTES de conceder o efeito
+    fecha o exploit do botao 'usar': o card de inventario nao apaga/atualiza o
+    teclado in-place apos o uso, entao o botao persiste — sem este guard,
+    clicar o botao depois do item zerar concedia +XP/heal de graca
+    repetidamente. Mesmo padrao anti-duplicacao dos claims (UPDATE ... WHERE)."""
+    cur.execute(
+        "UPDATE inventory SET qty=qty-1 "
+        "WHERE chat_id=? AND user_id=? AND item_id=? AND qty>0",
+        (chat_id, user_id, item_id))
+    consumed = cur.rowcount > 0
+    if consumed:
+        cur.execute(
+            "DELETE FROM inventory "
+            "WHERE chat_id=? AND user_id=? AND item_id=? AND qty<=0",
+            (chat_id, user_id, item_id))
+    db.commit()
+    return consumed
+
+
 def get_or_create_player(chat_id: int, user_id: int) -> tuple[dict, bool]:
     """Igual ensure_player mas retorna (row, is_new). Permite que o
     chamador customize feedback pro player recem-cadastrado vs existente."""

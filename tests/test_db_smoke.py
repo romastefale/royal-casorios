@@ -258,6 +258,55 @@ def test_chest_claim_atomico_evita_baú_duplicado():
     assert st == "open"
 
 
+def test_consume_consumable_atomico_evita_uso_duplicado():
+    """Regressao anti-exploit: o card de inventario nao apaga o botao 'usar'
+    in-place apos o uso, entao ele persiste. `consume_consumable` so concede o
+    efeito se houver qty>0 (guard atomico) — clicar o botao depois do item
+    zerar retorna False (sem +XP/heal de graca). Cobre tambem item inexistente."""
+    chat_id = -1008888888888
+    uid = 555
+    iid = "tomo"
+    main.cur.execute(
+        "INSERT OR REPLACE INTO inventory (chat_id, user_id, item_id, qty) "
+        "VALUES (?, ?, ?, 1)", (chat_id, uid, iid))
+    main.db.commit()
+
+    assert main.consume_consumable(chat_id, uid, iid) is True   # 1o uso ok
+    assert main.consume_consumable(chat_id, uid, iid) is False  # zerou -> nega
+    # linha removida quando qty<=0 (sem qty negativo)
+    assert main.cur.execute(
+        "SELECT 1 FROM inventory WHERE chat_id=? AND user_id=? AND item_id=?",
+        (chat_id, uid, iid)).fetchone() is None
+    # item que o jogador nunca teve -> tambem nega
+    assert main.consume_consumable(chat_id, uid, "nao_existe") is False
+
+
+def test_privacy_chat_id_prefere_grupo_ativo():
+    """Regressao bug: configs de privacidade na DM miram o grupo ATIVO (escolha
+    em /royalgrupo), nao um arbitrario (`LIMIT 1`). Antes, quem tinha perfil em
+    varios grupos so conseguia configurar a privacidade de um deles."""
+    from royal.handlers.privacidade import _privacy_chat_id
+    uid = 990011
+    chat_a = -1009000000001
+    chat_b = -1009000000002
+    for c, rid in ((chat_a, "RYL-9001"), (chat_b, "RYL-9002")):
+        main.cur.execute(
+            "INSERT OR REPLACE INTO players (chat_id, user_id, royal_id) "
+            "VALUES (?, ?, ?)", (c, uid, rid))
+    main.db.commit()
+
+    # sem grupo ativo -> fallback p/ algum grupo com perfil
+    assert _privacy_chat_id(uid) in (chat_a, chat_b)
+    # ativo = B -> retorna exatamente B (nao o arbitrario)
+    main.set_dm_active_chat(uid, chat_b)
+    assert _privacy_chat_id(uid) == chat_b
+    # ativo aponta p/ grupo SEM perfil -> ignora e cai no fallback valido
+    main.set_dm_active_chat(uid, -1009999999999)
+    assert _privacy_chat_id(uid) in (chat_a, chat_b)
+    # usuario sem nenhum perfil -> None
+    assert _privacy_chat_id(880022) is None
+
+
 def test_migrate_listas_cobrem_todas_as_tabelas_com_chat_id():
     """Guarda de regressao: nenhuma tabela com coluna chat_id pode ficar fora
     das listas de migracao (senao novo schema orfanaria dados na migracao)."""

@@ -104,6 +104,22 @@ from royal.core import (STYLE_INFO, STYLE_NO, bot, cur, db, dp, ensure_player, g
 
 router = Router()
 
+
+def _privacy_chat_id(uid: int) -> int | None:
+    """Grupo-alvo das configs de privacidade na DM. Prefere o grupo ATIVO da
+    DM (mesma convencao de /royalperfil, /royalsaldo etc. via resolve_dm_chat);
+    cai pro primeiro grupo com perfil se o ativo nao tiver perfil ou nao estiver
+    setado. Antes usava `SELECT chat_id ... LIMIT 1` (grupo ARBITRARIO), entao
+    quem tinha perfil em varios grupos so conseguia configurar privacidade de um
+    deles, ignorando o grupo ativo escolhido em /royalgrupo."""
+    active = get_dm_active_chat(uid)
+    if active is not None and get_player(active, uid):
+        return active
+    row = cur.execute(
+        "SELECT chat_id FROM players WHERE user_id=? LIMIT 1", (uid,)).fetchone()
+    return row["chat_id"] if row else None
+
+
 @router.message(Command("royalprivacidade"))
 async def royal_priv(message: Message):
     if not message.from_user:
@@ -122,12 +138,10 @@ async def royal_priv(message: Message):
             "🔒 Use /royalprivacidade no chat privado comigo para "
             "configurar suas opções.", reply_markup=kb)
         return
-    cur.execute("SELECT chat_id FROM players WHERE user_id=? LIMIT 1", (message.from_user.id,))
-    row = cur.fetchone()
-    if not row:
+    chat_id = _privacy_chat_id(message.from_user.id)
+    if chat_id is None:
         await message.answer("Você ainda não tem perfil no Reino.")
         return
-    chat_id = row["chat_id"]
     p = ensure_player(chat_id, message.from_user.id)
     db.commit()
     hide_rank = bool(p["privacy_hide_ranking"])
@@ -253,12 +267,10 @@ async def priv_cb(cb: CallbackQuery):
         await cb.answer()
         return
     sub = parts[2]
-    cur.execute("SELECT chat_id FROM players WHERE user_id=? LIMIT 1", (cb.from_user.id,))
-    row = cur.fetchone()
-    if not row:
+    chat_id = _privacy_chat_id(cb.from_user.id)
+    if chat_id is None:
         await cb.answer("Sem perfil", show_alert=True)
         return
-    chat_id = row["chat_id"]
     if sub == "rank":
         cur.execute(
             "UPDATE players SET privacy_hide_ranking=1-privacy_hide_ranking "

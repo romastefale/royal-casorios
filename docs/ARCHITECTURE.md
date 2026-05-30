@@ -153,6 +153,11 @@ nelas** (marcadas como LEGADO/INERTE nos docstrings).
   prossegue se `rowcount==1`. **BAÚ** → `spawn_chest()` faz `UPDATE chests SET status='open' WHERE id=?
   AND status='pending'` ANTES de enviar; só o vencedor manda. ⚠️ Defesa em profundidade — a causa raiz
   (2 instâncias) deve ser corrigida no Railway (réplicas=1 + kill do container antigo antes do novo).
+- **🛡️ Consumo de item (mesmo padrão):** o card de inventário NÃO atualiza/apaga o teclado in-place
+  após "usar", então o botão persiste. `consume_consumable()` decrementa com guard atômico
+  (`UPDATE inventory SET qty=qty-1 WHERE ... AND qty>0`) e só concede o efeito (XP/heal) se
+  `rowcount>0` — fecha o exploit de clicar o botão depois do item zerar e ganhar efeito de graça.
+  Teste: `test_consume_consumable_atomico_evita_uso_duplicado`.
 
 ---
 
