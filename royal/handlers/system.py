@@ -101,7 +101,7 @@ import hashlib
 from aiogram import Router
 
 from royal.config import (LUCKY_DAILY_CAP, LUCKY_EMOJI, MUSIC_BOT_ID, MUSIC_BOT_REACTION, MUSIC_BOT_XP_MULTIPLIER, OWNER_USER_ID, REACTION_XP, REACTION_XP_DAILY_CAP, RECENT_WINDOW_SECONDS, XP_PER_MESSAGE, logger, lucky_reward_for)
-from royal.core import (REJOIN_DEDUP_SEC, _extract_text_mentioned_users, _rejoin_welcome_ts, activity_buffer, auto_delete_after, award_xp_immediate, award_xp_message, bot, cur, db, display_name, dp, ensure_chat, ensure_player, format_br, get_active_challenge, get_name, get_player, handle_palavra_attempt, is_chat_muted, local_now, mention, migrate_chat_data, normalize_pair, pair_buffer, quest_bump, react_to, recent_messages, safe_send, send_profile_card, term_block, today_key, upsert_user, utc_now)
+from royal.core import (REJOIN_DEDUP_SEC, _extract_text_mentioned_users, _rejoin_welcome_ts, activity_buffer, auto_delete_after, award_xp_immediate, award_xp_message, bot, cur, db, display_name, dp, ensure_chat, ensure_player, format_br, get_active_challenge, get_name, get_player, handle_palavra_attempt, is_chat_muted, is_player_out, local_now, mention, migrate_chat_data, normalize_pair, pair_buffer, quest_bump, react_to, recent_messages, safe_send, send_profile_card, term_block, today_key, upsert_user, utc_now)
 
 router = Router()
 
@@ -191,6 +191,10 @@ async def on_member_rejoin(event: ChatMemberUpdated):
         cutoff = nowm - REJOIN_DEDUP_SEC
         for k in [k for k, t in _rejoin_welcome_ts.items() if t < cutoff]:
             _rejoin_welcome_ts.pop(k, None)
+    # Etapa 4: quem saiu do jogo (left_game=1) nao e mencionado no grupo ao reentrar
+    # no Telegram — so /royalvoltar reativa. Sem ping enquanto fora.
+    if is_player_out(chat_id, u.id):
+        return
     ensure_chat(chat_id, event.chat.title)
     nome = u.full_name or (f"@{u.username}" if u.username else "")
     try:
@@ -288,6 +292,8 @@ async def lucky_emoji_handler(message: Message):
         uid = user.id
         if is_chat_muted(chat_id):
             return
+        if is_player_out(chat_id, uid):  # Etapa 4: fora do jogo nao ganha florins/jackpot
+            return
         xp, gold, jackpot = lucky_reward_for(d.value)
         if xp <= 0:
             return  # não foi trinca — silencioso (sem flood)
@@ -357,7 +363,12 @@ async def track(message: Message):
 
     # RPG: garante player + XP por mensagem
     try:
-        ensure_player(chat_id, uid)
+        _p = ensure_player(chat_id, uid)
+        # Saida reversivel: quem saiu do jogo (left_game=1) nao pontua, nao
+        # participa da Palavra nem gera afinidade de casorio — so volta a
+        # contar depois de /royalvoltar. Dados ficam intactos.
+        if _p.get("left_game"):
+            return
         is_reply = bool(
             message.reply_to_message and message.reply_to_message.from_user
             and not message.reply_to_message.from_user.is_bot
@@ -423,6 +434,9 @@ async def on_message_reaction(event: MessageReactionUpdated):
             (chat_id, uid, day)).fetchone()
         cnt = row["count"] if row else 0
         if cnt >= REACTION_XP_DAILY_CAP:
+            return
+        # Saida reversivel: quem saiu do jogo nao pontua nem progride quests.
+        if is_player_out(chat_id, uid):
             return
         ensure_player(chat_id, uid)
         cur.execute(

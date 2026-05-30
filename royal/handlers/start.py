@@ -125,6 +125,7 @@ async def start_cmd(message: Message):
         "• 🏰 /royalgrupo — trocar grupo ativo\n"
         "• 🔒 /royalprivacidade — controles\n"
         "• 📦 /royaldados — exportar / apagar\n"
+        "• 🚪 /royalsair — sair do jogo (reversivel)\n"
         "• 🗺️ /royalmissoes — missoes diarias (XP + florins)\n"
         "• 🎉 /royalevento — evento de XP ativo agora\n"
         "• 🏅 /royalconquistas — suas medalhas\n"

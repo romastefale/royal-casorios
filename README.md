@@ -145,6 +145,7 @@ Tudo começa com **`/royal`** (o Hub) ou **`/royaltutorial`**. Lista completa:
 | `/royalconfig` | Preferências (esconder do ranking, etc.) |
 | `/royalprivacidade` | Esconder/mostrar nos rankings |
 | `/royaldados` | Exportar ou apagar seus dados |
+| `/royalsair` · `/royalvoltar` | Sair do jogo e voltar quando quiser — seu progresso fica todo guardado |
 | `/royalgrupo` | Trocar o grupo Royal ativo na sua DM |
 | `/royalativar` | **(admin)** Liga o bot no grupo |
 

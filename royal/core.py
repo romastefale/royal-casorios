@@ -800,6 +800,19 @@ def migrate_to_v6(c: sqlite3.Cursor) -> None:
                 total, len(chats))
 
 
+def migrate_to_v16(c: sqlite3.Cursor) -> None:
+    """Etapa 4 — entrada/saída do jogo (reversível). left_game=1 marca o
+    jogador como fora do jogo: NUNCA apaga dados (XP, royal_id, casórios,
+    inventário, saldo ficam intactos) — só para de pontuar, de aparecer no
+    ranking, de ser mencionado e de entrar em casórios até voltar
+    (/royalvoltar). Default 0 = jogando normalmente."""
+    try:
+        c.execute("ALTER TABLE players ADD COLUMN left_game INTEGER DEFAULT 0")
+    except sqlite3.OperationalError as e:
+        if "duplicate column" not in str(e).lower():
+            raise
+
+
 MIGRATIONS = [
     (1, migrate_to_v1),
     (2, migrate_to_v2),
@@ -816,6 +829,7 @@ MIGRATIONS = [
     (13, migrate_to_v13),
     (14, migrate_to_v14),
     (15, migrate_to_v15),
+    (16, migrate_to_v16),
 ]
 
 
@@ -904,6 +918,9 @@ async def announce_achievement_group(chat_id: int, user_id: int,
     do link tg://user?id=… do mention(). Silencioso em erro (não derruba o
     fluxo de XP). Não usa message_effect_id (efeitos só valem em DM)."""
     if bot is None:
+        return
+    # Jogador fora do jogo (saida reversivel) nao e mencionado no grupo.
+    if is_player_out(chat_id, user_id):
         return
     spec = ACHIEVEMENTS.get(slug)
     if not spec:
@@ -1947,8 +1964,13 @@ def pair_recently_used(chat_id: int, u1: int, u2: int) -> bool:
 
 def user_is_available(chat_id: int, user_id: int) -> bool:
     cutoff = (utc_now() - timedelta(hours=48)).isoformat()
+    # Exclui tambem quem saiu do jogo (players.left_game=1): saida reversivel
+    # tira o jogador dos casorios automaticos sem apagar nada.
     cur.execute(
-        "SELECT 1 FROM users WHERE chat_id=? AND user_id=? AND opt_out=0 AND last_seen>=? LIMIT 1",
+        "SELECT 1 FROM users u WHERE u.chat_id=? AND u.user_id=? "
+        "AND u.opt_out=0 AND u.last_seen>=? "
+        "AND NOT EXISTS (SELECT 1 FROM players p WHERE p.chat_id=u.chat_id "
+        "AND p.user_id=u.user_id AND p.left_game=1) LIMIT 1",
         (chat_id, user_id, cutoff),
     )
     return cur.fetchone() is not None
@@ -2249,6 +2271,38 @@ def get_player_by_royal_id(chat_id: int, royal_id: str) -> dict | None:
     )
     row = cur.fetchone()
     return dict(row) if row else None
+
+
+def is_player_out(chat_id: int, user_id: int) -> bool:
+    """True se o jogador saiu do jogo (left_game=1). Saída reversível: os
+    dados ficam intactos, mas enquanto fora o jogador não pontua, não aparece
+    no ranking, não é mencionado e não entra em casórios — até voltar."""
+    row = cur.execute(
+        "SELECT left_game FROM players WHERE chat_id=? AND user_id=?",
+        (chat_id, user_id)).fetchone()
+    return bool(row and row["left_game"])
+
+
+def set_player_out(chat_id: int, user_id: int, out: bool) -> None:
+    """Marca/desmarca o jogador como fora do jogo. NUNCA apaga dados — só
+    alterna o sinalizador reversível left_game (saída/volta)."""
+    cur.execute(
+        "UPDATE players SET left_game=? WHERE chat_id=? AND user_id=?",
+        (1 if out else 0, chat_id, user_id))
+    db.commit()
+
+
+def top_season_players(chat_id: int, limit: int = 10):
+    """Linhas do ranking público da temporada (top N por season_xp). Exclui
+    quem se ocultou no /royalconfig (privacy_hide_ranking) e quem saiu do
+    jogo (left_game) — esses não são rankeados até voltar."""
+    cur.execute(
+        "SELECT royal_id, user_id, season_xp, total_xp, avatar_slug "
+        "FROM players "
+        "WHERE chat_id=? AND season_xp > 0 AND privacy_hide_ranking=0 "
+        "AND left_game=0 "
+        "ORDER BY season_xp DESC LIMIT ?", (chat_id, limit))
+    return cur.fetchall()
 
 
 def is_test_chat(chat_id: int) -> bool:
@@ -2715,6 +2769,10 @@ def player_has_active_couple(chat_id: int, user_id: int) -> bool:
 
 def award_xp_immediate(chat_id: int, user_id: int, amount: int, reason: str = "") -> None:
     """Concede XP imediato sem checar cooldown (usado para eventos: casamento, palavra, boss)."""
+    # Etapa 4: quem saiu do jogo (left_game=1) nao pontua por NENHUMA via.
+    # Chokepoint central — cobre couple/palavra/chest/boss/vote_like/quest/music/lucky/tomo.
+    if is_player_out(chat_id, user_id):
+        return
     player = ensure_player(chat_id, user_id)
     # bonus de classe cronista (+10%)
     if player.get("class_id") == "cronista":
@@ -2748,6 +2806,8 @@ def award_xp_immediate(chat_id: int, user_id: int, amount: int, reason: str = ""
 
 def award_xp_message(chat_id: int, user_id: int, is_reply: bool) -> None:
     """Concede XP de mensagem normal ou reply, com cooldown."""
+    if is_player_out(chat_id, user_id):  # Etapa 4: jogador fora nao pontua
+        return
     player = ensure_player(chat_id, user_id)
     now = utc_now()
     field = "last_xp_reply_at" if is_reply else "last_xp_msg_at"
@@ -2797,6 +2857,9 @@ async def announce_level_up_group(chat_id: int, user_id: int,
     tg://user?id=… do mention(), que notifica a pessoa mesmo com nome
     anonimizado no client."""
     if bot is None:
+        return
+    # Jogador fora do jogo (saida reversivel) nao e mencionado no grupo.
+    if is_player_out(chat_id, user_id):
         return
     try:
         name = get_name(chat_id, user_id)
@@ -4149,7 +4212,8 @@ async def close_season(chat_id: int, old_code: str | None, new_code: str) -> Non
     if old_code:
         cur.execute(
             "SELECT royal_id, user_id, season_xp FROM players "
-            "WHERE chat_id=? AND season_xp > 0 ORDER BY season_xp DESC LIMIT 10",
+            "WHERE chat_id=? AND season_xp > 0 AND left_game=0 "
+            "ORDER BY season_xp DESC LIMIT 10",
             (chat_id,))
         top = cur.fetchall()
         if top:
@@ -4198,7 +4262,9 @@ ROYAL_TUTORIAL_PARTS: list[tuple[str, str]] = [
         "Você não precisa de app nenhum: <b>conversar já é jogar</b>. "
         "Cada mensagem te dá XP, sobe de nível, libera atributos e "
         "te coloca pra disputar o trono do reino.\n"
-        "// não existe \"sair do jogo\" — ele roda 24h no grupo."
+        "// o jogo roda 24h no grupo, mas você pode <b>sair quando "
+        "quiser</b> com /royalsair e <b>voltar</b> com /royalvoltar — seu "
+        "progresso fica todo guardado, nada é perdido."
         "</blockquote>"
 
         "<blockquote expandable>"
@@ -4522,7 +4588,12 @@ ROYAL_HELP = (
     "qualquer chat pra enviar seu cartão de perfil 📜</blockquote>\n"
     "<blockquote expandable>🔒 <b>Privacidade &amp; dados (DM)</b>\n"
     "/royalprivacidade — controles de privacidade\n"
-    "/royaldados — exportar ou apagar seus dados</blockquote>"
+    "/royaldados — exportar ou apagar seus dados</blockquote>\n"
+    "<blockquote expandable>🚪 <b>Sair &amp; voltar (grupo ou DM)</b>\n"
+    "/royalsair — sair do jogo (para de pontuar e de aparecer)\n"
+    "/royalvoltar — voltar a jogar\n"
+    "<i>// reversível: nada é apagado, seu progresso fica guardado.</i>"
+    "</blockquote>"
 )
 
 
@@ -4695,12 +4766,7 @@ async def send_ranking(source_chat_id: int, *, target_chat_id: int,
     """Envia ranking: card pódio (top 3) + caption com top 10.
     `owner_uid` adiciona o botão ❌ Fechar p/ quem pediu o ranking."""
     ck = with_close(None, owner_uid) if owner_uid is not None else None
-    cur.execute(
-        "SELECT royal_id, user_id, season_xp, total_xp, avatar_slug "
-        "FROM players "
-        "WHERE chat_id=? AND season_xp > 0 AND privacy_hide_ranking=0 "
-        "ORDER BY season_xp DESC LIMIT 10", (source_chat_id,))
-    rows = cur.fetchall()
+    rows = top_season_players(source_chat_id, limit=10)
     if not rows:
         await safe_send(target_chat_id, term_block(
             "RANKING",

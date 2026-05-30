@@ -101,7 +101,7 @@ import hashlib
 from aiogram import Router
 
 from royal.config import (logger)
-from royal.core import (ITEMS, assert_owner, award_xp_immediate, bot, cap1024, consume_consumable, cur, db, dp, ensure_player, format_br, get_anon_name, get_player, inv_keyboard, react_to, register_owner, resolve_dm_chat, safe_typing, term_block)
+from royal.core import (ITEMS, assert_owner, award_xp_immediate, bot, cap1024, consume_consumable, cur, db, dp, ensure_player, format_br, get_anon_name, get_player, inv_keyboard, is_player_out, react_to, register_owner, resolve_dm_chat, safe_typing, term_block)
 
 router = Router()
 
@@ -233,6 +233,10 @@ async def inv_cb(cb: CallbackQuery):
         return
 
     if sub == "use":
+        if is_player_out(chat_id, uid):  # Etapa 4: fora do jogo nao consome itens
+            await cb.answer("Você está fora do jogo. Use /royalvoltar primeiro.",
+                            show_alert=True)
+            return
         item = ITEMS.get(iid, {})
         if item.get("type") != "consumable":
             await cb.answer()

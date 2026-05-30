@@ -100,7 +100,7 @@ from royal_render import (
 import hashlib
 from aiogram import Router
 
-from royal.core import (STYLE_INFO, STYLE_NO, bot, cur, db, dp, ensure_player, get_dm_active_chat, get_player, group_picker_kb, ikb, is_group, is_test_chat, list_user_groups, set_dm_active_chat, term_block, term_pre)
+from royal.core import (STYLE_INFO, STYLE_NO, STYLE_OK, bot, cur, db, dp, ensure_player, get_dm_active_chat, get_player, group_picker_kb, ikb, is_group, is_player_out, is_test_chat, list_user_groups, set_dm_active_chat, set_player_out, term_block, term_pre)
 
 router = Router()
 
@@ -313,5 +313,139 @@ async def dados_cb(cb: CallbackQuery):
         await cb.answer("Dados apagados ✓", show_alert=True)
         return
     await cb.answer()
+
+
+# --------------------------------------------------------------------------
+# Etapa 4 — Entrada e saida do jogo (REVERSIVEL).
+# /royalsair  -> jogador para de pontuar/aparecer/ser mencionado/casar.
+# /royalvoltar -> volta a jogar. NADA e apagado: so alterna players.left_game.
+# Funciona no grupo (chat atual) e na DM (grupo ativo, mesma convencao das
+# configs de privacidade). Callback prefixo "sair:" (NAO "r:..." pra nao ser
+# interceptado pelo hub_cb). Botao travado por uid embutido.
+# --------------------------------------------------------------------------
+def _game_target_chat(uid: int, message: Message) -> int | None:
+    """Resolve o grupo-alvo do sair/voltar: no grupo e o proprio chat; na DM
+    e o grupo ativo (mesma convencao de _privacy_chat_id)."""
+    if is_group(message):
+        return message.chat.id
+    return _privacy_chat_id(uid)
+
+
+@router.message(Command("royalsair", "sair"))
+async def royal_sair(message: Message):
+    if not message.from_user:
+        return
+    uid = message.from_user.id
+    chat_id = _game_target_chat(uid, message)
+    if chat_id is None or get_player(chat_id, uid) is None:
+        await message.answer(term_block(
+            "JOGO", "<i>Você ainda não tem perfil neste reino.</i>",
+            status="SEM_REINO", status_color="AMBER"))
+        return
+    if is_player_out(chat_id, uid):
+        await message.answer(term_block(
+            "JOGO",
+            "<i>Você já está fora do jogo.</i>\n"
+            ">> use /royalvoltar quando quiser retomar — seu progresso "
+            "está intacto.",
+            status="FORA", status_color="AMBER"))
+        return
+    body = (
+        "<i>Quer sair do jogo?</i>\n"
+        "<blockquote>"
+        ">> Você para de ganhar XP, de aparecer no ranking e de ser "
+        "marcado nos avisos do grupo.\n"
+        ">> Nada é apagado: XP, RYL ID, casórios, inventário e florins 🪙 "
+        "ficam guardados.\n"
+        ">> Volte quando quiser com /royalvoltar — tudo como você deixou."
+        "</blockquote>"
+    )
+    await message.answer(
+        term_block("JOGO", body, status="CONFIRMAR", status_color="AMBER",
+                   stamp="reversível a qualquer hora"),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [ikb("🚪 Confirmar saída",
+                 callback_data=f"sair:yes:{chat_id}:{uid}", style=STYLE_NO)],
+            [ikb("↩️ Cancelar",
+                 callback_data=f"sair:no:{uid}", style=STYLE_INFO)],
+        ]))
+
+
+@router.callback_query(F.data.startswith("sair:"))
+async def sair_cb(cb: CallbackQuery):
+    if not cb.data or not cb.from_user:
+        await cb.answer()
+        return
+    parts = cb.data.split(":")
+    sub = parts[1] if len(parts) > 1 else ""
+    if sub == "no":
+        owner = parts[2] if len(parts) > 2 else ""
+        if str(cb.from_user.id) != owner:
+            await cb.answer("Esse botão não é seu.", show_alert=True)
+            return
+        try:
+            if cb.message:
+                await cb.message.edit_text(term_block(
+                    "JOGO",
+                    "<i>Saída cancelada — você continua no jogo. ⚔️</i>",
+                    status="OK", status_color="ACID"))
+        except TelegramBadRequest:
+            pass
+        await cb.answer()
+        return
+    if sub == "yes":
+        try:
+            chat_id = int(parts[2])
+            owner = parts[3]
+        except (IndexError, ValueError):
+            await cb.answer()
+            return
+        if str(cb.from_user.id) != owner:
+            await cb.answer("Esse botão não é seu.", show_alert=True)
+            return
+        if get_player(chat_id, cb.from_user.id) is None:
+            await cb.answer("Sem perfil neste reino.", show_alert=True)
+            return
+        set_player_out(chat_id, cb.from_user.id, True)
+        try:
+            if cb.message:
+                await cb.message.edit_text(term_block(
+                    "JOGO",
+                    "<i>Você saiu do jogo. Seu progresso está guardado.</i>\n"
+                    ">> volte quando quiser com /royalvoltar — tudo intacto.",
+                    status="FORA", status_color="AMBER",
+                    stamp="te esperamos de volta"))
+        except TelegramBadRequest:
+            pass
+        await cb.answer("Você saiu do jogo ✓")
+        return
+    await cb.answer()
+
+
+@router.message(Command("royalvoltar", "voltar"))
+async def royal_voltar(message: Message):
+    if not message.from_user:
+        return
+    uid = message.from_user.id
+    chat_id = _game_target_chat(uid, message)
+    if chat_id is None or get_player(chat_id, uid) is None:
+        await message.answer(term_block(
+            "JOGO", "<i>Você ainda não tem perfil neste reino.</i>",
+            status="SEM_REINO", status_color="AMBER"))
+        return
+    if not is_player_out(chat_id, uid):
+        await message.answer(term_block(
+            "JOGO", "<i>Você já está no jogo. ⚔️</i>",
+            status="OK", status_color="ACID"))
+        return
+    set_player_out(chat_id, uid, False)
+    await message.answer(term_block(
+        "JOGO",
+        "<i>Bem-vindo de volta, nobre! 👑</i>\n"
+        ">> tudo como você deixou — XP, RYL ID, casórios e florins 🪙 "
+        "intactos.\n"
+        ">> conversar já volta a dar XP. Veja sua ficha com /royalperfil.",
+        status="DE_VOLTA", status_color="ACID",
+        stamp="a corte sentiu sua falta"))
 
 

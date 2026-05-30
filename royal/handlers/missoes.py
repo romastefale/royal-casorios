@@ -101,7 +101,7 @@ import hashlib
 from aiogram import Router
 
 from royal.config import (DAILY_QUESTS_BY_ID, TZ_NAME, logger)
-from royal.core import (_quests_render, award_xp_immediate, bot, cap1024, cur, db, dp, ensure_player, get_anon_name, get_dm_active_chat, get_quest_state, resolve_dm_chat, safe_typing, term_block, today_key, with_close)
+from royal.core import (_quests_render, award_xp_immediate, bot, cap1024, cur, db, dp, ensure_player, get_anon_name, get_dm_active_chat, get_quest_state, is_player_out, resolve_dm_chat, safe_typing, term_block, today_key, with_close)
 
 router = Router()
 
@@ -176,6 +176,10 @@ async def quest_claim_cb(cb: CallbackQuery):
         await cb.answer("Sem reino ativo.", show_alert=True)
         return
     uid = cb.from_user.id
+    if is_player_out(chat_id, uid):  # Etapa 4: fora do jogo nao resgata XP/florins
+        await cb.answer("Você está fora do jogo. Use /royalvoltar primeiro.",
+                        show_alert=True)
+        return
     day = today_key()
     # garante linha em players antes de creditar gold (evita UPDATE no-op)
     ensure_player(chat_id, uid)

@@ -174,6 +174,28 @@ nelas** (marcadas como LEGADO/INERTE nos docstrings).
 
 ---
 
+## 🚪 Entrada e saída do jogo (reversível)
+
+- **`/royalsair` + `/royalvoltar`** (handlers em `royal/handlers/privacidade.py`): qualquer membro sai
+  do jogo de forma **100% reversível** e volta quando quiser, **sem perder nada**.
+- Sinalizador: coluna **`players.left_game`** (migration **v16**, default 0). **Decisão (drift do
+  spec):** NÃO reusamos `users.opt_out` — `opt_out` é exclusivo dos casórios ("encalhar/desencalhar":
+  o jogador continua jogando, só sai do shipper). Conflar os dois quebraria o encalhar. `left_game` é um
+  flag novo, independente, que NUNCA apaga dados (≠ `/royaldados` wipe).
+- Helpers em `core.py`: `is_player_out`, `set_player_out`, `top_season_players` (ranking já filtra
+  `left_game=0`).
+- **Gating (onde "fora" deixa de contar):** `track` e `on_message_reaction` (sem XP/quests/Palavra/
+  afinidade), `user_is_available` (fora dos casórios automáticos), `send_ranking`/`top_season_players` +
+  `close_season` (fora do ranking e do hall da fama), `announce_level_up_group`/
+  `announce_achievement_group` (não menciona no grupo). Ao voltar (`left_game=0`) tudo é restaurado —
+  os dados nunca foram tocados.
+- **UX (regra do dono, não floodar):** `/royalsair` pede confirmação com botões inline editados
+  **in-place** (callback prefixo **`sair:`**, NÃO `r:…` p/ não cair no `hub_cb`; botão travado por uid
+  embutido). Funciona no grupo (chat atual) e na DM (grupo ativo). `/start`, `ROYAL_HELP` e
+  `ROYAL_TUTORIAL_PARTS` (parte 1/6) mencionam de forma amigável. Testes: `tests/test_leave_game.py`.
+
+---
+
 ## 📋 Menus (BotCommands)
 
 Registrados em `register_bot_commands()` (scopes `AllGroupChats` e `AllPrivateChats`). Telegram
