@@ -144,6 +144,38 @@ def test_poll_answer_idempotente_e_so_inscritos(monkeypatch):
     assert 999 not in sess.scores
 
 
+def test_cleanup_apaga_enquetes_e_lobby(monkeypatch):
+    deleted: list[tuple[int, int]] = []
+
+    class _FakeBot:
+        async def delete_message(self, chat_id, message_id):
+            deleted.append((chat_id, message_id))
+
+    sess = quizmod.QuizSession(
+        chat_id=-77, admin_id=1, theme="t", count=5, state="done")
+    sess.poll_mids = [11, 12, 13]
+    sess.lobby_mid = 10
+    monkeypatch.setattr(quizmod, "bot", _FakeBot())
+    asyncio.run(quizmod._cleanup_quiz_messages(sess))
+    assert deleted == [(-77, 11), (-77, 12), (-77, 13), (-77, 10)]
+
+
+def test_cleanup_tolera_falha_e_bot_none(monkeypatch):
+    class _BoomBot:
+        async def delete_message(self, chat_id, message_id):
+            raise RuntimeError("message can't be deleted")
+
+    sess = quizmod.QuizSession(
+        chat_id=-88, admin_id=1, theme="t", count=5, state="done")
+    sess.poll_mids = [1, 2]
+    sess.lobby_mid = None
+    monkeypatch.setattr(quizmod, "bot", _BoomBot())
+    asyncio.run(quizmod._cleanup_quiz_messages(sess))   # não levanta
+
+    monkeypatch.setattr(quizmod, "bot", None)
+    asyncio.run(quizmod._cleanup_quiz_messages(sess))   # no-op
+
+
 def test_poll_answer_ignora_quiz_nao_rodando(monkeypatch):
     chat_id, poll_id = -2000, "pollY"
     sess = quizmod.QuizSession(

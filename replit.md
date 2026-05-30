@@ -230,7 +230,10 @@ Módulos: `royal/mira.py` (ponte: `ask_mira`/`on_mira_reply`/`parse_words`/`fetc
   ⚠️ **Idempotência por pergunta:** o Telegram pode emitir vários `poll_answer` pro mesmo
   `(poll_id,user)` enquanto o voto muda → cada `_polls[poll_id]` guarda um `answered:set` e pontua no
   MÁXIMO 1×/pergunta (não remover). Fim → **Card top-5** (`render_quiz_card`/`QuizCardEntry`,
-  card-first + fallback texto). Estado **em memória** (1 quiz/grupo, sem persistência entre restarts
+  card-first + fallback texto). **Limpeza pós-pódio (regra do dono, não floodar):**
+  `_cleanup_quiz_messages` apaga as enquetes respondidas (`sess.poll_mids`) + a msg de
+  lobby/início, deixando **só o pódio**; o pódio some sozinho após `QUIZ_PODIUM_TTL` (900s = 15min,
+  via `auto_delete_after`). Estado **em memória** (1 quiz/grupo, sem persistência entre restarts
   — efêmero) + watchdog auto-cancela a janela após 600s. **Decisão:** quiz NÃO concede XP (pontos são
   só do placar do quiz → evita flood de level-up). Sem novas env vars (reusa a ponte; `MIRA_USERNAME`
   vazio = off → comando avisa e sai). `/start` ("Como funciona"), `ROYAL_HELP` e `ROYAL_TUTORIAL_PARTS`

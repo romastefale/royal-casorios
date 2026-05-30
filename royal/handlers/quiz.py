@@ -72,6 +72,7 @@ QUIZ_COUNT_OPTIONS = (5, 10)     # quantidades de perguntas oferecidas
 QUIZ_POLL_SECONDS = 30           # open_period de cada enquete (Telegram: 5-600)
 QUIZ_LOBBY_TIMEOUT = 600         # auto-cancela a janela se ninguém começar
 QUIZ_THEME_MAX = 80              # corta o tema do usuário
+QUIZ_PODIUM_TTL = 900            # apaga o pódio 15min após o fim do quiz
 
 
 @dataclass
@@ -84,6 +85,7 @@ class QuizSession:
     participants: set = field(default_factory=set)   # user_ids inscritos
     scores: dict = field(default_factory=dict)       # user_id -> pontos
     questions: list = field(default_factory=list)
+    poll_mids: list = field(default_factory=list)    # message_ids das enquetes
     ready: bool = False
     failed: bool = False
     state: str = "lobby"   # lobby | running | done | cancelled
@@ -385,6 +387,7 @@ async def _run_quiz(sess: QuizSession) -> None:
             except Exception:
                 logger.exception("[QUIZ] send_poll falhou")
                 continue
+            sess.poll_mids.append(msg.message_id)
             if msg.poll:
                 _polls[msg.poll.id] = {
                     "chat_id": chat_id, "correct": q.correct, "answered": set(),
@@ -429,13 +432,31 @@ async def rq_poll_answer(poll_answer: PollAnswer):
         sess.scores[uid] = sess.scores.get(uid, 0) + 1
 
 
+async def _cleanup_quiz_messages(sess: QuizSession) -> None:
+    """Após o pódio: apaga as enquetes respondidas + a msg de lobby/início,
+    deixando SÓ a mensagem do pódio no chat (regra do dono: não floodar)."""
+    if bot is None:
+        return
+    mids = list(sess.poll_mids)
+    if sess.lobby_mid is not None:
+        mids.append(sess.lobby_mid)
+    for mid in mids:
+        try:
+            await bot.delete_message(sess.chat_id, mid)
+        except Exception:
+            pass
+
+
 async def _send_results(sess: QuizSession) -> None:
     chat_id = sess.chat_id
     ranked = quiz_top(sess.scores, n=10)
     if not ranked:
-        await safe_send(chat_id, term_block(
+        m = await safe_send(chat_id, term_block(
             "QUIZ", "<i>Ninguém pontuou neste quiz. 🦗</i>",
             status="VAZIO", status_color="AMBER", stamp=sess.theme[:24]))
+        await _cleanup_quiz_messages(sess)
+        if m is not None:
+            await auto_delete_after(m, QUIZ_PODIUM_TTL)
         return
     medals = ["🥇", "🥈", "🥉"] + ["🏅"] * 7
     entries: list[QuizCardEntry] = []
@@ -457,15 +478,20 @@ async def _send_results(sess: QuizSession) -> None:
                          status="FIM", status_color="ACID",
                          stamp=sess.theme[:24])
     await safe_typing(chat_id, "upload_photo")
+    podium = None
     try:
         png = await asyncio.to_thread(
             render_quiz_card, sess.theme[:40], tuple(entries))
         if png and bot is not None:
-            await bot.send_photo(
+            podium = await bot.send_photo(
                 chat_id,
                 BufferedInputFile(png, filename="royal_quiz.jpg"),
                 caption=cap1024(caption))
-            return
     except Exception:
         logger.exception("[QUIZ] card falhou; fallback texto")
-    await safe_send(chat_id, caption)
+    if podium is None:
+        podium = await safe_send(chat_id, caption)
+    # Limpa as enquetes/lobby (deixa só o pódio) e agenda o pódio p/ sumir.
+    await _cleanup_quiz_messages(sess)
+    if podium is not None:
+        await auto_delete_after(podium, QUIZ_PODIUM_TTL)

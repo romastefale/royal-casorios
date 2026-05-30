@@ -71,8 +71,10 @@
   **Idempotente por pergunta:** o Telegram pode reenviar `poll_answer` pro mesmo `(poll_id,user)` →
   `_polls[poll_id]["answered"]` (set) garante no MÁX 1 ponto/pergunta. Fim → **Card top-5**
   `render_quiz_card`/`QuizCardEntry` (reusa a linguagem visual do pódio; card-first + fallback texto).
-  Estado **em memória** (`_sessions`/`_polls`, 1 quiz/grupo, efêmero — sem persistir entre restarts) +
-  watchdog 600s. **Quiz NÃO dá XP** (pontos só do placar → evita flood de level-up). `/start`,
+  **Limpeza pós-pódio** (`_cleanup_quiz_messages`): apaga as enquetes respondidas (`sess.poll_mids`) +
+  a msg de lobby, deixando só o pódio; o pódio é apagado após `QUIZ_PODIUM_TTL` (900s) via
+  `auto_delete_after`. Estado **em memória** (`_sessions`/`_polls`, 1 quiz/grupo, efêmero — sem
+  persistir entre restarts) + watchdog 600s. **Quiz NÃO dá XP** (pontos só do placar → evita flood de level-up). `/start`,
   `ROYAL_HELP` e `ROYAL_TUTORIAL_PARTS` (4/6) mencionam `/rquiz`. Testes: `tests/test_quiz.py`
   (`parse_quiz_questions`, `quiz_top`, idempotência do `poll_answer`).
 - **🚪 Reentrada de membro:** quem já tem progresso e volta é recebido com a ficha (foto). Progresso
