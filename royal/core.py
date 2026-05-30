@@ -18,8 +18,9 @@ from cachetools import TTLCache
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.client.default import DefaultBotProperties
-from aiogram.exceptions import (TelegramBadRequest, TelegramNetworkError,
-                                 TelegramRetryAfter, TelegramServerError)
+from aiogram.exceptions import (TelegramBadRequest, TelegramMigrateToChat,
+                                 TelegramNetworkError, TelegramRetryAfter,
+                                 TelegramServerError)
 from aiogram.filters import (
     Command,
     CommandStart,
@@ -2094,15 +2095,43 @@ async def send_couple(chat_id: int, source: str = "auto") -> bool:
 
 
 async def safe_send(chat_id: int, text: str, **kwargs):
-    """Envia mensagem com retry simples em caso de RetryAfter."""
+    """Envia mensagem com retry simples em caso de RetryAfter.
+
+    Auto-cura de migracao: se o grupo virou supergrupo com o bot offline (a msg
+    de servico nunca chegou ao on_chat_migration), o send levanta
+    TelegramMigrateToChat com o id novo. Migra os dados orfaos (transacional +
+    idempotente) e re-tenta no supergrupo — assim o progresso nao fica perdido
+    sob o id antigo. E condicao esperada (catalogada como `chat_migrated`), nao
+    bug. Ver replit.md § Migracao com bot OFFLINE.
+    """
     assert bot is not None
+
+    async def _send_or_heal(target: int):
+        """Envia; se `target` virou supergrupo, migra os dados e re-envia no
+        id novo. Centraliza a auto-cura p/ valer TAMBEM no retry de RetryAfter.
+        """
+        try:
+            return await bot.send_message(target, text, **kwargs)
+        except TelegramMigrateToChat as e:
+            new_id = e.migrate_to_chat_id
+            logger.warning(
+                "safe_send: chat %d migrou p/ supergrupo %d — migrando dados e "
+                "re-tentando", target, new_id)
+            try:
+                migrate_chat_data(target, new_id)
+            except Exception:
+                logger.exception(
+                    "safe_send: migrate_chat_data falhou %d -> %d",
+                    target, new_id)
+            return await bot.send_message(new_id, text, **kwargs)
+
     try:
-        return await bot.send_message(chat_id, text, **kwargs)
+        return await _send_or_heal(chat_id)
     except TelegramRetryAfter as e:
         logger.warning("RetryAfter %ds on send to %d", e.retry_after, chat_id)
         await asyncio.sleep(e.retry_after + 1)
         try:
-            return await bot.send_message(chat_id, text, **kwargs)
+            return await _send_or_heal(chat_id)
         except Exception:
             logger.exception("safe_send retry failed")
     except Exception:

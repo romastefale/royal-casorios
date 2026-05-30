@@ -67,12 +67,14 @@ Confirma no grupo + DM do owner. Testes: `test_migrate_chat_data_preserva_progre
 + `test_migrate_listas_cobrem_todas_as_tabelas_com_chat_id`.
 
 **Migração com bot OFFLINE (a msg de serviço se perde):** se o grupo virar supergrupo enquanto o bot
-está fora, `on_chat_migration` nunca dispara e o DB fica com o id ANTIGO. O 1º envio proativo (ex.:
-`announce_update`) ao id velho levanta `TelegramMigrateToChat` (atributo `exc.migrate_to_chat_id` traz
-o id novo) → **auto-cura:** o loop chama `migrate_chat_data(old,new)` e re-tenta o envio no supergrupo
-(com dedupe via `sent_targets` p/ não saudar 2× em boot misto). `TelegramMigrateToChat` está no
-`ERROR_CATALOG` como `chat_migrated` (`relevant=False` → **não** manda DM ao dono; é condição esperada,
-não bug).
+está fora, `on_chat_migration` nunca dispara e o DB fica com o id ANTIGO. Qualquer envio proativo ao
+id velho levanta `TelegramMigrateToChat` (atributo `exc.migrate_to_chat_id` traz o id novo) →
+**auto-cura central em `safe_send`** (o helper que quase todo post de grupo usa): chama
+`migrate_chat_data(old,new)` (transacional + idempotente) e re-tenta no supergrupo → o progresso migra
+sozinho no 1º post pós-migração e os próximos posts já vão pro id novo. `announce_update` (que usa
+`bot.send_photo` direto, fora do `safe_send`) tem o **mesmo** tratamento inline + dedupe via
+`sent_targets` (não saudar 2× em boot misto). `TelegramMigrateToChat` está no `ERROR_CATALOG` como
+`chat_migrated` (`relevant=False` → **não** manda DM ao dono; é condição esperada, não bug).
 
 ---
 

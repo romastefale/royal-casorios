@@ -12,11 +12,14 @@ When a Telegram group is promoted to a supergroup **while the bot is offline**
 `aiogram.exceptions.TelegramMigrateToChat`, whose instance attribute
 `exc.migrate_to_chat_id` carries the new supergroup id.
 
-**Rule:** any proactive send loop that can hit a stale chat_id should catch
-`TelegramMigrateToChat`, call `migrate_chat_data(old, new)` (transactional +
-idempotent — safe to re-run) to self-heal the orphaned progress, then retry the
-send to the new id. Reactive handlers don't need this — `on_chat_migration`
-already covers the live migration message.
+**Rule:** the self-heal lives **centrally in `safe_send` (`royal/core.py`)** —
+the helper almost every group post uses. It catches `TelegramMigrateToChat`,
+calls `migrate_chat_data(old, new)` (transactional + idempotent — safe to
+re-run), then retries the send to the new id. So the FIRST proactive post after
+an offline migration heals the data and every later post targets the new id.
+Any proactive send path that bypasses `safe_send` (e.g. `announce_update` uses
+`bot.send_photo` directly) needs the same handling inline. Reactive handlers
+don't — `on_chat_migration` covers the live migration message.
 
 **Why:** without it the group's XP/saldo/casórios stay orphaned under the old id
 and the player progress looks lost; and the raw exception fires a false
