@@ -151,7 +151,7 @@ sozinho no 1º post pós-migração e os próximos posts já vão pro id novo. `
 | `DATABASE_PATH` | rec. | `./data/royal_casorios.sqlite3` | **No Railway use `/data/...` com volume** (ver Persistência). |
 | `TZ` | — | `America/Sao_Paulo` | Timezone. |
 | `AUTO_HOURS` | — | `9,15,21` | Horas dos casórios automáticos. |
-| `OWNER_USER_ID` | rec. | — | Habilita comandos owner (`/royallog`, `/royalmudo`, `/royalpalavratest`). Sem isso, modo seguro (off). |
+| `OWNER_USER_ID` | rec. | — | Habilita comandos owner (`/royallog`, `/royalmudo`, `/royalpalavratest`, `/royalsairgrupo`). Sem isso, modo seguro (off). |
 | `TEST_CHAT_IDS` | — | — | Grupos de teste (fora do picker de DM e do fallback inline). Comma-separated. |
 | `STASH_CHAT_ID` | — | `-1003941532741` | Canal privado p/ upload silencioso (identity card + backups). |
 | `GH_TOKEN` | — | — | PAT GitHub (scope `gist`) p/ upload de logs a cada 5min. Opcional (complementa os snapshots em `backup/logs/`). |

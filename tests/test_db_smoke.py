@@ -348,12 +348,14 @@ def _route_callback(data):
     import royal.handlers.hub as hubmod
     import royal.handlers.missoes as missmod
     import royal.handlers.cfg as cfgmod
+    import royal.handlers.admin as adminmod
 
     winner = {"name": None}
     spies = {
         id(hubmod.hub_cb): "hub_cb",
         id(missmod.quest_claim_cb): "quest_claim_cb",
         id(cfgmod.cfg_cb): "cfg_cb",
+        id(adminmod.sair_grupo_cb): "sair_grupo_cb",
     }
     originals = []
 
@@ -401,3 +403,12 @@ def test_callbacks_dedicados_nao_sao_engolidos_pelo_hub_cb():
     # ...e o que e do hub continua no hub (bau de recompensa + menu perfil).
     assert _route_callback("r:chest:5") == "hub_cb"
     assert _route_callback("r:perfil") == "hub_cb"
+
+
+def test_sairgrupo_callback_chega_no_handler_dedicado():
+    """O /royalsairgrupo usa prefixo NAO-`r:` ("sairgrp:") de proposito: o
+    catch-all hub_cb so casa `r:`, entao o callback de confirmar/cancelar
+    saida do bot do grupo precisa chegar ao seu handler dedicado (e nao morrer
+    mudo no hub). O chat_id embutido casa o do _route_callback (defesa)."""
+    assert _route_callback("sairgrp:ok:-1002556760909:42") == "sair_grupo_cb"
+    assert _route_callback("sairgrp:no:42") == "sair_grupo_cb"

@@ -101,7 +101,7 @@ import hashlib
 from aiogram import Router
 
 from royal.config import (MIRA_ENABLED, OWNER_USER_ID, STASH_CHAT_ID, _log_ring, logger)
-from royal.core import (BACKUP_DIR, BACKUP_RETENTION_DAYS, GROUP_ONLY_MSG, auto_delete_after, bot, bot_meta_set, cur, current_season_label, dp, dump_logs_to_gist, dump_logs_to_file, get_active_challenge, is_chat_muted, is_group, run_backup, safe_typing, set_chat_muted, spawn_palavra, term_block)
+from royal.core import (BACKUP_DIR, BACKUP_RETENTION_DAYS, BTN_NO, GROUP_ONLY_MSG, STYLE_NO, auto_delete_after, bot, bot_meta_set, cur, current_season_label, delete_msg_safe, dp, dump_logs_to_gist, dump_logs_to_file, get_active_challenge, ikb, is_chat_muted, is_group, run_backup, safe_typing, set_chat_muted, spawn_palavra, term_block)
 from royal.mira import fetch_and_store_palavras
 
 router = Router()
@@ -338,3 +338,100 @@ async def royal_saudacao(message: Message):
         await auto_delete_after(ack, delay=10.0)
 
 
+
+
+@router.message(Command("royalsairgrupo"))
+async def royal_sair_grupo(message: Message):
+    """Owner-only, off-menu, SO em grupo: faz o BOT sair deste grupo.
+
+    Acao destrutiva e irreversivel (o bot precisaria ser re-adicionado e
+    re-promovido a admin), entao pede confirmacao por botao com owner-lock.
+    NAO confundir com /royalsair (jogador sai do jogo). Os dados do grupo no
+    DB sao preservados (so o bot deixa o chat)."""
+    uid = message.from_user.id if message.from_user else 0
+    if OWNER_USER_ID is None or uid != OWNER_USER_ID:
+        return
+    if not is_group(message):
+        await message.answer(GROUP_ONLY_MSG)
+        return
+    chat_id = message.chat.id
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        ikb(f"{BTN_NO} Confirmar saída", style=STYLE_NO,
+            callback_data=f"sairgrp:ok:{chat_id}:{uid}"),
+        ikb("Cancelar", callback_data=f"sairgrp:no:{uid}"),
+    ]])
+    await message.answer(term_block(
+        "SAIR.SYS",
+        ">> <b>CONFIRMAR SAÍDA DO GRUPO?</b>\n"
+        "<i>// o bot vai abandonar este grupo.</i>\n"
+        "<i>// pra voltar, precisa ser re-adicionado e re-promovido a admin.</i>\n"
+        "<i>// os dados do grupo no DB são preservados.</i>",
+        status="ATENCAO", status_color="AMBER"),
+        reply_markup=kb)
+
+
+@router.callback_query(F.data.startswith("sairgrp:"))
+async def sair_grupo_cb(cb: CallbackQuery):
+    """Confirma/cancela o /royalsairgrupo. Prefixo NAO-`r:` de proposito: o
+    catch-all hub_cb so casa `r:`, entao este callback chega ao handler dedicado.
+    owner-lock duplo: OWNER_USER_ID + uid embutido no callback_data."""
+    if not cb.data or not cb.from_user:
+        await cb.answer()
+        return
+    parts = cb.data.split(":")
+    sub = parts[1] if len(parts) > 1 else ""
+    try:
+        owner_id = int(parts[-1])
+    except (ValueError, IndexError):
+        owner_id = None
+    if (OWNER_USER_ID is None or cb.from_user.id != OWNER_USER_ID
+            or (owner_id is not None and cb.from_user.id != owner_id)):
+        await cb.answer("❌ Esse comando não é seu.", show_alert=False)
+        return
+
+    if sub == "no":
+        if cb.message:
+            await delete_msg_safe(cb.message)
+        await cb.answer("Cancelado.")
+        return
+
+    if sub == "ok":
+        try:
+            chat_id = int(parts[2])
+        except (ValueError, IndexError):
+            await cb.answer()
+            return
+        # Defense-in-depth: a fonte da verdade e o chat onde o botao vive
+        # (a confirmacao foi postada NO grupo a sair). Se o id embutido nao
+        # bater, aborta — nao confia em payload malformado.
+        if cb.message and cb.message.chat.id != chat_id:
+            await cb.answer("❌ Contexto inválido.", show_alert=False)
+            return
+        await cb.answer("Saindo...")
+        # Edita a MESMA msg ANTES de sair (depois de leave_chat nao da mais).
+        if cb.message:
+            try:
+                await cb.message.edit_text(term_block(
+                    "SAIR.SYS",
+                    ">> <b>ABANDONANDO O REINO</b>\n"
+                    "<i>// até a próxima, nobres.</i>",
+                    status="OFFLINE", status_color="AMBER"))
+            except Exception:
+                pass
+        logger.info("[SAIRGRUPO] bot saindo chat=%d actor=%d",
+                    chat_id, cb.from_user.id)
+        try:
+            if bot is not None:
+                await bot.leave_chat(chat_id)
+        except Exception:
+            logger.exception("[SAIRGRUPO] leave_chat falhou chat=%d", chat_id)
+            if cb.message:
+                try:
+                    await cb.message.answer(
+                        "❌ Não consegui sair (checa se ainda estou no grupo / "
+                        "permissões).")
+                except Exception:
+                    pass
+        return
+
+    await cb.answer()
